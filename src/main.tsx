@@ -5,13 +5,13 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import './styles.css';
 
 type View = 'map' | 'sessions' | 'progress';
-type LocationState = { city: string; region: string; coordinates: string; lng: number; lat: number };
+type LocationState = { city: string; region: string; lng: number; lat: number };
 
 const MAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
 const UNPAVED_SURFACES = ['gravel', 'fine_gravel', 'dirt', 'earth', 'ground', 'unpaved', 'mud', 'sand', 'grass', 'woodchips', 'pebblestone', 'compacted'];
 const PATH_CLASSES = ['cycleway', 'path', 'pedestrian', 'footway', 'track', 'bridleway'];
 const LOCAL_STREET_CLASSES = ['minor', 'tertiary', 'secondary', 'residential', 'living_street', 'unclassified'];
-const DEFAULT_LOCATION: LocationState = { city: 'STOCKHOLM', region: 'SÖDERMALM', coordinates: formatCoordinates(18.0649, 59.3326), lng: 18.0649, lat: 59.3326 };
+const DEFAULT_LOCATION: LocationState = { city: 'STOCKHOLM', region: 'SÖDERMALM', lng: 18.0649, lat: 59.3326 };
 
 const surfaceColor = (pavedColor: string, unpavedColor: string) =>
   ['match', ['get', 'surface'], UNPAVED_SURFACES, unpavedColor, pavedColor] as any;
@@ -129,12 +129,6 @@ function styleRoamMap(map: Map, showDiscovered: boolean) {
   }
 }
 
-function formatCoordinates(lng: number, lat: number) {
-  const latitude = `${Math.abs(lat).toFixed(4)}° ${lat >= 0 ? 'N' : 'S'}`;
-  const longitude = `${Math.abs(lng).toFixed(4)}° ${lng >= 0 ? 'E' : 'W'}`;
-  return `${latitude} / ${longitude}`;
-}
-
 function findMapLocality(map: Map) {
   const center = map.getCenter();
   const features = map.querySourceFeatures('openmaptiles', { sourceLayer: 'place' });
@@ -178,10 +172,10 @@ function MapView({ onOpenProgress }: { onOpenProgress: (location: LocationState)
   const [showDiscovered, setShowDiscovered] = useState(true);
   const [location, setLocation] = useState<LocationState>(DEFAULT_LOCATION);
   const mapRef = useRef<Map | null>(null);
-  const handleLocationChange = (lng: number, lat: number, locality?: { city?: string; region?: string }) => setLocation((current) => ({ ...current, lng, lat, coordinates: formatCoordinates(lng, lat), city: locality?.city?.toUpperCase() || current.city, region: locality?.region?.toUpperCase() || current.region }));
+  const handleLocationChange = (lng: number, lat: number, locality?: { city?: string; region?: string }) => setLocation((current) => ({ ...current, lng, lat, city: locality?.city?.toUpperCase() || current.city, region: locality?.region?.toUpperCase() || current.region }));
+  const summaryWidth = Math.max(190, Math.min(320, 70 + Math.max(location.city.length + location.region.length, 18) * 6));
   return <section className="map-view"><MapCanvas mapRef={mapRef} showDiscovered={showDiscovered} onLocationChange={handleLocationChange} />
-    <header className="map-header"><div className="map-header-actions"><button className="debug-toggle" type="button" onClick={() => setShowDiscovered(!showDiscovered)}>DEBUG / {showDiscovered ? 'DISCOVERED' : 'UNDISCOVERED'}</button></div></header>
-    <div className="map-topline"><button className="location-summary" type="button" onClick={() => onOpenProgress(location)}><small>{location.coordinates}</small><strong>{location.city} / {location.region}</strong><span>42.8% DISCOVERED <b>↗</b></span></button></div>
+    <header className="map-header"><span className="map-header-spacer" aria-hidden="true" /><button className="location-summary" style={{ width: `${summaryWidth}px` }} type="button" onClick={() => onOpenProgress(location)}><strong>{location.city} / {location.region}</strong><span>42.8% DISCOVERED</span><i className="summary-progress"><b style={{ width: '42.8%' }} /></i></button><div className="map-header-actions"><button className="debug-toggle" type="button" onClick={() => setShowDiscovered(!showDiscovered)}>DEBUG / {showDiscovered ? 'DISCOVERED' : 'UNDISCOVERED'}</button></div></header>
     <div className="map-controls" aria-label="Map controls"><button type="button" aria-label="Zoom in" onClick={() => mapRef.current?.zoomIn()}>+</button><button type="button" aria-label="Zoom out" onClick={() => mapRef.current?.zoomOut()}>−</button><button type="button" aria-label="Center on location" onClick={() => mapRef.current?.flyTo({ center: [18.0649, 59.3326], zoom: 14 })}>◎</button></div>
   </section>;
 }
@@ -196,7 +190,7 @@ function ProgressView({ location }: { location: LocationState }) {
     { name: 'Kungsholmen', city: 'Stockholm', percent: '27.9%', types: 'PAVED 68% · GRAVEL 18% · FOOT 14%' },
     { name: 'Aspudden', city: 'Stockholm', percent: '19.6%', types: 'PAVED 49% · GRAVEL 38% · FOOT 13%' },
   ];
-  return <section className="progress-view"><div className="progress-header"><p className="eyebrow">ROAM / PROGRESS</p><h1>Progress</h1><p>Explore the network by neighborhood. Every percentage is a measure of paths uncovered.</p></div><div className="progress-current"><span className="progress-label">CURRENT AREA</span><strong>{location.city} / {location.region}</strong><span>{location.coordinates}</span></div><div className="progress-areas">{areas.map((area, index) => <article className={index === 0 ? 'progress-area progress-area--current' : 'progress-area'} key={`${area.city}-${area.name}`}><div className="progress-area-top"><div><strong>{area.name}</strong><span>{area.city}</span></div><b>{area.percent}</b></div><div className="progress-bar"><i style={{ width: area.percent }} /></div><small>{area.types}</small></article>)}</div></section>;
+  return <section className="progress-view"><div className="progress-header"><p className="eyebrow">ROAM / PROGRESS</p><h1>Progress</h1><p>Explore the network by neighborhood. Every percentage is a measure of paths uncovered.</p></div><div className="progress-current"><span className="progress-label">CURRENT AREA</span><strong>{location.city} / {location.region}</strong></div><div className="progress-areas">{areas.map((area, index) => <article className={index === 0 ? 'progress-area progress-area--current' : 'progress-area'} key={`${area.city}-${area.name}`}><div className="progress-area-top"><div><strong>{area.name}</strong><span>{area.city}</span></div><b>{area.percent}</b></div><div className="progress-bar"><i style={{ width: area.percent }} /></div><small>{area.types}</small></article>)}</div></section>;
 }
 
 function App() {
