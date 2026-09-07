@@ -190,7 +190,7 @@ function findMapLocality(map: Map) {
   return { city: city?.name, region: region?.name };
 }
 
-function MapCanvas({ mapRef, showDiscovered, is3D, showBuildings3D, showTerrain3D, onLocationChange, onBearingChange }: { mapRef: React.MutableRefObject<Map | null>; showDiscovered: boolean; is3D: boolean; showBuildings3D: boolean; showTerrain3D: boolean; onLocationChange: (lng: number, lat: number, locality?: { city?: string; region?: string }) => void; onBearingChange: (bearing: number) => void }) {
+function MapCanvas({ mapRef, showDiscovered, is3D, showBuildings3D, showTerrain3D, onLocationChange, onBearingChange, onZoomChange }: { mapRef: React.MutableRefObject<Map | null>; showDiscovered: boolean; is3D: boolean; showBuildings3D: boolean; showTerrain3D: boolean; onLocationChange: (lng: number, lat: number, locality?: { city?: string; region?: string }) => void; onBearingChange: (bearing: number) => void; onZoomChange: (zoom: number) => void }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [mapReady, setMapReady] = useState(false);
   useEffect(() => {
@@ -202,9 +202,11 @@ function MapCanvas({ mapRef, showDiscovered, is3D, showBuildings3D, showTerrain3
       const center = map.getCenter();
       onLocationChange(center.lng, center.lat, findMapLocality(map));
       onBearingChange(map.getBearing());
+      onZoomChange(map.getZoom());
       setMapReady(true);
     });
     map.on('rotate', () => onBearingChange(map.getBearing()));
+    map.on('zoom', () => onZoomChange(map.getZoom()));
     map.on('moveend', () => {
       const center = map.getCenter();
       onLocationChange(center.lng, center.lat, findMapLocality(map));
@@ -231,6 +233,7 @@ function MapView({ onOpenProgress }: { onOpenProgress: (location: LocationState)
   const [showBuildings3D, setShowBuildings3D] = useState(false);
   const [showTerrain3D, setShowTerrain3D] = useState(false);
   const [bearing, setBearing] = useState(-12);
+  const [zoom, setZoom] = useState(14);
   const [debugOpen, setDebugOpen] = useState(false);
   const [location, setLocation] = useState<LocationState>(DEFAULT_LOCATION);
   const mapRef = useRef<Map | null>(null);
@@ -242,10 +245,10 @@ function MapView({ onOpenProgress }: { onOpenProgress: (location: LocationState)
     return adjustedBearing;
   });
   const summaryWidth = Math.max(190, Math.min(320, 70 + Math.max(location.city.length + location.region.length, 18) * 6));
-  return <section className="map-view"><MapCanvas mapRef={mapRef} showDiscovered={showDiscovered} is3D={is3D} showBuildings3D={showBuildings3D} showTerrain3D={showTerrain3D} onLocationChange={handleLocationChange} onBearingChange={handleBearingChange} />
+  return <section className="map-view"><MapCanvas mapRef={mapRef} showDiscovered={showDiscovered} is3D={is3D} showBuildings3D={showBuildings3D} showTerrain3D={showTerrain3D} onLocationChange={handleLocationChange} onBearingChange={handleBearingChange} onZoomChange={setZoom} />
     <header className="map-header"><span className="map-header-spacer" aria-hidden="true" /><button className="location-summary map-ui-surface" style={{ width: `${summaryWidth}px` }} type="button" onClick={() => onOpenProgress(location)}><strong>{location.city} / {location.region}</strong><i className="summary-progress"><b className="summary-progress__discovered" style={{ width: '42.8%' }}><em className="summary-progress__paved" style={{ width: '61%' }} /><em className="summary-progress__unpaved" style={{ width: '39%' }} /></b></i><span>42.8% DISCOVERED</span></button><span className="map-header-spacer" aria-hidden="true" /></header>
     <div className="map-compass"><button className="map-ui-surface" type="button" aria-label="Reset compass north" onClick={() => mapRef.current?.easeTo({ bearing: 0, duration: 450 })}><span className="compass-rotor" style={{ transform: `rotate(${-bearing}deg)` }}><span className="compass-north-label">N</span><i className="compass-needle"><b className="compass-north">▲</b><b className="compass-south">▼</b></i></span></button></div><div className="map-controls" aria-label="Map controls"><button className="map-ui-surface" type="button" aria-label="Center on location" onClick={() => mapRef.current?.flyTo({ center: [18.0649, 59.3326], zoom: 14 })}>◎</button><button className="map-ui-surface map-mode-toggle" type="button" aria-label={`Switch to ${is3D ? '2D' : '3D'} view`} onClick={() => setIs3D(!is3D)}>{is3D ? '3D' : '2D'}</button><div className="zoom-group map-ui-surface"><button type="button" aria-label="Zoom in" onClick={() => mapRef.current?.zoomIn()}>+</button><button type="button" aria-label="Zoom out" onClick={() => mapRef.current?.zoomOut()}>−</button></div></div>
-    <div className="map-debug"><button className="map-ui-surface debug-icon" type="button" aria-label="Open debug settings" aria-expanded={debugOpen} onClick={() => setDebugOpen(!debugOpen)}>⌘</button>{debugOpen && <div className="debug-menu map-ui-surface"><p>DEBUG SETTINGS</p><button type="button" onClick={() => setShowDiscovered(!showDiscovered)}><span>DISCOVERED LAYER</span><b>{showDiscovered ? 'ON' : 'OFF'}</b></button><button type="button" onClick={() => setShowBuildings3D(!showBuildings3D)}><span>BUILDINGS 3D</span><b>{showBuildings3D ? 'ON' : 'OFF'}</b></button><button type="button" onClick={() => setShowTerrain3D(!showTerrain3D)}><span>TERRAIN 3D</span><b>{showTerrain3D ? 'ON' : 'OFF'}</b></button><div><span>ROAD FILTER</span><b>BIKEABLE</b></div><div><span>RESTRICTED AREAS</span><b>MASKED</b></div></div>}</div>
+    <div className="map-debug"><button className="map-ui-surface debug-icon" type="button" aria-label="Open debug settings" aria-expanded={debugOpen} onClick={() => setDebugOpen(!debugOpen)}>⌘</button>{debugOpen && <div className="debug-menu map-ui-surface"><p>DEBUG SETTINGS</p><button type="button" onClick={() => setShowDiscovered(!showDiscovered)}><span>DISCOVERED LAYER</span><b>{showDiscovered ? 'ON' : 'OFF'}</b></button><button type="button" onClick={() => setShowBuildings3D(!showBuildings3D)}><span>BUILDINGS 3D</span><b>{showBuildings3D ? 'ON' : 'OFF'}</b></button><button type="button" onClick={() => setShowTerrain3D(!showTerrain3D)}><span>TERRAIN 3D</span><b>{showTerrain3D ? 'ON' : 'OFF'}</b></button><div><span>ROAD FILTER</span><b>BIKEABLE</b></div><div><span>ZOOM LEVEL</span><b>{zoom.toFixed(1)}</b></div></div>}</div>
   </section>;
 }
 
