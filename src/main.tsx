@@ -26,7 +26,7 @@ function styleRoamMap(map: Map, showDiscovered: boolean) {
     const isWater = id.includes('water') || sourceLayer === 'water';
     const isPark = /park|wood|forest|grass|meadow|cemetery|recreation|garden|landcover/.test(id) || /landcover|landuse/.test(sourceLayer);
     const isRestricted = /military|aeroway|airport|airfield/.test(id) || /military|aeroway/.test(sourceLayer);
-    if (layer.type === 'symbol' || id.includes('building') || id.includes('boundary') || id === 'park_outline' || id === 'landcover_wetland' || id === 'road_area_pattern' || isRail) {
+    if (layer.type === 'symbol' || id.includes('building') || id.includes('boundary') || id === 'park_outline' || id === 'landcover_wetland' || id === 'road_area_pattern' || isRail || (isRestricted && layer.type === 'line')) {
       map.setLayoutProperty(layer.id, 'visibility', 'none');
     }
     if (layer.type === 'fill' && isWater) {
@@ -41,7 +41,7 @@ function styleRoamMap(map: Map, showDiscovered: boolean) {
     if (layer.type === 'fill' && isRestricted) {
       map.setPaintProperty(layer.id, 'fill-color', '#35191d');
       map.setPaintProperty(layer.id, 'fill-opacity', 0.9);
-      map.setPaintProperty(layer.id, 'fill-outline-color', '#52252b');
+      map.setPaintProperty(layer.id, 'fill-outline-color', '#35191d');
     }
     if (layer.type === 'line' && isWater) {
       map.setPaintProperty(layer.id, 'line-color', '#24465a');
@@ -57,11 +57,10 @@ function styleRoamMap(map: Map, showDiscovered: boolean) {
       const isGravelPath = /track|path|bridleway/.test(id) && !isPedestrianFootpath && !isCycleway;
       const isPath = isCycleway || isPedestrianFootpath || isGravelPath;
       const isMajor = /motorway|trunk|primary/.test(id);
-      if (isPath) {
-        const existingFilter = 'filter' in layer ? layer.filter : undefined;
-        const explicitAccess = ['any', ['match', ['get', 'class'], ['cycleway'], true, false], ['match', ['get', 'bicycle'], ['yes', 'designated', 'permissive'], true, false], ['match', ['get', 'foot'], ['yes', 'designated', 'permissive'], true, false]];
-        map.setFilter(layer.id, ['all', ...(existingFilter ? [existingFilter] : []), explicitAccess] as any);
-      }
+      const existingFilter = 'filter' in layer ? layer.filter : undefined;
+      const parkingAisleFilter = ['!=', ['get', 'class'], 'parking_aisle'];
+      const explicitAccess = ['any', ['match', ['get', 'class'], ['cycleway'], true, false], ['match', ['get', 'bicycle'], ['yes', 'designated', 'permissive'], true, false], ['match', ['get', 'foot'], ['yes', 'designated', 'permissive'], true, false]];
+      map.setFilter(layer.id, ['all', ...(existingFilter ? [existingFilter] : []), parkingAisleFilter, ...(isPath ? [explicitAccess] : [])] as any);
       const isContextRoad = isHighway;
       map.setPaintProperty(layer.id, 'line-color', isContextRoad ? '#46504d' : surfaceColor('#55615c', '#72563d'));
       map.setPaintProperty(layer.id, 'line-opacity', isContextRoad ? 0.68 : isPath ? 0.52 : 0.46);
@@ -76,7 +75,7 @@ function styleRoamMap(map: Map, showDiscovered: boolean) {
       type: 'line',
       source: 'openmaptiles',
       'source-layer': 'transportation',
-      filter: ['all', ['match', ['get', 'class'], PATH_CLASSES, true, false], ['any', ['match', ['get', 'class'], ['cycleway'], true, false], ['match', ['get', 'bicycle'], ['yes', 'designated', 'permissive'], true, false], ['match', ['get', 'foot'], ['yes', 'designated', 'permissive'], true, false]]] as any,
+      filter: ['all', ['!=', ['get', 'class'], 'parking_aisle'], ['match', ['get', 'class'], PATH_CLASSES, true, false], ['any', ['match', ['get', 'class'], ['cycleway'], true, false], ['match', ['get', 'bicycle'], ['yes', 'designated', 'permissive'], true, false], ['match', ['get', 'foot'], ['yes', 'designated', 'permissive'], true, false]]] as any,
       paint: {
         'line-color': surfaceColor('#55615c', '#72563d'),
         'line-opacity': 0.52,
@@ -90,7 +89,7 @@ function styleRoamMap(map: Map, showDiscovered: boolean) {
       type: 'line',
       source: 'openmaptiles',
       'source-layer': 'transportation',
-      filter: ['all', ['any', ['all', ['match', ['get', 'class'], PATH_CLASSES, true, false], ['any', ['match', ['get', 'class'], ['cycleway'], true, false], ['match', ['get', 'bicycle'], ['yes', 'designated', 'permissive'], true, false], ['match', ['get', 'foot'], ['yes', 'designated', 'permissive'], true, false]]], ['all', ['match', ['get', 'class'], LOCAL_STREET_CLASSES, true, false], ['!=', ['get', 'bicycle'], 'no']]]] as any,
+      filter: ['all', ['!=', ['get', 'class'], 'parking_aisle'], ['any', ['all', ['match', ['get', 'class'], PATH_CLASSES, true, false], ['any', ['match', ['get', 'class'], ['cycleway'], true, false], ['match', ['get', 'bicycle'], ['yes', 'designated', 'permissive'], true, false], ['match', ['get', 'foot'], ['yes', 'designated', 'permissive'], true, false]]], ['all', ['match', ['get', 'class'], LOCAL_STREET_CLASSES, true, false], ['!=', ['get', 'bicycle'], 'no']]]] as any,
       paint: {
         'line-color': surfaceColor('#f0eee7', '#d59c67'),
         'line-opacity': 0.98,
@@ -98,6 +97,28 @@ function styleRoamMap(map: Map, showDiscovered: boolean) {
       },
       layout: { visibility: showDiscovered ? 'visible' : 'none' },
     } as any);
+  }
+  if (map.getSource('openmaptiles')) {
+    if (!map.getLayer('roam-restricted-landuse')) {
+      map.addLayer({
+        id: 'roam-restricted-landuse',
+        type: 'fill',
+        source: 'openmaptiles',
+        'source-layer': 'landuse',
+        filter: ['match', ['get', 'class'], ['military'], true, false] as any,
+        paint: { 'fill-color': '#35191d', 'fill-opacity': 0.94 },
+      } as any);
+    }
+    if (!map.getLayer('roam-restricted-aeroway')) {
+      map.addLayer({
+        id: 'roam-restricted-aeroway',
+        type: 'fill',
+        source: 'openmaptiles',
+        'source-layer': 'aeroway',
+        filter: ['match', ['get', 'class'], ['aerodrome', 'airport'], true, false] as any,
+        paint: { 'fill-color': '#35191d', 'fill-opacity': 0.94 },
+      } as any);
+    }
   }
 }
 
