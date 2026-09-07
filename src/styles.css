@@ -26,7 +26,7 @@
 .summary-progress__paved { background: #f0ede3; }
 .summary-progress__unpaved { background: #d59c67; }
 .map-compass button { width: 42px; height: 42px; }
-.map-depth-fade { position: absolute; z-index: 1; top: 0; right: 0; left: 0; height: 60%; pointer-events: none; background: linear-gradient(to bottom, rgba(10, 11, 12, .12), rgba(10, 11, 12, .34) 34%, rgba(10, 11, 12, .12) 78%, transparent); transition: opacity .35s ease; }
+.map-depth-fade { position: absolute; z-index: 1; top: 0; right: 0; left: 0; height: 74%; pointer-events: none; background: linear-gradient(to bottom, rgba(10, 11, 12, .14), rgba(10, 11, 12, .36) 38%, rgba(10, 11, 12, .16) 82%, transparent); transition: opacity .35s ease; }
 .map-depth-fade--hidden { opacity: 0; }
 .map-controls button { display: flex; align-items: center; justify-content: center; }
 .zoom-group { display: grid; width: 34px; overflow: hidden; border-radius: 999px; }
