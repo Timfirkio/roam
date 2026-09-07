@@ -147,15 +147,13 @@ function MapCanvas({ mapRef, showDiscovered }: { mapRef: React.MutableRefObject<
 }
 
 function MapView() {
-  const [tracking, setTracking] = useState(false);
   const [showDiscovered, setShowDiscovered] = useState(true);
   const mapRef = useRef<Map | null>(null);
   return <section className="map-view"><MapCanvas mapRef={mapRef} showDiscovered={showDiscovered} />
-    <header className="map-header"><div className="wordmark">ROAM<span>/01</span></div><div className="map-header-actions"><button className="debug-toggle" type="button" onClick={() => setShowDiscovered(!showDiscovered)}>DEBUG / {showDiscovered ? 'DISCOVERED' : 'UNDISCOVERED'}</button><div className="header-status"><i className={tracking ? 'status-dot status-dot--live' : 'status-dot'} />{tracking ? 'TRACKING' : 'READY'}</div></div></header>
+    <header className="map-header"><div className="wordmark">ROAM<span>/01</span></div><div className="map-header-actions"><button className="debug-toggle" type="button" onClick={() => setShowDiscovered(!showDiscovered)}>DEBUG / {showDiscovered ? 'DISCOVERED' : 'UNDISCOVERED'}</button><div className="header-status"><i className="status-dot" />READY</div></div></header>
     <div className="map-topline"><span>STOCKHOLM / SÖDERMALM</span><span>42.8% REVEALED</span></div>
     <div className="map-controls" aria-label="Map controls"><button type="button" aria-label="Zoom in" onClick={() => mapRef.current?.zoomIn()}>+</button><button type="button" aria-label="Zoom out" onClick={() => mapRef.current?.zoomOut()}>−</button><button type="button" aria-label="Center on location" onClick={() => mapRef.current?.flyTo({ center: [18.0649, 59.3326], zoom: 14 })}>◎</button></div>
     <div className="map-legend"><span><b className="legend-line legend-line--paved" />PAVED</span><span><b className="legend-line legend-line--gravel" />GRAVEL / PATH</span><span><b className="legend-line legend-line--hidden" />UNEXPLORED</span></div>
-    <div className="session-dock"><div><span className="dock-label">CURRENT SESSION</span><strong>{tracking ? '00:00:18' : 'NO ACTIVE SESSION'}</strong></div><button className={`track-button ${tracking ? 'track-button--active' : ''}`} type="button" onClick={() => setTracking(!tracking)}><span className="track-button__icon">{tracking ? '■' : '▶'}</span>{tracking ? 'END SESSION' : 'START ROAMING'}</button></div>
   </section>;
 }
 
