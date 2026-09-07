@@ -17,7 +17,7 @@ function styleRoamMap(map: Map) {
     const isRoad = id.includes('transportation') || sourceLayer === 'transportation';
     const isWater = id.includes('water') || sourceLayer === 'water';
     const isPark = /park|wood|forest|grass|meadow|cemetery|recreation|garden|landcover/.test(id) || /landcover|landuse/.test(sourceLayer);
-    if (layer.type === 'symbol' || id.includes('building') || id.includes('boundary')) {
+    if (layer.type === 'symbol' || id.includes('building') || id.includes('boundary') || id === 'park_outline' || id === 'landcover_wetland' || id === 'road_area_pattern') {
       map.setLayoutProperty(layer.id, 'visibility', 'none');
     }
     if (layer.type === 'fill' && isWater) {
@@ -27,6 +27,7 @@ function styleRoamMap(map: Map) {
     if (layer.type === 'fill' && isPark) {
       map.setPaintProperty(layer.id, 'fill-color', '#13251f');
       map.setPaintProperty(layer.id, 'fill-opacity', 0.86);
+      if (id === 'park') map.setPaintProperty(layer.id, 'fill-outline-color', '#13251f');
     }
     if (layer.type === 'line' && isWater) {
       map.setPaintProperty(layer.id, 'line-color', '#24465a');
