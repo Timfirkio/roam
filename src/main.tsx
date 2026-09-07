@@ -7,6 +7,12 @@ import './styles.css';
 type View = 'map' | 'sessions' | 'progress';
 
 const MAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
+const UNPAVED_SURFACES = ['gravel', 'fine_gravel', 'dirt', 'earth', 'ground', 'unpaved', 'mud', 'sand', 'grass', 'woodchips', 'pebblestone', 'compacted'];
+const PATH_CLASSES = ['cycleway', 'path', 'pedestrian', 'footway', 'track', 'bridleway'];
+const LOCAL_STREET_CLASSES = ['minor', 'tertiary', 'service', 'residential', 'living_street', 'unclassified'];
+
+const surfaceColor = (pavedColor: string, unpavedColor: string) =>
+  ['match', ['get', 'surface'], UNPAVED_SURFACES, unpavedColor, pavedColor] as any;
 
 function styleRoamMap(map: Map, showDiscovered: boolean) {
   const layers = map.getStyle().layers ?? [];
@@ -47,7 +53,7 @@ function styleRoamMap(map: Map, showDiscovered: boolean) {
         map.setFilter(layer.id, ['all', ...(existingFilter ? [existingFilter] : []), explicitAccess] as any);
       }
       const isContextRoad = isHighway;
-      map.setPaintProperty(layer.id, 'line-color', isContextRoad ? '#46504d' : isGravelPath || isPedestrianFootpath ? '#72563d' : '#55615c');
+      map.setPaintProperty(layer.id, 'line-color', isContextRoad ? '#46504d' : surfaceColor('#55615c', '#72563d'));
       map.setPaintProperty(layer.id, 'line-opacity', isContextRoad ? 0.68 : isPath ? 0.52 : 0.46);
       map.setPaintProperty(layer.id, 'line-width', isMajor ? ['interpolate', ['linear'], ['zoom'], 10, 1.2, 15, 5.5, 18, 10] : isPath ? ['interpolate', ['linear'], ['zoom'], 12, 0.8, 16, 2, 19, 3] : ['interpolate', ['linear'], ['zoom'], 10, 0.7, 15, 2.8, 18, 6]);
       if (isPedestrianFootpath) map.setPaintProperty(layer.id, 'line-dasharray', [1, 2.5]);
@@ -60,9 +66,9 @@ function styleRoamMap(map: Map, showDiscovered: boolean) {
       type: 'line',
       source: 'openmaptiles',
       'source-layer': 'transportation',
-      filter: ['all', ['match', ['get', 'class'], ['path', 'pedestrian', 'footway', 'track', 'cycleway', 'bridleway'], true, false], ['any', ['match', ['get', 'class'], ['cycleway'], true, false], ['match', ['get', 'bicycle'], ['yes', 'designated', 'permissive'], true, false], ['match', ['get', 'foot'], ['yes', 'designated', 'permissive'], true, false]]] as any,
+      filter: ['all', ['match', ['get', 'class'], PATH_CLASSES, true, false], ['any', ['match', ['get', 'class'], ['cycleway'], true, false], ['match', ['get', 'bicycle'], ['yes', 'designated', 'permissive'], true, false], ['match', ['get', 'foot'], ['yes', 'designated', 'permissive'], true, false]]] as any,
       paint: {
-        'line-color': '#72563d',
+        'line-color': surfaceColor('#55615c', '#72563d'),
         'line-opacity': 0.52,
         'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1, 16, 2.5, 19, 4],
       },
@@ -74,9 +80,9 @@ function styleRoamMap(map: Map, showDiscovered: boolean) {
       type: 'line',
       source: 'openmaptiles',
       'source-layer': 'transportation',
-      filter: ['all', ['match', ['get', 'class'], ['cycleway', 'path', 'pedestrian', 'footway', 'track', 'bridleway', 'minor', 'tertiary', 'service', 'residential', 'living_street', 'unclassified'], true, false], ['any', ['match', ['get', 'class'], ['cycleway'], true, false], ['match', ['get', 'bicycle'], ['yes', 'designated', 'permissive'], true, false], ['match', ['get', 'foot'], ['yes', 'designated', 'permissive'], true, false]]] as any,
+      filter: ['all', ['any', ['all', ['match', ['get', 'class'], PATH_CLASSES, true, false], ['any', ['match', ['get', 'class'], ['cycleway'], true, false], ['match', ['get', 'bicycle'], ['yes', 'designated', 'permissive'], true, false], ['match', ['get', 'foot'], ['yes', 'designated', 'permissive'], true, false]]], ['all', ['match', ['get', 'class'], LOCAL_STREET_CLASSES, true, false], ['!=', ['get', 'bicycle'], 'no']]]] as any,
       paint: {
-        'line-color': ['match', ['get', 'class'], ['path', 'pedestrian', 'footway', 'track', 'bridleway'], '#d59c67', '#f0eee7'],
+        'line-color': surfaceColor('#f0eee7', '#d59c67'),
         'line-opacity': 0.98,
         'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1, 16, 2.5, 19, 4],
       },
