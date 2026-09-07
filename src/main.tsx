@@ -20,7 +20,8 @@ function styleRoamMap(map: Map, showDiscovered: boolean) {
   for (const layer of layers) {
     const id = layer.id.toLowerCase();
     const sourceLayer = 'source-layer' in layer && typeof layer['source-layer'] === 'string' ? layer['source-layer'].toLowerCase() : '';
-    const isRoad = id.includes('transportation') || sourceLayer === 'transportation';
+    const isRoamOverlay = id.startsWith('roam-');
+    const isRoad = !isRoamOverlay && (id.includes('transportation') || sourceLayer === 'transportation');
     const isRail = /rail/.test(id) || /(^|_)transit(_|$)/.test(id);
     const isHighway = /motorway|trunk|primary|secondary/.test(id);
     const isWater = id.includes('water') || sourceLayer === 'water';
@@ -63,7 +64,7 @@ function styleRoamMap(map: Map, showDiscovered: boolean) {
       const explicitAccess = ['any', ['match', ['get', 'class'], ['cycleway'], true, false], ['match', ['get', 'bicycle'], ['yes', 'designated', 'permissive'], true, false], ['match', ['get', 'foot'], ['yes', 'designated', 'permissive'], true, false]];
       map.setFilter(layer.id, ['all', ...(existingFilter ? [existingFilter] : []), parkingAisleFilter, serviceRoadFilter, ...(isPath ? [explicitAccess] : [])] as any);
       const isContextRoad = isHighway;
-      map.setPaintProperty(layer.id, 'line-color', isContextRoad ? '#46504d' : isCycleway ? surfaceColor('#229be0', '#72563d') : surfaceColor('#55615c', '#72563d'));
+      map.setPaintProperty(layer.id, 'line-color', isContextRoad ? '#46504d' : isCycleway ? ['match', ['get', 'surface'], UNPAVED_SURFACES, '#d59c67', '#28b6ff'] : surfaceColor('#55615c', '#72563d'));
       map.setPaintProperty(layer.id, 'line-opacity', isPedestrianFootpath && !showDiscovered ? 0 : isContextRoad ? 0.68 : isPath ? 0.52 : 0.46);
       map.setPaintProperty(layer.id, 'line-width', isMajor ? ['interpolate', ['linear'], ['zoom'], 10, 1.2, 15, 5.5, 18, 10] : isPath ? ['interpolate', ['linear'], ['zoom'], 12, 0.8, 16, 2, 19, 3] : ['interpolate', ['linear'], ['zoom'], 10, 0.7, 15, 2.8, 18, 6]);
       if (isPedestrianFootpath) map.setPaintProperty(layer.id, 'line-dasharray', [1, 2.5]);
@@ -78,7 +79,7 @@ function styleRoamMap(map: Map, showDiscovered: boolean) {
       'source-layer': 'transportation',
       filter: ['all', ['!=', ['get', 'class'], 'parking_aisle'], ['!=', ['get', 'class'], 'service'], ['match', ['get', 'class'], PATH_CLASSES, true, false], ['any', ['match', ['get', 'class'], ['cycleway'], true, false], ['match', ['get', 'bicycle'], ['yes', 'designated', 'permissive'], true, false], ['match', ['get', 'foot'], ['yes', 'designated', 'permissive'], true, false]]] as any,
       paint: {
-        'line-color': ['case', ['==', ['get', 'class'], 'cycleway'], surfaceColor('#229be0', '#72563d'), surfaceColor('#55615c', '#72563d')],
+        'line-color': ['case', ['==', ['get', 'class'], 'cycleway'], ['match', ['get', 'surface'], UNPAVED_SURFACES, '#d59c67', '#229be0'], surfaceColor('#55615c', '#72563d')],
         'line-opacity': 0.52,
         'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1, 16, 2.5, 19, 4],
       },
@@ -92,7 +93,7 @@ function styleRoamMap(map: Map, showDiscovered: boolean) {
       'source-layer': 'transportation',
       filter: ['all', ['!=', ['get', 'class'], 'parking_aisle'], ['!=', ['get', 'class'], 'service'], ['any', ['all', ['match', ['get', 'class'], PATH_CLASSES, true, false], ['any', ['match', ['get', 'class'], ['cycleway'], true, false], ['match', ['get', 'bicycle'], ['yes', 'designated', 'permissive'], true, false], ['match', ['get', 'foot'], ['yes', 'designated', 'permissive'], true, false]]], ['all', ['match', ['get', 'class'], LOCAL_STREET_CLASSES, true, false], ['!=', ['get', 'bicycle'], 'no']]]] as any,
       paint: {
-        'line-color': ['case', ['==', ['get', 'class'], 'cycleway'], surfaceColor('#28b6ff', '#d59c67'), surfaceColor('#f0eee7', '#d59c67')],
+        'line-color': ['case', ['==', ['get', 'class'], 'cycleway'], ['match', ['get', 'surface'], UNPAVED_SURFACES, '#d59c67', '#28b6ff'], ['match', ['get', 'surface'], UNPAVED_SURFACES, '#d59c67', '#f0eee7']],
         'line-opacity': 0.98,
         'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1, 16, 2.5, 19, 4],
       },
@@ -134,7 +135,7 @@ function MapCanvas({ mapRef, showDiscovered }: { mapRef: React.MutableRefObject<
     return () => { map.remove(); mapRef.current = null; };
   }, [mapRef]);
   useEffect(() => {
-    if (mapReady && mapRef.current?.getLayer('roam-discovered-network')) mapRef.current.setLayoutProperty('roam-discovered-network', 'visibility', showDiscovered ? 'visible' : 'none');
+    if (mapReady && mapRef.current) styleRoamMap(mapRef.current, showDiscovered);
   }, [mapReady, mapRef, showDiscovered]);
   return <div className="map-canvas"><div ref={containerRef} className="maplibre-container" />
     <div className="map-coordinates"><span>59°20' N</span><span>18°04' E</span></div><div className="map-scale">100 M</div>
