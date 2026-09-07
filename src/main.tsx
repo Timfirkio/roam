@@ -36,13 +36,16 @@ function styleRoamMap(map: Map) {
       map.setPaintProperty(layer.id, 'line-opacity', 0.8);
     }
     if (isRoad && layer.type === 'line') {
-      const isPath = /path|track|footway|cycleway|bridleway|pedestrian/.test(id);
+      const isCycleway = /cycleway/.test(id);
+      const isPedestrianFootpath = /footway|pedestrian/.test(id);
+      const isGravelPath = /track|path|bridleway/.test(id) && !isPedestrianFootpath && !isCycleway;
+      const isPath = isCycleway || isPedestrianFootpath || isGravelPath;
       const isMajor = /motorway|trunk|primary/.test(id);
-      const isGravel = /track|path|footway|bridleway/.test(id);
-      map.setPaintProperty(layer.id, 'line-color', isGravel ? '#d59c67' : '#e9e7df');
+      map.setPaintProperty(layer.id, 'line-color', isGravelPath || isPedestrianFootpath ? '#d59c67' : '#e9e7df');
       map.setPaintProperty(layer.id, 'line-opacity', isPath ? 0.82 : 0.96);
       map.setPaintProperty(layer.id, 'line-width', isMajor ? ['interpolate', ['linear'], ['zoom'], 10, 1.2, 15, 5.5, 18, 10] : isPath ? ['interpolate', ['linear'], ['zoom'], 12, 0.8, 16, 2, 19, 3] : ['interpolate', ['linear'], ['zoom'], 10, 0.7, 15, 2.8, 18, 6]);
-      if (isPath) map.setPaintProperty(layer.id, 'line-dasharray', [1, 2.5]);
+      if (isPedestrianFootpath) map.setPaintProperty(layer.id, 'line-dasharray', [1, 2.5]);
+      else if (isCycleway || isGravelPath) map.setPaintProperty(layer.id, 'line-dasharray', null);
     }
   }
 }
