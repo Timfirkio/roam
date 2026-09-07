@@ -69,7 +69,9 @@ function styleRoamMap(map: Map, showDiscovered: boolean) {
       const isContextRoad = isHighway;
       map.setPaintProperty(layer.id, 'line-color', isContextRoad ? '#46504d' : isCycleway ? ['match', ['get', 'surface'], UNPAVED_SURFACES, '#d59c67', '#28b6ff'] : surfaceColor('#55615c', '#72563d'));
       map.setPaintProperty(layer.id, 'line-opacity', isPedestrianFootpath && !showDiscovered ? 0 : isContextRoad ? 0.68 : isPath ? 0.52 : 0.46);
-      map.setPaintProperty(layer.id, 'line-width', isMajor ? ['interpolate', ['linear'], ['zoom'], 10, 1.2, 15, 5.5, 18, 10] : isPath ? ['interpolate', ['linear'], ['zoom'], 12, 0.8, 16, 2, 19, 3] : ['interpolate', ['linear'], ['zoom'], 10, 0.7, 15, 2.8, 18, 6]);
+      map.setPaintProperty(layer.id, 'line-width', isMajor ? ['interpolate', ['linear'], ['zoom'], 10, 1.5, 15, 6.5, 18, 12] : isPath ? ['interpolate', ['linear'], ['zoom'], 12, 1.1, 16, 2.8, 19, 4] : ['interpolate', ['linear'], ['zoom'], 10, 1, 15, 3.5, 18, 7]);
+      map.setPaintProperty(layer.id, 'line-cap', 'round');
+      map.setPaintProperty(layer.id, 'line-join', 'round');
       if (isPedestrianFootpath) map.setPaintProperty(layer.id, 'line-dasharray', [1, 2.5]);
       else if (isCycleway || isGravelPath || isContextRoad) map.setPaintProperty(layer.id, 'line-dasharray', null);
     }
@@ -85,7 +87,7 @@ function styleRoamMap(map: Map, showDiscovered: boolean) {
       paint: {
         'line-color': ['case', ['==', ['get', 'class'], 'cycleway'], ['match', ['get', 'surface'], UNPAVED_SURFACES, '#d59c67', '#229be0'], surfaceColor('#55615c', '#72563d')],
         'line-opacity': 0.52,
-        'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1, 16, 2.5, 19, 4],
+        'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1.3, 16, 3, 19, 4.8],
       },
     });
   }
@@ -100,7 +102,7 @@ function styleRoamMap(map: Map, showDiscovered: boolean) {
       paint: {
         'line-color': ['case', ['==', ['get', 'class'], 'cycleway'], ['match', ['get', 'surface'], UNPAVED_SURFACES, '#d59c67', '#28b6ff'], ['match', ['get', 'surface'], UNPAVED_SURFACES, '#d59c67', '#f0eee7']],
         'line-opacity': 0.98,
-        'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1, 16, 2.5, 19, 4],
+        'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1.3, 16, 3, 19, 4.8],
       },
       layout: { visibility: showDiscovered ? 'visible' : 'none' },
     } as any);
@@ -171,7 +173,7 @@ function MapCanvas({ mapRef, showDiscovered, is3D, onLocationChange, onBearingCh
   useEffect(() => {
     if (mapReady && mapRef.current) mapRef.current.easeTo({ pitch: is3D ? 42 : 0, bearing: is3D ? -12 : 0, duration: 450 });
   }, [mapReady, mapRef, is3D]);
-  return <div className="map-canvas"><div ref={containerRef} className="maplibre-container" />
+  return <div className="map-canvas"><div ref={containerRef} className="maplibre-container" /><div className={is3D ? 'map-depth-fade' : 'map-depth-fade map-depth-fade--hidden'} aria-hidden="true" />
     {!mapReady && <div className="map-loading">LOADING ROAD DATA…</div>}
   </div>;
 }
