@@ -170,13 +170,15 @@ function MapCanvas({ mapRef, showDiscovered, onLocationChange }: { mapRef: React
 
 function MapView({ onOpenProgress }: { onOpenProgress: (location: LocationState) => void }) {
   const [showDiscovered, setShowDiscovered] = useState(true);
+  const [debugOpen, setDebugOpen] = useState(false);
   const [location, setLocation] = useState<LocationState>(DEFAULT_LOCATION);
   const mapRef = useRef<Map | null>(null);
   const handleLocationChange = (lng: number, lat: number, locality?: { city?: string; region?: string }) => setLocation((current) => ({ ...current, lng, lat, city: locality?.city?.toUpperCase() || current.city, region: locality?.region?.toUpperCase() || current.region }));
   const summaryWidth = Math.max(190, Math.min(320, 70 + Math.max(location.city.length + location.region.length, 18) * 6));
   return <section className="map-view"><MapCanvas mapRef={mapRef} showDiscovered={showDiscovered} onLocationChange={handleLocationChange} />
-    <header className="map-header"><span className="map-header-spacer" aria-hidden="true" /><button className="location-summary" style={{ width: `${summaryWidth}px` }} type="button" onClick={() => onOpenProgress(location)}><strong>{location.city} / {location.region}</strong><span>42.8% DISCOVERED</span><i className="summary-progress"><b style={{ width: '42.8%' }} /></i></button><div className="map-header-actions"><button className="debug-toggle" type="button" onClick={() => setShowDiscovered(!showDiscovered)}>DEBUG / {showDiscovered ? 'DISCOVERED' : 'UNDISCOVERED'}</button></div></header>
-    <div className="map-controls" aria-label="Map controls"><button type="button" aria-label="Zoom in" onClick={() => mapRef.current?.zoomIn()}>+</button><button type="button" aria-label="Zoom out" onClick={() => mapRef.current?.zoomOut()}>−</button><button type="button" aria-label="Center on location" onClick={() => mapRef.current?.flyTo({ center: [18.0649, 59.3326], zoom: 14 })}>◎</button></div>
+    <header className="map-header"><span className="map-header-spacer" aria-hidden="true" /><button className="location-summary map-ui-surface" style={{ width: `${summaryWidth}px` }} type="button" onClick={() => onOpenProgress(location)}><strong>{location.city} / {location.region}</strong><span>42.8% DISCOVERED</span><i className="summary-progress"><b style={{ width: '42.8%' }} /></i></button><span className="map-header-spacer" aria-hidden="true" /></header>
+    <div className="map-controls" aria-label="Map controls"><button className="map-ui-surface" type="button" aria-label="Zoom in" onClick={() => mapRef.current?.zoomIn()}>+</button><button className="map-ui-surface" type="button" aria-label="Zoom out" onClick={() => mapRef.current?.zoomOut()}>−</button><button className="map-ui-surface" type="button" aria-label="Center on location" onClick={() => mapRef.current?.flyTo({ center: [18.0649, 59.3326], zoom: 14 })}>◎</button></div>
+    <div className="map-debug"><button className="map-ui-surface debug-icon" type="button" aria-label="Open debug settings" aria-expanded={debugOpen} onClick={() => setDebugOpen(!debugOpen)}>⌘</button>{debugOpen && <div className="debug-menu map-ui-surface"><p>DEBUG SETTINGS</p><button type="button" onClick={() => setShowDiscovered(!showDiscovered)}><span>DISCOVERED LAYER</span><b>{showDiscovered ? 'ON' : 'OFF'}</b></button><div><span>ROAD FILTER</span><b>BIKEABLE</b></div><div><span>RESTRICTED AREAS</span><b>MASKED</b></div></div>}</div>
   </section>;
 }
 
