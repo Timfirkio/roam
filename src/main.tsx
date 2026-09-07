@@ -5,11 +5,13 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import './styles.css';
 
 type View = 'map' | 'sessions' | 'progress';
+type LocationState = { city: string; region: string; coordinates: string; lng: number; lat: number };
 
 const MAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
 const UNPAVED_SURFACES = ['gravel', 'fine_gravel', 'dirt', 'earth', 'ground', 'unpaved', 'mud', 'sand', 'grass', 'woodchips', 'pebblestone', 'compacted'];
 const PATH_CLASSES = ['cycleway', 'path', 'pedestrian', 'footway', 'track', 'bridleway'];
 const LOCAL_STREET_CLASSES = ['minor', 'tertiary', 'secondary', 'residential', 'living_street', 'unclassified'];
+const DEFAULT_LOCATION: LocationState = { city: 'STOCKHOLM', region: 'SÖDERMALM', coordinates: formatCoordinates(18.0649, 59.3326), lng: 18.0649, lat: 59.3326 };
 
 const surfaceColor = (pavedColor: string, unpavedColor: string) =>
   ['match', ['get', 'surface'], UNPAVED_SURFACES, unpavedColor, pavedColor] as any;
@@ -172,23 +174,36 @@ function MapCanvas({ mapRef, showDiscovered, onLocationChange }: { mapRef: React
   </div>;
 }
 
-function MapView() {
+function MapView({ onOpenProgress }: { onOpenProgress: (location: LocationState) => void }) {
   const [showDiscovered, setShowDiscovered] = useState(true);
-  const [location, setLocation] = useState({ city: 'STOCKHOLM', region: 'SÖDERMALM', coordinates: formatCoordinates(18.0649, 59.3326), lng: 18.0649, lat: 59.3326 });
+  const [location, setLocation] = useState<LocationState>(DEFAULT_LOCATION);
   const mapRef = useRef<Map | null>(null);
   const handleLocationChange = (lng: number, lat: number, locality?: { city?: string; region?: string }) => setLocation((current) => ({ ...current, lng, lat, coordinates: formatCoordinates(lng, lat), city: locality?.city?.toUpperCase() || current.city, region: locality?.region?.toUpperCase() || current.region }));
   return <section className="map-view"><MapCanvas mapRef={mapRef} showDiscovered={showDiscovered} onLocationChange={handleLocationChange} />
     <header className="map-header"><div className="map-header-actions"><button className="debug-toggle" type="button" onClick={() => setShowDiscovered(!showDiscovered)}>DEBUG / {showDiscovered ? 'DISCOVERED' : 'UNDISCOVERED'}</button></div></header>
-    <div className="map-topline"><div><span>{location.city} / {location.region}</span><small>{location.coordinates}</small></div><span>42.8% REVEALED</span></div>
+    <div className="map-topline"><button className="location-summary" type="button" onClick={() => onOpenProgress(location)}><small>{location.coordinates}</small><strong>{location.city} / {location.region}</strong><span>42.8% DISCOVERED <b>↗</b></span></button></div>
     <div className="map-controls" aria-label="Map controls"><button type="button" aria-label="Zoom in" onClick={() => mapRef.current?.zoomIn()}>+</button><button type="button" aria-label="Zoom out" onClick={() => mapRef.current?.zoomOut()}>−</button><button type="button" aria-label="Center on location" onClick={() => mapRef.current?.flyTo({ center: [18.0649, 59.3326], zoom: 14 })}>◎</button></div>
   </section>;
 }
 
 function PlaceholderView({ title, eyebrow, copy }: { title: string; eyebrow: string; copy: string }) { return <section className="placeholder-view"><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p>{copy}</p><div className="empty-state">MODULE READY<br /><span>Next build slice</span></div></section>; }
 
+function ProgressView({ location }: { location: LocationState }) {
+  const areas = [
+    { name: location.region, city: location.city, percent: '42.8%', types: 'PAVED 61% · GRAVEL 24% · FOOT 15%' },
+    { name: 'Södermalm', city: 'Stockholm', percent: '42.8%', types: 'PAVED 61% · GRAVEL 24% · FOOT 15%' },
+    { name: 'Liljeholmen', city: 'Stockholm', percent: '31.4%', types: 'PAVED 54% · GRAVEL 31% · FOOT 15%' },
+    { name: 'Kungsholmen', city: 'Stockholm', percent: '27.9%', types: 'PAVED 68% · GRAVEL 18% · FOOT 14%' },
+    { name: 'Aspudden', city: 'Stockholm', percent: '19.6%', types: 'PAVED 49% · GRAVEL 38% · FOOT 13%' },
+  ];
+  return <section className="progress-view"><div className="progress-header"><p className="eyebrow">ROAM / PROGRESS</p><h1>Progress</h1><p>Explore the network by neighborhood. Every percentage is a measure of paths uncovered.</p></div><div className="progress-current"><span className="progress-label">CURRENT AREA</span><strong>{location.city} / {location.region}</strong><span>{location.coordinates}</span></div><div className="progress-areas">{areas.map((area, index) => <article className={index === 0 ? 'progress-area progress-area--current' : 'progress-area'} key={`${area.city}-${area.name}`}><div className="progress-area-top"><div><strong>{area.name}</strong><span>{area.city}</span></div><b>{area.percent}</b></div><div className="progress-bar"><i style={{ width: area.percent }} /></div><small>{area.types}</small></article>)}</div></section>;
+}
+
 function App() {
   const [view, setView] = useState<View>('map');
-  return <main className="app-shell"><div className="app-content">{view === 'map' && <MapView />}{view === 'sessions' && <PlaceholderView eyebrow="ROAM / SESSIONS" title="Sessions" copy="A record of every route you take. Session summaries will live here." />}{view === 'progress' && <PlaceholderView eyebrow="ROAM / PROGRESS" title="Progress" copy="See how much of your neighborhoods, city, and region you have uncovered." />}</div><nav className="bottom-nav" aria-label="Primary navigation">{([['map', '◈', 'MAP'], ['sessions', '⌁', 'SESSIONS'], ['progress', '▦', 'PROGRESS']] as const).map(([key, icon, label]) => <button key={key} className={view === key ? 'nav-item nav-item--active' : 'nav-item'} onClick={() => setView(key)} type="button"><span className="nav-icon">{icon}</span><span>{label}</span></button>)}</nav></main>;
+  const [progressLocation, setProgressLocation] = useState<LocationState>(DEFAULT_LOCATION);
+  const openProgress = (location: LocationState) => { setProgressLocation(location); setView('progress'); };
+  return <main className="app-shell"><div className="app-content">{view === 'map' && <MapView onOpenProgress={openProgress} />}{view === 'sessions' && <PlaceholderView eyebrow="ROAM / SESSIONS" title="Sessions" copy="A record of every route you take. Session summaries will live here." />}{view === 'progress' && <ProgressView location={progressLocation} />}</div><nav className="bottom-nav" aria-label="Primary navigation">{([['map', '◈', 'MAP'], ['sessions', '⌁', 'SESSIONS'], ['progress', '▦', 'PROGRESS']] as const).map(([key, icon, label]) => <button key={key} className={view === key ? 'nav-item nav-item--active' : 'nav-item'} onClick={() => setView(key)} type="button"><span className="nav-icon">{icon}</span><span>{label}</span></button>)}</nav></main>;
 }
 
 createRoot(document.getElementById('root')!).render(<StrictMode><App /></StrictMode>);
