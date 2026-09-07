@@ -84,7 +84,7 @@ function styleRoamMap(map: Map, showDiscovered: boolean, is3D: boolean, showBuil
     map.addLayer({
       id: 'roam-bikeable-paths',
       type: 'line',
-      minzoom: 7,
+      minzoom: 6,
       source: 'openmaptiles',
       'source-layer': 'transportation',
       filter: ['all', ['!=', ['get', 'class'], 'parking_aisle'], ['!=', ['get', 'class'], 'service'], ['match', ['get', 'class'], PATH_CLASSES, true, false], ['any', ['match', ['get', 'class'], ['cycleway'], true, false], ['match', ['get', 'bicycle'], ['yes', 'designated', 'permissive'], true, false], ['match', ['get', 'foot'], ['yes', 'designated', 'permissive'], true, false]]] as any,
@@ -99,7 +99,7 @@ function styleRoamMap(map: Map, showDiscovered: boolean, is3D: boolean, showBuil
     map.addLayer({
       id: 'roam-discovered-network',
       type: 'line',
-      minzoom: 7,
+      minzoom: 6,
       source: 'openmaptiles',
       'source-layer': 'transportation',
       filter: ['all', ['!=', ['get', 'class'], 'parking_aisle'], ['!=', ['get', 'class'], 'service'], ['any', ['all', ['match', ['get', 'class'], PATH_CLASSES, true, false], ['any', ['match', ['get', 'class'], ['cycleway'], true, false], ['match', ['get', 'bicycle'], ['yes', 'designated', 'permissive'], true, false], ['match', ['get', 'foot'], ['yes', 'designated', 'permissive'], true, false]]], ['all', ['match', ['get', 'class'], LOCAL_STREET_CLASSES, true, false], ['!=', ['get', 'bicycle'], 'no']]]] as any,
