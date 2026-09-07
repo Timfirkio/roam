@@ -70,8 +70,8 @@ function styleRoamMap(map: Map, showDiscovered: boolean) {
       map.setPaintProperty(layer.id, 'line-color', isContextRoad ? '#46504d' : isCycleway ? ['match', ['get', 'surface'], UNPAVED_SURFACES, '#d59c67', '#28b6ff'] : surfaceColor('#55615c', '#72563d'));
       map.setPaintProperty(layer.id, 'line-opacity', isPedestrianFootpath && !showDiscovered ? 0 : isContextRoad ? 0.68 : isPath ? 0.52 : 0.46);
       map.setPaintProperty(layer.id, 'line-width', isMajor ? ['interpolate', ['linear'], ['zoom'], 10, 1.5, 15, 6.5, 18, 12] : isPath ? ['interpolate', ['linear'], ['zoom'], 12, 1.1, 16, 2.8, 19, 4] : ['interpolate', ['linear'], ['zoom'], 10, 1, 15, 3.5, 18, 7]);
-      map.setPaintProperty(layer.id, 'line-cap', 'round');
-      map.setPaintProperty(layer.id, 'line-join', 'round');
+      map.setLayoutProperty(layer.id, 'line-cap', 'round');
+      map.setLayoutProperty(layer.id, 'line-join', 'round');
       if (isPedestrianFootpath) map.setPaintProperty(layer.id, 'line-dasharray', [1, 2.5]);
       else if (isCycleway || isGravelPath || isContextRoad) map.setPaintProperty(layer.id, 'line-dasharray', null);
     }
