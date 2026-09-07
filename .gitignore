@@ -1,5 +1,7 @@
 node_modules/
 dist/
+.pnpm-store/
+*.tsbuildinfo
 .env
 .env.*
 !.env.example
@@ -7,4 +9,3 @@ dist/
 .idea/
 .vscode/
 *.log
-
