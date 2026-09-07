@@ -127,14 +127,41 @@ function styleRoamMap(map: Map, showDiscovered: boolean) {
   }
 }
 
-function MapCanvas({ mapRef, showDiscovered }: { mapRef: React.MutableRefObject<Map | null>; showDiscovered: boolean }) {
+function formatCoordinates(lng: number, lat: number) {
+  const latitude = `${Math.abs(lat).toFixed(4)}° ${lat >= 0 ? 'N' : 'S'}`;
+  const longitude = `${Math.abs(lng).toFixed(4)}° ${lng >= 0 ? 'E' : 'W'}`;
+  return `${latitude} / ${longitude}`;
+}
+
+function findMapLocality(map: Map) {
+  const center = map.getCenter();
+  const features = map.querySourceFeatures('openmaptiles', { sourceLayer: 'place' });
+  const candidates = features
+    .filter((feature) => typeof feature.properties?.name === 'string')
+    .map((feature) => ({ name: String(feature.properties.name), className: String(feature.properties.class || ''), rank: Number(feature.properties.rank || 99), distance: feature.geometry.type === 'Point' ? Math.hypot((feature.geometry.coordinates[0] as number) - center.lng, (feature.geometry.coordinates[1] as number) - center.lat) : 99 }))
+    .sort((a, b) => a.distance - b.distance || a.rank - b.rank);
+  const city = candidates.find((candidate) => ['city', 'town', 'village'].includes(candidate.className));
+  const region = candidates.find((candidate) => ['suburb', 'neighbourhood', 'quarter', 'district'].includes(candidate.className));
+  return { city: city?.name, region: region?.name };
+}
+
+function MapCanvas({ mapRef, showDiscovered, onLocationChange }: { mapRef: React.MutableRefObject<Map | null>; showDiscovered: boolean; onLocationChange: (lng: number, lat: number, locality?: { city?: string; region?: string }) => void }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [mapReady, setMapReady] = useState(false);
   useEffect(() => {
     if (!containerRef.current) return;
     const map = new maplibregl.Map({ container: containerRef.current, style: MAP_STYLE, center: [18.0649, 59.3326], zoom: 14, pitch: 42, bearing: -12, attributionControl: false });
     mapRef.current = map;
-    map.on('load', () => { styleRoamMap(map, showDiscovered); setMapReady(true); });
+    map.on('load', () => {
+      styleRoamMap(map, showDiscovered);
+      const center = map.getCenter();
+      onLocationChange(center.lng, center.lat, findMapLocality(map));
+      setMapReady(true);
+    });
+    map.on('moveend', () => {
+      const center = map.getCenter();
+      onLocationChange(center.lng, center.lat, findMapLocality(map));
+    });
     return () => { map.remove(); mapRef.current = null; };
   }, [mapRef]);
   useEffect(() => {
@@ -148,12 +175,13 @@ function MapCanvas({ mapRef, showDiscovered }: { mapRef: React.MutableRefObject<
 
 function MapView() {
   const [showDiscovered, setShowDiscovered] = useState(true);
+  const [location, setLocation] = useState({ city: 'STOCKHOLM', region: 'SÖDERMALM', coordinates: formatCoordinates(18.0649, 59.3326), lng: 18.0649, lat: 59.3326 });
   const mapRef = useRef<Map | null>(null);
-  return <section className="map-view"><MapCanvas mapRef={mapRef} showDiscovered={showDiscovered} />
-    <header className="map-header"><div className="wordmark">ROAM<span>/01</span></div><div className="map-header-actions"><button className="debug-toggle" type="button" onClick={() => setShowDiscovered(!showDiscovered)}>DEBUG / {showDiscovered ? 'DISCOVERED' : 'UNDISCOVERED'}</button><div className="header-status"><i className="status-dot" />READY</div></div></header>
-    <div className="map-topline"><span>STOCKHOLM / SÖDERMALM</span><span>42.8% REVEALED</span></div>
+  const handleLocationChange = (lng: number, lat: number, locality?: { city?: string; region?: string }) => setLocation((current) => ({ ...current, lng, lat, coordinates: formatCoordinates(lng, lat), city: locality?.city?.toUpperCase() || current.city, region: locality?.region?.toUpperCase() || current.region }));
+  return <section className="map-view"><MapCanvas mapRef={mapRef} showDiscovered={showDiscovered} onLocationChange={handleLocationChange} />
+    <header className="map-header"><div className="map-header-actions"><button className="debug-toggle" type="button" onClick={() => setShowDiscovered(!showDiscovered)}>DEBUG / {showDiscovered ? 'DISCOVERED' : 'UNDISCOVERED'}</button></div></header>
+    <div className="map-topline"><div><span>{location.city} / {location.region}</span><small>{location.coordinates}</small></div><span>42.8% REVEALED</span></div>
     <div className="map-controls" aria-label="Map controls"><button type="button" aria-label="Zoom in" onClick={() => mapRef.current?.zoomIn()}>+</button><button type="button" aria-label="Zoom out" onClick={() => mapRef.current?.zoomOut()}>−</button><button type="button" aria-label="Center on location" onClick={() => mapRef.current?.flyTo({ center: [18.0649, 59.3326], zoom: 14 })}>◎</button></div>
-    <div className="map-legend"><span><b className="legend-line legend-line--paved" />PAVED</span><span><b className="legend-line legend-line--gravel" />GRAVEL / PATH</span><span><b className="legend-line legend-line--hidden" />UNEXPLORED</span></div>
   </section>;
 }
 
