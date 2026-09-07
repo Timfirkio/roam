@@ -8,6 +8,9 @@ type View = 'map' | 'sessions' | 'progress';
 type LocationState = { city: string; region: string; lng: number; lat: number };
 
 const MAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
+const TERRAIN_SOURCE = 'roam-terrain';
+const HILLSHADE_SOURCE = 'roam-hillshade';
+const TERRAIN_TILEJSON = 'https://tiles.mapterhorn.com/tilejson.json';
 const UNPAVED_SURFACES = ['gravel', 'fine_gravel', 'dirt', 'earth', 'ground', 'unpaved', 'mud', 'sand', 'grass', 'woodchips', 'pebblestone', 'compacted'];
 const PATH_CLASSES = ['cycleway', 'path', 'pedestrian', 'footway', 'track', 'bridleway'];
 const LOCAL_STREET_CLASSES = ['minor', 'tertiary', 'secondary', 'residential', 'living_street', 'unclassified'];
@@ -16,8 +19,9 @@ const DEFAULT_LOCATION: LocationState = { city: 'STOCKHOLM', region: 'SÖDERMALM
 const surfaceColor = (pavedColor: string, unpavedColor: string) =>
   ['match', ['get', 'surface'], UNPAVED_SURFACES, unpavedColor, pavedColor] as any;
 
-function styleRoamMap(map: Map, showDiscovered: boolean) {
+function styleRoamMap(map: Map, showDiscovered: boolean, is3D: boolean) {
   const layers = map.getStyle().layers ?? [];
+  const firstRoadLayer = layers.find((layer) => layer.type === 'line' && ('source-layer' in layer ? layer['source-layer'] === 'transportation' : false))?.id;
   map.setPaintProperty('background', 'background-color', '#0a0b0c');
   for (const layer of layers) {
     const id = layer.id.toLowerCase();
@@ -107,6 +111,42 @@ function styleRoamMap(map: Map, showDiscovered: boolean) {
       layout: { visibility: showDiscovered ? 'visible' : 'none' },
     } as any);
   }
+  if (map.getSource('openmaptiles') && !map.getLayer('roam-buildings-3d')) {
+    map.addLayer({
+      id: 'roam-buildings-3d',
+      type: 'fill-extrusion',
+      minzoom: 13,
+      source: 'openmaptiles',
+      'source-layer': 'building',
+      paint: {
+        'fill-extrusion-color': '#9ca29f',
+        'fill-extrusion-opacity': 0.58,
+        'fill-extrusion-height': ['coalesce', ['get', 'render_height'], ['get', 'height'], 0],
+        'fill-extrusion-base': ['coalesce', ['get', 'render_min_height'], ['get', 'min_height'], 0],
+        'fill-extrusion-vertical-gradient': true,
+      },
+      layout: { visibility: is3D ? 'visible' : 'none' },
+    } as any, firstRoadLayer);
+  }
+  if (map.getLayer('roam-buildings-3d')) map.setLayoutProperty('roam-buildings-3d', 'visibility', is3D ? 'visible' : 'none');
+  if (is3D) {
+    if (!map.getSource(TERRAIN_SOURCE)) map.addSource(TERRAIN_SOURCE, { type: 'raster-dem', url: TERRAIN_TILEJSON, tileSize: 512, encoding: 'terrarium' } as any);
+    if (!map.getSource(HILLSHADE_SOURCE)) map.addSource(HILLSHADE_SOURCE, { type: 'raster-dem', url: TERRAIN_TILEJSON, tileSize: 512, encoding: 'terrarium' } as any);
+    if (!map.getLayer('roam-terrain-hillshade')) {
+      map.addLayer({
+        id: 'roam-terrain-hillshade',
+        type: 'hillshade',
+        source: HILLSHADE_SOURCE,
+        paint: { 'hillshade-shadow-color': '#071216', 'hillshade-highlight-color': '#30403a', 'hillshade-exaggeration': 0.32 },
+        layout: { visibility: 'visible' },
+      } as any, firstRoadLayer);
+    } else map.setLayoutProperty('roam-terrain-hillshade', 'visibility', 'visible');
+    const terrain = map.getTerrain();
+    if (!terrain || terrain.source !== TERRAIN_SOURCE || terrain.exaggeration !== 1.05) map.setTerrain({ source: TERRAIN_SOURCE, exaggeration: 1.05 });
+  } else {
+    if (map.getLayer('roam-terrain-hillshade')) map.setLayoutProperty('roam-terrain-hillshade', 'visibility', 'none');
+    if (map.getTerrain()) map.setTerrain(null);
+  }
   if (map.getSource('openmaptiles')) {
     if (!map.getLayer('roam-restricted-landuse')) {
       map.addLayer({
@@ -154,7 +194,7 @@ function MapCanvas({ mapRef, showDiscovered, is3D, onLocationChange, onBearingCh
     const map = new maplibregl.Map({ container: containerRef.current, style: MAP_STYLE, center: [18.0649, 59.3326], zoom: 14, pitch: 42, bearing: -12, attributionControl: false, canvasContextAttributes: { antialias: true, powerPreference: 'high-performance' } });
     mapRef.current = map;
     map.on('load', () => {
-      styleRoamMap(map, showDiscovered);
+      styleRoamMap(map, showDiscovered, is3D);
       const center = map.getCenter();
       onLocationChange(center.lng, center.lat, findMapLocality(map));
       onBearingChange(map.getBearing());
@@ -168,11 +208,14 @@ function MapCanvas({ mapRef, showDiscovered, is3D, onLocationChange, onBearingCh
     return () => { map.remove(); mapRef.current = null; };
   }, [mapRef]);
   useEffect(() => {
-    if (mapReady && mapRef.current) styleRoamMap(mapRef.current, showDiscovered);
-  }, [mapReady, mapRef, showDiscovered]);
+    if (mapReady && mapRef.current) styleRoamMap(mapRef.current, showDiscovered, is3D);
+  }, [mapReady, mapRef, showDiscovered, is3D]);
   useEffect(() => {
-    if (mapReady && mapRef.current) mapRef.current.easeTo({ pitch: is3D ? 42 : 0, bearing: is3D ? -12 : 0, duration: 450 });
-  }, [mapReady, mapRef, is3D]);
+    if (mapReady && mapRef.current) {
+      styleRoamMap(mapRef.current, showDiscovered, is3D);
+      mapRef.current.easeTo({ pitch: is3D ? 42 : 0, bearing: is3D ? -12 : 0, duration: 450 });
+    }
+  }, [mapReady, mapRef, is3D, showDiscovered]);
   return <div className="map-canvas"><div ref={containerRef} className="maplibre-container" /><div className={is3D ? 'map-depth-fade' : 'map-depth-fade map-depth-fade--hidden'} aria-hidden="true" />
     {!mapReady && <div className="map-loading">LOADING ROAD DATA…</div>}
   </div>;
