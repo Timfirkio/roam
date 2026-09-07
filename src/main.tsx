@@ -60,6 +60,7 @@ function styleRoamMap(map: Map, showDiscovered: boolean) {
       const isGravelPath = /track|path|bridleway/.test(id) && !isPedestrianFootpath && !isCycleway;
       const isPath = isCycleway || isPedestrianFootpath || isGravelPath;
       const isMajor = /motorway|trunk|primary/.test(id);
+      if (isPath) map.setLayerZoomRange(layer.id, 9, 24);
       const existingFilter = 'filter' in layer ? layer.filter : undefined;
       const parkingAisleFilter = ['!=', ['get', 'class'], 'parking_aisle'];
       const serviceRoadFilter = ['!=', ['get', 'class'], 'service'];
@@ -141,7 +142,7 @@ function findMapLocality(map: Map) {
   return { city: city?.name, region: region?.name };
 }
 
-function MapCanvas({ mapRef, showDiscovered, onLocationChange }: { mapRef: React.MutableRefObject<Map | null>; showDiscovered: boolean; onLocationChange: (lng: number, lat: number, locality?: { city?: string; region?: string }) => void }) {
+function MapCanvas({ mapRef, showDiscovered, is3D, onLocationChange }: { mapRef: React.MutableRefObject<Map | null>; showDiscovered: boolean; is3D: boolean; onLocationChange: (lng: number, lat: number, locality?: { city?: string; region?: string }) => void }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [mapReady, setMapReady] = useState(false);
   useEffect(() => {
@@ -163,6 +164,9 @@ function MapCanvas({ mapRef, showDiscovered, onLocationChange }: { mapRef: React
   useEffect(() => {
     if (mapReady && mapRef.current) styleRoamMap(mapRef.current, showDiscovered);
   }, [mapReady, mapRef, showDiscovered]);
+  useEffect(() => {
+    if (mapReady && mapRef.current) mapRef.current.easeTo({ pitch: is3D ? 42 : 0, bearing: is3D ? -12 : 0, duration: 450 });
+  }, [mapReady, mapRef, is3D]);
   return <div className="map-canvas"><div ref={containerRef} className="maplibre-container" />
     {!mapReady && <div className="map-loading">LOADING ROAD DATA…</div>}
   </div>;
@@ -170,14 +174,15 @@ function MapCanvas({ mapRef, showDiscovered, onLocationChange }: { mapRef: React
 
 function MapView({ onOpenProgress }: { onOpenProgress: (location: LocationState) => void }) {
   const [showDiscovered, setShowDiscovered] = useState(true);
+  const [is3D, setIs3D] = useState(true);
   const [debugOpen, setDebugOpen] = useState(false);
   const [location, setLocation] = useState<LocationState>(DEFAULT_LOCATION);
   const mapRef = useRef<Map | null>(null);
   const handleLocationChange = (lng: number, lat: number, locality?: { city?: string; region?: string }) => setLocation((current) => ({ ...current, lng, lat, city: locality?.city?.toUpperCase() || current.city, region: locality?.region?.toUpperCase() || current.region }));
   const summaryWidth = Math.max(190, Math.min(320, 70 + Math.max(location.city.length + location.region.length, 18) * 6));
-  return <section className="map-view"><MapCanvas mapRef={mapRef} showDiscovered={showDiscovered} onLocationChange={handleLocationChange} />
+  return <section className="map-view"><MapCanvas mapRef={mapRef} showDiscovered={showDiscovered} is3D={is3D} onLocationChange={handleLocationChange} />
     <header className="map-header"><span className="map-header-spacer" aria-hidden="true" /><button className="location-summary map-ui-surface" style={{ width: `${summaryWidth}px` }} type="button" onClick={() => onOpenProgress(location)}><strong>{location.city} / {location.region}</strong><span>42.8% DISCOVERED</span><i className="summary-progress"><b style={{ width: '42.8%' }} /></i></button><span className="map-header-spacer" aria-hidden="true" /></header>
-    <div className="map-controls" aria-label="Map controls"><button className="map-ui-surface" type="button" aria-label="Zoom in" onClick={() => mapRef.current?.zoomIn()}>+</button><button className="map-ui-surface" type="button" aria-label="Zoom out" onClick={() => mapRef.current?.zoomOut()}>−</button><button className="map-ui-surface" type="button" aria-label="Center on location" onClick={() => mapRef.current?.flyTo({ center: [18.0649, 59.3326], zoom: 14 })}>◎</button></div>
+    <div className="map-compass"><button className="map-ui-surface" type="button" aria-label="Reset compass north" onClick={() => mapRef.current?.easeTo({ bearing: 0, duration: 450 })}><span>N</span><b>▲</b></button></div><div className="map-controls" aria-label="Map controls"><button className="map-ui-surface map-mode-toggle" type="button" aria-label={`Switch to ${is3D ? '2D' : '3D'} view`} onClick={() => setIs3D(!is3D)}>{is3D ? '3D' : '2D'}</button><button className="map-ui-surface" type="button" aria-label="Zoom in" onClick={() => mapRef.current?.zoomIn()}>+</button><button className="map-ui-surface" type="button" aria-label="Zoom out" onClick={() => mapRef.current?.zoomOut()}>−</button><button className="map-ui-surface" type="button" aria-label="Center on location" onClick={() => mapRef.current?.flyTo({ center: [18.0649, 59.3326], zoom: 14 })}>◎</button></div>
     <div className="map-debug"><button className="map-ui-surface debug-icon" type="button" aria-label="Open debug settings" aria-expanded={debugOpen} onClick={() => setDebugOpen(!debugOpen)}>⌘</button>{debugOpen && <div className="debug-menu map-ui-surface"><p>DEBUG SETTINGS</p><button type="button" onClick={() => setShowDiscovered(!showDiscovered)}><span>DISCOVERED LAYER</span><b>{showDiscovered ? 'ON' : 'OFF'}</b></button><div><span>ROAD FILTER</span><b>BIKEABLE</b></div><div><span>RESTRICTED AREAS</span><b>MASKED</b></div></div>}</div>
   </section>;
 }
