@@ -168,7 +168,6 @@ function MapCanvas({ mapRef, showDiscovered, onLocationChange }: { mapRef: React
     if (mapReady && mapRef.current) styleRoamMap(mapRef.current, showDiscovered);
   }, [mapReady, mapRef, showDiscovered]);
   return <div className="map-canvas"><div ref={containerRef} className="maplibre-container" />
-    <div className="map-coordinates"><span>59°20' N</span><span>18°04' E</span></div><div className="map-scale">100 M</div>
     {!mapReady && <div className="map-loading">LOADING ROAD DATA…</div>}
   </div>;
 }
