@@ -149,7 +149,7 @@ function MapCanvas({ mapRef, showDiscovered, is3D, onLocationChange, onBearingCh
   const [mapReady, setMapReady] = useState(false);
   useEffect(() => {
     if (!containerRef.current) return;
-    const map = new maplibregl.Map({ container: containerRef.current, style: MAP_STYLE, center: [18.0649, 59.3326], zoom: 14, pitch: 42, bearing: -12, attributionControl: false });
+    const map = new maplibregl.Map({ container: containerRef.current, style: MAP_STYLE, center: [18.0649, 59.3326], zoom: 14, pitch: 42, bearing: -12, attributionControl: false, canvasContextAttributes: { antialias: true, powerPreference: 'high-performance' } });
     mapRef.current = map;
     map.on('load', () => {
       styleRoamMap(map, showDiscovered);
