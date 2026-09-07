@@ -3,6 +3,8 @@ import { createRoot } from 'react-dom/client';
 import maplibregl, { type Map } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import './styles.css';
+import { installNetworkSource, NETWORK_SOURCE } from './network-source';
+import { NETWORK_MIN_ZOOM } from './network-tiles';
 
 type View = 'map' | 'sessions' | 'progress';
 type LocationState = { city: string; region: string; lng: number; lat: number };
@@ -11,15 +13,43 @@ const MAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
 const TERRAIN_SOURCE = 'roam-terrain';
 const HILLSHADE_SOURCE = 'roam-hillshade';
 const TERRAIN_TILEJSON = 'https://tiles.mapterhorn.com/tilejson.json';
+const TERRAIN_LOD_LEVELS = 2;
+const TERRAIN_TILE_RATIO = 1.5;
+const TERRAIN_EXAGGERATION = 1.05;
 const ROAD_MIN_ZOOM = 6;
 const ROAD_MAX_ZOOM = 24;
 const UNPAVED_SURFACES = ['gravel', 'fine_gravel', 'dirt', 'earth', 'ground', 'unpaved', 'mud', 'sand', 'grass', 'woodchips', 'pebblestone', 'compacted'];
 const PATH_CLASSES = ['cycleway', 'path', 'pedestrian', 'footway', 'track', 'bridleway'];
 const LOCAL_STREET_CLASSES = ['minor', 'tertiary', 'secondary', 'residential', 'living_street', 'unclassified'];
+const NON_BIKEABLE_ROAD_CLASSES = ['motorway', 'trunk', 'primary'];
+const explicitBikeAccessFeature = ['match', ['get', 'bicycle'], ['yes', 'designated', 'permissive'], true, false] as any;
+const nonBikeableRoadFeature = ['all', ['!', ['match', ['get', 'class'], PATH_CLASSES, true, false]], ['!', explicitBikeAccessFeature], ['any', ['match', ['get', 'class'], NON_BIKEABLE_ROAD_CLASSES, true, false], ['match', ['get', 'subclass'], ['link'], true, false], ['match', ['get', 'bicycle'], ['no'], true, false], ['match', ['get', 'access'], ['no', 'private'], true, false], ['match', ['get', 'vehicle'], ['no'], true, false], ['match', ['get', 'motor_vehicle'], ['no'], true, false]]] as any;
 const DEFAULT_LOCATION: LocationState = { city: 'STOCKHOLM', region: 'SÖDERMALM', lng: 18.0649, lat: 59.3326 };
 
 const surfaceColor = (pavedColor: string, unpavedColor: string) =>
   ['match', ['get', 'surface'], UNPAVED_SURFACES, unpavedColor, pavedColor] as any;
+
+const cyclewayFeature = ['any', ['match', ['get', 'class'], ['cycleway'], true, false], ['match', ['get', 'subclass'], ['cycleway'], true, false]] as any;
+const pathAccessFeature = ['any', cyclewayFeature, ['match', ['get', 'bicycle'], ['yes', 'designated', 'permissive'], true, false], ['match', ['get', 'foot'], ['yes', 'designated', 'permissive'], true, false]] as any;
+const networkExclusionFilter = ['all', ['!', nonBikeableRoadFeature], ['!=', ['get', 'class'], 'parking_aisle'], ['!=', ['get', 'class'], 'service']] as any;
+const bikeablePathEligibilityFilter = ['all', ['match', ['get', 'class'], PATH_CLASSES, true, false], pathAccessFeature] as any;
+const localRoadEligibilityFilter = ['all', ['match', ['get', 'class'], LOCAL_STREET_CLASSES, true, false], ['!=', ['get', 'bicycle'], 'no']] as any;
+const bikeablePathFilter = ['all', networkExclusionFilter, bikeablePathEligibilityFilter] as any;
+const discoveredNetworkFilter = (includePaths: boolean) => ['all', networkExclusionFilter, ['any', ...(includePaths ? [bikeablePathEligibilityFilter] : []), localRoadEligibilityFilter]] as any;
+
+type ProgressStats = {
+  discovered: number;
+  pavedBikeableRoads: number;
+  pavedCycleways: number;
+  unpavedPaths: number;
+  footpaths: number;
+};
+
+const CURRENT_PROGRESS: ProgressStats = { discovered: 42.8, pavedBikeableRoads: 48, pavedCycleways: 13, unpavedPaths: 24, footpaths: 15 };
+
+function ProgressBar({ stats, className = '' }: { stats: ProgressStats; className?: string }) {
+  return <div className={`progress-bar ${className}`}><i className="progress-bar__discovered" style={{ width: `${stats.discovered}%` }}><em className="progress-bar__paved-roads" style={{ width: `${stats.pavedBikeableRoads}%` }} /><em className="progress-bar__paved-cycleways" style={{ width: `${stats.pavedCycleways}%` }} /><em className="progress-bar__unpaved" style={{ width: `${stats.unpavedPaths}%` }} /><em className="progress-bar__footpaths" style={{ width: `${stats.footpaths}%` }} /></i></div>;
+}
 
 function styleRoamMap(map: Map, showDiscovered: boolean, is3D: boolean, showBuildings3D: boolean, showTerrain3D: boolean) {
   const layers = map.getStyle().layers ?? [];
@@ -48,9 +78,9 @@ function styleRoamMap(map: Map, showDiscovered: boolean, is3D: boolean, showBuil
       if (id === 'park') map.setPaintProperty(layer.id, 'fill-outline-color', '#13251f');
     }
     if (layer.type === 'fill' && isRestricted) {
-      map.setPaintProperty(layer.id, 'fill-color', '#35191d');
+      map.setPaintProperty(layer.id, 'fill-color', '#241216');
       map.setPaintProperty(layer.id, 'fill-opacity', 0.9);
-      map.setPaintProperty(layer.id, 'fill-outline-color', '#35191d');
+      map.setPaintProperty(layer.id, 'fill-outline-color', '#241216');
     }
     if (layer.type === 'line' && isWater) {
       map.setPaintProperty(layer.id, 'line-color', '#24465a');
@@ -62,7 +92,6 @@ function styleRoamMap(map: Map, showDiscovered: boolean, is3D: boolean, showBuil
     }
     if (isRoad && layer.type === 'line') {
       const isCycleway = /cycleway/.test(id);
-      const cyclewayFeature = ['any', ['match', ['get', 'class'], ['cycleway'], true, false], ['match', ['get', 'subclass'], ['cycleway'], true, false]];
       const isPedestrianFootpath = /footway|pedestrian/.test(id);
       const isGravelPath = /track|path|bridleway/.test(id) && !isPedestrianFootpath && !isCycleway;
       const isPath = isCycleway || isPedestrianFootpath || isGravelPath;
@@ -71,11 +100,10 @@ function styleRoamMap(map: Map, showDiscovered: boolean, is3D: boolean, showBuil
       const existingFilter = 'filter' in layer ? layer.filter : undefined;
       const parkingAisleFilter = ['!=', ['get', 'class'], 'parking_aisle'];
       const serviceRoadFilter = ['!=', ['get', 'class'], 'service'];
-      const explicitAccess = ['any', cyclewayFeature, ['match', ['get', 'bicycle'], ['yes', 'designated', 'permissive'], true, false], ['match', ['get', 'foot'], ['yes', 'designated', 'permissive'], true, false]];
-      map.setFilter(layer.id, ['all', ...(existingFilter ? [existingFilter] : []), parkingAisleFilter, serviceRoadFilter, ...(isPath ? [explicitAccess] : [])] as any);
+      map.setFilter(layer.id, ['all', ...(existingFilter ? [existingFilter] : []), parkingAisleFilter, serviceRoadFilter, ...(isPath ? [pathAccessFeature] : [])] as any);
       const isContextRoad = isHighway;
-      map.setPaintProperty(layer.id, 'line-color', isContextRoad ? '#46504d' : ['case', cyclewayFeature, ['match', ['get', 'surface'], UNPAVED_SURFACES, '#d59c67', '#28b6ff'], surfaceColor('#55615c', '#72563d')]);
-      map.setPaintProperty(layer.id, 'line-opacity', isPedestrianFootpath && !showDiscovered ? 0 : isContextRoad ? 0.68 : isPath ? 0.52 : 0.46);
+      map.setPaintProperty(layer.id, 'line-color', ['case', nonBikeableRoadFeature, '#3b1d23', isContextRoad, '#46504d', cyclewayFeature, ['match', ['get', 'surface'], UNPAVED_SURFACES, '#d59c67', '#2bb8b0'], surfaceColor('#55615c', '#72563d')]);
+      map.setPaintProperty(layer.id, 'line-opacity', isPedestrianFootpath && !showDiscovered ? 0 : ['case', nonBikeableRoadFeature, 0.62, isContextRoad, 0.68, isPath, 0.34, 0.46]);
       map.setPaintProperty(layer.id, 'line-width', isMajor ? ['interpolate', ['linear'], ['zoom'], 6, 1.2, 10, 1.5, 15, 6.5, 18, 12] : isPath ? ['interpolate', ['linear'], ['zoom'], 6, 1.4, 10, 1.7, 15, 3.2, 18, 5] : ['interpolate', ['linear'], ['zoom'], 6, 1, 10, 1.2, 15, 3.5, 18, 7]);
       map.setLayoutProperty(layer.id, 'line-cap', 'round');
       map.setLayoutProperty(layer.id, 'line-join', 'round');
@@ -91,10 +119,10 @@ function styleRoamMap(map: Map, showDiscovered: boolean, is3D: boolean, showBuil
       maxzoom: ROAD_MAX_ZOOM,
       source: 'openmaptiles',
       'source-layer': 'transportation',
-      filter: ['all', ['!=', ['get', 'class'], 'parking_aisle'], ['!=', ['get', 'class'], 'service'], ['match', ['get', 'class'], PATH_CLASSES, true, false], ['any', ['match', ['get', 'class'], ['cycleway'], true, false], ['match', ['get', 'subclass'], ['cycleway'], true, false], ['match', ['get', 'bicycle'], ['yes', 'designated', 'permissive'], true, false], ['match', ['get', 'foot'], ['yes', 'designated', 'permissive'], true, false]]] as any,
+      filter: bikeablePathFilter,
       paint: {
-        'line-color': ['case', ['any', ['match', ['get', 'class'], ['cycleway'], true, false], ['match', ['get', 'subclass'], ['cycleway'], true, false]], ['match', ['get', 'surface'], UNPAVED_SURFACES, '#d59c67', '#229be0'], surfaceColor('#55615c', '#72563d')],
-        'line-opacity': ['interpolate', ['linear'], ['zoom'], 6, 0.66, 12, 0.58, 16, 0.52, 19, 0.52],
+        'line-color': ['case', ['any', ['match', ['get', 'class'], ['cycleway'], true, false], ['match', ['get', 'subclass'], ['cycleway'], true, false]], ['match', ['get', 'surface'], UNPAVED_SURFACES, '#d59c67', '#2bb8b0'], surfaceColor('#55615c', '#72563d')],
+        'line-opacity': 0.34,
         'line-width': ['interpolate', ['linear'], ['zoom'], 6, 1.4, 10, 1.7, 15, 3.2, 18, 5],
       },
     });
@@ -107,9 +135,9 @@ function styleRoamMap(map: Map, showDiscovered: boolean, is3D: boolean, showBuil
       maxzoom: ROAD_MAX_ZOOM,
       source: 'openmaptiles',
       'source-layer': 'transportation',
-      filter: ['all', ['!=', ['get', 'class'], 'parking_aisle'], ['!=', ['get', 'class'], 'service'], ['any', ['all', ['match', ['get', 'class'], PATH_CLASSES, true, false], ['any', ['match', ['get', 'class'], ['cycleway'], true, false], ['match', ['get', 'subclass'], ['cycleway'], true, false], ['match', ['get', 'bicycle'], ['yes', 'designated', 'permissive'], true, false], ['match', ['get', 'foot'], ['yes', 'designated', 'permissive'], true, false]]], ['all', ['match', ['get', 'class'], LOCAL_STREET_CLASSES, true, false], ['!=', ['get', 'bicycle'], 'no']]]] as any,
+      filter: discoveredNetworkFilter(true),
       paint: {
-        'line-color': ['case', ['any', ['match', ['get', 'class'], ['cycleway'], true, false], ['match', ['get', 'subclass'], ['cycleway'], true, false]], ['match', ['get', 'surface'], UNPAVED_SURFACES, '#d59c67', '#28b6ff'], ['match', ['get', 'surface'], UNPAVED_SURFACES, '#d59c67', '#f0eee7']],
+        'line-color': ['case', ['any', ['match', ['get', 'class'], ['cycleway'], true, false], ['match', ['get', 'subclass'], ['cycleway'], true, false]], ['match', ['get', 'surface'], UNPAVED_SURFACES, '#d59c67', '#2bb8b0'], ['match', ['get', 'surface'], UNPAVED_SURFACES, '#d59c67', '#f0eee7']],
         'line-opacity': 0.98,
         'line-width': ['interpolate', ['linear'], ['zoom'], 6, 1.4, 10, 1.7, 15, 3.2, 18, 5],
       },
@@ -137,6 +165,7 @@ function styleRoamMap(map: Map, showDiscovered: boolean, is3D: boolean, showBuil
   if (is3D && showTerrain3D) {
     if (!map.getSource(TERRAIN_SOURCE)) map.addSource(TERRAIN_SOURCE, { type: 'raster-dem', url: TERRAIN_TILEJSON, tileSize: 512, encoding: 'terrarium' } as any);
     if (!map.getSource(HILLSHADE_SOURCE)) map.addSource(HILLSHADE_SOURCE, { type: 'raster-dem', url: TERRAIN_TILEJSON, tileSize: 512, encoding: 'terrarium' } as any);
+    map.setSourceTileLodParams(TERRAIN_LOD_LEVELS, TERRAIN_TILE_RATIO, TERRAIN_SOURCE);
     if (!map.getLayer('roam-terrain-hillshade')) {
       map.addLayer({
         id: 'roam-terrain-hillshade',
@@ -147,7 +176,7 @@ function styleRoamMap(map: Map, showDiscovered: boolean, is3D: boolean, showBuil
       } as any, firstRoadLayer);
     } else map.setLayoutProperty('roam-terrain-hillshade', 'visibility', 'visible');
     const terrain = map.getTerrain();
-    if (!terrain || terrain.source !== TERRAIN_SOURCE || terrain.exaggeration !== 1.05) map.setTerrain({ source: TERRAIN_SOURCE, exaggeration: 1.05 });
+    if (!terrain || terrain.source !== TERRAIN_SOURCE || terrain.exaggeration !== TERRAIN_EXAGGERATION) map.setTerrain({ source: TERRAIN_SOURCE, exaggeration: TERRAIN_EXAGGERATION });
   } else {
     if (map.getLayer('roam-terrain-hillshade')) map.setLayoutProperty('roam-terrain-hillshade', 'visibility', 'none');
     if (map.getTerrain()) map.setTerrain(null);
@@ -160,7 +189,7 @@ function styleRoamMap(map: Map, showDiscovered: boolean, is3D: boolean, showBuil
         source: 'openmaptiles',
         'source-layer': 'landuse',
         filter: ['match', ['get', 'class'], ['military'], true, false] as any,
-        paint: { 'fill-color': '#35191d', 'fill-opacity': 0.94 },
+        paint: { 'fill-color': '#241216', 'fill-opacity': 0.94 },
       } as any);
     }
     if (!map.getLayer('roam-restricted-aeroway')) {
@@ -170,12 +199,29 @@ function styleRoamMap(map: Map, showDiscovered: boolean, is3D: boolean, showBuil
         source: 'openmaptiles',
         'source-layer': 'aeroway',
         filter: ['match', ['get', 'class'], ['aerodrome', 'airport'], true, false] as any,
-        paint: { 'fill-color': '#35191d', 'fill-opacity': 0.94 },
+        paint: { 'fill-color': '#241216', 'fill-opacity': 0.94 },
       } as any);
     }
   }
   if (map.getLayer('roam-discovered-network')) {
     map.setLayoutProperty('roam-discovered-network', 'visibility', showDiscovered ? 'visible' : 'none');
+  }
+  // Keep the existing generalized overview below z12; use the same filters and
+  // paints against complete z14 geometry at useful cycling zooms.
+  if (map.getSource(NETWORK_SOURCE)) {
+    for (const id of ['roam-bikeable-paths', 'roam-discovered-network']) {
+      const detailId = `${id}-detail`;
+      if (!map.getLayer(detailId)) {
+        const original = map.getStyle().layers.find(layer => layer.id === id);
+        if (original?.type === 'line') {
+          map.addLayer({ ...original, id: detailId, source: NETWORK_SOURCE, minzoom: NETWORK_MIN_ZOOM }, id);
+          map.setLayerZoomRange(id, ROAD_MIN_ZOOM, NETWORK_MIN_ZOOM);
+        }
+      }
+    }
+    if (map.getLayer('roam-discovered-network-detail')) {
+      map.setLayoutProperty('roam-discovered-network-detail', 'visibility', showDiscovered ? 'visible' : 'none');
+    }
   }
 }
 
@@ -198,7 +244,9 @@ function MapCanvas({ mapRef, showDiscovered, is3D, showBuildings3D, showTerrain3
     if (!containerRef.current) return;
     const map = new maplibregl.Map({ container: containerRef.current, style: MAP_STYLE, center: [18.0649, 59.3326], zoom: 14, pitch: 42, bearing: -12, maxPitch: 70, attributionControl: false, canvasContextAttributes: { antialias: true, powerPreference: 'high-performance' } });
     mapRef.current = map;
+    let removeNetworkProtocol = () => {};
     map.on('load', () => {
+      removeNetworkProtocol = installNetworkSource(map);
       styleRoamMap(map, showDiscovered, is3D, showBuildings3D, showTerrain3D);
       const center = map.getCenter();
       onLocationChange(center.lng, center.lat, findMapLocality(map));
@@ -212,7 +260,7 @@ function MapCanvas({ mapRef, showDiscovered, is3D, showBuildings3D, showTerrain3
       const center = map.getCenter();
       onLocationChange(center.lng, center.lat, findMapLocality(map));
     });
-    return () => { map.remove(); mapRef.current = null; };
+    return () => { map.remove(); removeNetworkProtocol(); mapRef.current = null; };
   }, [mapRef]);
   useEffect(() => {
     if (mapReady && mapRef.current) styleRoamMap(mapRef.current, showDiscovered, is3D, showBuildings3D, showTerrain3D);
@@ -247,7 +295,7 @@ function MapView({ onOpenProgress }: { onOpenProgress: (location: LocationState)
   });
   const summaryWidth = Math.max(190, Math.min(320, 70 + Math.max(location.city.length + location.region.length, 18) * 6));
   return <section className="map-view"><MapCanvas mapRef={mapRef} showDiscovered={showDiscovered} is3D={is3D} showBuildings3D={showBuildings3D} showTerrain3D={showTerrain3D} onLocationChange={handleLocationChange} onBearingChange={handleBearingChange} onZoomChange={setZoom} />
-    <header className="map-header"><span className="map-header-spacer" aria-hidden="true" /><button className="location-summary map-ui-surface" style={{ width: `${summaryWidth}px` }} type="button" onClick={() => onOpenProgress(location)}><strong>{location.city} / {location.region}</strong><i className="summary-progress"><b className="summary-progress__discovered" style={{ width: '42.8%' }}><em className="summary-progress__paved" style={{ width: '61%' }} /><em className="summary-progress__unpaved" style={{ width: '39%' }} /></b></i><span>42.8% DISCOVERED</span></button><span className="map-header-spacer" aria-hidden="true" /></header>
+    <header className="map-header"><span className="map-header-spacer" aria-hidden="true" /><button className="location-summary map-ui-surface" style={{ width: `${summaryWidth}px` }} type="button" onClick={() => onOpenProgress(location)}><strong>{location.city} / {location.region}</strong><ProgressBar stats={CURRENT_PROGRESS} className="summary-progress" /><span>{CURRENT_PROGRESS.discovered.toFixed(1)}% DISCOVERED</span></button><span className="map-header-spacer" aria-hidden="true" /></header>
     <div className="map-compass"><button className="map-ui-surface" type="button" aria-label="Reset compass north" onClick={() => mapRef.current?.easeTo({ bearing: 0, duration: 450 })}><span className="compass-rotor" style={{ transform: `rotate(${-bearing}deg)` }}><span className="compass-north-label">N</span><i className="compass-needle"><b className="compass-north">▲</b><b className="compass-south">▼</b></i></span></button></div><div className="map-controls" aria-label="Map controls"><button className="map-ui-surface" type="button" aria-label="Center on location" onClick={() => mapRef.current?.flyTo({ center: [18.0649, 59.3326], zoom: 14 })}>◎</button><button className="map-ui-surface map-mode-toggle" type="button" aria-label={`Switch to ${is3D ? '2D' : '3D'} view`} onClick={() => setIs3D(!is3D)}>{is3D ? '3D' : '2D'}</button><div className="zoom-group map-ui-surface"><button type="button" aria-label="Zoom in" onClick={() => mapRef.current?.zoomIn()}>+</button><button type="button" aria-label="Zoom out" onClick={() => mapRef.current?.zoomOut()}>−</button></div></div>
     <div className="map-debug"><button className="map-ui-surface debug-icon" type="button" aria-label="Open debug settings" aria-expanded={debugOpen} onClick={() => setDebugOpen(!debugOpen)}>⌘</button>{debugOpen && <div className="debug-menu map-ui-surface"><p>DEBUG SETTINGS</p><button type="button" onClick={() => setShowDiscovered(!showDiscovered)}><span>DISCOVERED LAYER</span><b>{showDiscovered ? 'ON' : 'OFF'}</b></button><button type="button" onClick={() => setShowBuildings3D(!showBuildings3D)}><span>BUILDINGS 3D</span><b>{showBuildings3D ? 'ON' : 'OFF'}</b></button><button type="button" onClick={() => setShowTerrain3D(!showTerrain3D)}><span>TERRAIN 3D</span><b>{showTerrain3D ? 'ON' : 'OFF'}</b></button><div><span>ROAD FILTER</span><b>BIKEABLE</b></div><div><span>ZOOM LEVEL</span><b>{zoom.toFixed(1)}</b></div></div>}</div>
   </section>;
@@ -257,13 +305,13 @@ function PlaceholderView({ title, eyebrow, copy }: { title: string; eyebrow: str
 
 function ProgressView({ location }: { location: LocationState }) {
   const areas = [
-    { name: location.region, city: location.city, percent: '42.8%', types: 'PAVED 61% · GRAVEL 24% · FOOT 15%' },
-    { name: 'Södermalm', city: 'Stockholm', percent: '42.8%', types: 'PAVED 61% · GRAVEL 24% · FOOT 15%' },
-    { name: 'Liljeholmen', city: 'Stockholm', percent: '31.4%', types: 'PAVED 54% · GRAVEL 31% · FOOT 15%' },
-    { name: 'Kungsholmen', city: 'Stockholm', percent: '27.9%', types: 'PAVED 68% · GRAVEL 18% · FOOT 14%' },
-    { name: 'Aspudden', city: 'Stockholm', percent: '19.6%', types: 'PAVED 49% · GRAVEL 38% · FOOT 13%' },
+    { name: location.region, city: location.city, stats: CURRENT_PROGRESS },
+    { name: 'Södermalm', city: 'Stockholm', stats: { discovered: 42.8, pavedBikeableRoads: 48, pavedCycleways: 13, unpavedPaths: 24, footpaths: 15 } },
+    { name: 'Liljeholmen', city: 'Stockholm', stats: { discovered: 31.4, pavedBikeableRoads: 42, pavedCycleways: 12, unpavedPaths: 31, footpaths: 15 } },
+    { name: 'Kungsholmen', city: 'Stockholm', stats: { discovered: 27.9, pavedBikeableRoads: 53, pavedCycleways: 15, unpavedPaths: 18, footpaths: 14 } },
+    { name: 'Aspudden', city: 'Stockholm', stats: { discovered: 19.6, pavedBikeableRoads: 36, pavedCycleways: 13, unpavedPaths: 38, footpaths: 13 } },
   ];
-  return <section className="progress-view"><div className="progress-header"><p className="eyebrow">ROAM / PROGRESS</p><h1>Progress</h1><p>Explore the network by neighborhood. Every percentage is a measure of paths uncovered.</p></div><div className="progress-current"><span className="progress-label">CURRENT AREA</span><strong>{location.city} / {location.region}</strong></div><div className="progress-areas">{areas.map((area, index) => <article className={index === 0 ? 'progress-area progress-area--current' : 'progress-area'} key={`${area.city}-${area.name}`}><div className="progress-area-top"><div><strong>{area.name}</strong><span>{area.city}</span></div><b>{area.percent}</b></div><div className="progress-bar"><i style={{ width: area.percent }} /></div><small>{area.types}</small></article>)}</div></section>;
+  return <section className="progress-view"><div className="progress-header"><p className="eyebrow">ROAM / PROGRESS</p><h1>Progress</h1><p>Explore the bikeable network by neighborhood. Every percentage measures eligible paths uncovered.</p></div><div className="progress-current"><span className="progress-label">CURRENT AREA</span><strong>{location.city} / {location.region}</strong></div><div className="progress-areas">{areas.map((area, index) => <article className={index === 0 ? 'progress-area progress-area--current' : 'progress-area'} key={`${area.city}-${area.name}`}><div className="progress-area-top"><div><strong>{area.name}</strong><span>{area.city}</span></div><b>{area.stats.discovered.toFixed(1)}%</b></div><ProgressBar stats={area.stats} /><small>PAVED BIKEABLE ROADS {area.stats.pavedBikeableRoads}% · PAVED CYCLEWAYS {area.stats.pavedCycleways}% · UNPAVED PATHS {area.stats.unpavedPaths}% · FOOTPATHS {area.stats.footpaths}%</small></article>)}</div></section>;
 }
 
 function App() {
