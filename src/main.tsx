@@ -15,9 +15,11 @@ function styleRoamMap(map: Map) {
     const id = layer.id.toLowerCase();
     const sourceLayer = 'source-layer' in layer && typeof layer['source-layer'] === 'string' ? layer['source-layer'].toLowerCase() : '';
     const isRoad = id.includes('transportation') || sourceLayer === 'transportation';
+    const isRail = /rail/.test(id) || /(^|_)transit(_|$)/.test(id);
+    const isHighway = /motorway|trunk/.test(id);
     const isWater = id.includes('water') || sourceLayer === 'water';
     const isPark = /park|wood|forest|grass|meadow|cemetery|recreation|garden|landcover/.test(id) || /landcover|landuse/.test(sourceLayer);
-    if (layer.type === 'symbol' || id.includes('building') || id.includes('boundary') || id === 'park_outline' || id === 'landcover_wetland' || id === 'road_area_pattern') {
+    if (layer.type === 'symbol' || id.includes('building') || id.includes('boundary') || id === 'park_outline' || id === 'landcover_wetland' || id === 'road_area_pattern' || isRail || isHighway) {
       map.setLayoutProperty(layer.id, 'visibility', 'none');
     }
     if (layer.type === 'fill' && isWater) {
