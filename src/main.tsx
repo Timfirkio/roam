@@ -8,7 +8,7 @@ type View = 'map' | 'sessions' | 'progress';
 
 const MAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
 
-function styleRoamMap(map: Map) {
+function styleRoamMap(map: Map, showDiscovered: boolean) {
   const layers = map.getStyle().layers ?? [];
   map.setPaintProperty('background', 'background-color', '#0a0b0c');
   for (const layer of layers) {
@@ -19,7 +19,7 @@ function styleRoamMap(map: Map) {
     const isHighway = /motorway|trunk|primary|secondary/.test(id);
     const isWater = id.includes('water') || sourceLayer === 'water';
     const isPark = /park|wood|forest|grass|meadow|cemetery|recreation|garden|landcover/.test(id) || /landcover|landuse/.test(sourceLayer);
-    if (layer.type === 'symbol' || id.includes('building') || id.includes('boundary') || id === 'park_outline' || id === 'landcover_wetland' || id === 'road_area_pattern' || isRail || isHighway) {
+    if (layer.type === 'symbol' || id.includes('building') || id.includes('boundary') || id === 'park_outline' || id === 'landcover_wetland' || id === 'road_area_pattern' || isRail) {
       map.setLayoutProperty(layer.id, 'visibility', 'none');
     }
     if (layer.type === 'fill' && isWater) {
@@ -41,11 +41,12 @@ function styleRoamMap(map: Map) {
       const isGravelPath = /track|path|bridleway/.test(id) && !isPedestrianFootpath && !isCycleway;
       const isPath = isCycleway || isPedestrianFootpath || isGravelPath;
       const isMajor = /motorway|trunk|primary/.test(id);
-      map.setPaintProperty(layer.id, 'line-color', isGravelPath || isPedestrianFootpath ? '#d59c67' : '#e9e7df');
-      map.setPaintProperty(layer.id, 'line-opacity', isPath ? 0.82 : 0.96);
+      const isContextRoad = isHighway;
+      map.setPaintProperty(layer.id, 'line-color', isContextRoad ? '#46504d' : isGravelPath || isPedestrianFootpath ? '#72563d' : '#55615c');
+      map.setPaintProperty(layer.id, 'line-opacity', isContextRoad ? 0.68 : isPath ? 0.52 : 0.46);
       map.setPaintProperty(layer.id, 'line-width', isMajor ? ['interpolate', ['linear'], ['zoom'], 10, 1.2, 15, 5.5, 18, 10] : isPath ? ['interpolate', ['linear'], ['zoom'], 12, 0.8, 16, 2, 19, 3] : ['interpolate', ['linear'], ['zoom'], 10, 0.7, 15, 2.8, 18, 6]);
       if (isPedestrianFootpath) map.setPaintProperty(layer.id, 'line-dasharray', [1, 2.5]);
-      else if (isCycleway || isGravelPath) map.setPaintProperty(layer.id, 'line-dasharray', null);
+      else if (isCycleway || isGravelPath || isContextRoad) map.setPaintProperty(layer.id, 'line-dasharray', null);
     }
   }
   if (map.getSource('openmaptiles') && !map.getLayer('roam-bikeable-paths')) {
@@ -56,24 +57,42 @@ function styleRoamMap(map: Map) {
       'source-layer': 'transportation',
       filter: ['all', ['match', ['get', 'class'], ['path', 'pedestrian', 'footway'], true, false], ['match', ['get', 'bicycle'], ['yes', 'designated', 'permissive'], true, false]] as any,
       paint: {
-        'line-color': '#d59c67',
-        'line-opacity': 0.95,
+        'line-color': '#72563d',
+        'line-opacity': 0.52,
         'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1, 16, 2.5, 19, 4],
       },
     });
   }
+  if (map.getSource('openmaptiles') && !map.getLayer('roam-discovered-network')) {
+    map.addLayer({
+      id: 'roam-discovered-network',
+      type: 'line',
+      source: 'openmaptiles',
+      'source-layer': 'transportation',
+      filter: ['all', ['match', ['get', 'class'], ['cycleway', 'path', 'pedestrian', 'footway', 'track', 'bridleway', 'minor', 'tertiary', 'service', 'residential', 'living_street', 'unclassified'], true, false], ['!=', ['get', 'bicycle'], 'no']] as any,
+      paint: {
+        'line-color': ['match', ['get', 'class'], ['path', 'pedestrian', 'footway', 'track', 'bridleway'], '#d59c67', '#f0eee7'],
+        'line-opacity': 0.98,
+        'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1, 16, 2.5, 19, 4],
+      },
+      layout: { visibility: showDiscovered ? 'visible' : 'none' },
+    } as any);
+  }
 }
 
-function MapCanvas({ mapRef }: { mapRef: React.MutableRefObject<Map | null> }) {
+function MapCanvas({ mapRef, showDiscovered }: { mapRef: React.MutableRefObject<Map | null>; showDiscovered: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [mapReady, setMapReady] = useState(false);
   useEffect(() => {
     if (!containerRef.current) return;
     const map = new maplibregl.Map({ container: containerRef.current, style: MAP_STYLE, center: [18.0649, 59.3326], zoom: 14, pitch: 42, bearing: -12, attributionControl: false });
     mapRef.current = map;
-    map.on('load', () => { styleRoamMap(map); setMapReady(true); });
+    map.on('load', () => { styleRoamMap(map, showDiscovered); setMapReady(true); });
     return () => { map.remove(); mapRef.current = null; };
   }, [mapRef]);
+  useEffect(() => {
+    if (mapReady && mapRef.current?.getLayer('roam-discovered-network')) mapRef.current.setLayoutProperty('roam-discovered-network', 'visibility', showDiscovered ? 'visible' : 'none');
+  }, [mapReady, mapRef, showDiscovered]);
   return <div className="map-canvas"><div ref={containerRef} className="maplibre-container" />
     <div className="map-coordinates"><span>59°20' N</span><span>18°04' E</span></div><div className="map-scale">100 M</div>
     {!mapReady && <div className="map-loading">LOADING ROAD DATA…</div>}
@@ -82,9 +101,10 @@ function MapCanvas({ mapRef }: { mapRef: React.MutableRefObject<Map | null> }) {
 
 function MapView() {
   const [tracking, setTracking] = useState(false);
+  const [showDiscovered, setShowDiscovered] = useState(true);
   const mapRef = useRef<Map | null>(null);
-  return <section className="map-view"><MapCanvas mapRef={mapRef} />
-    <header className="map-header"><div className="wordmark">ROAM<span>/01</span></div><div className="header-status"><i className={tracking ? 'status-dot status-dot--live' : 'status-dot'} />{tracking ? 'TRACKING' : 'READY'}</div></header>
+  return <section className="map-view"><MapCanvas mapRef={mapRef} showDiscovered={showDiscovered} />
+    <header className="map-header"><div className="wordmark">ROAM<span>/01</span></div><div className="map-header-actions"><button className="debug-toggle" type="button" onClick={() => setShowDiscovered(!showDiscovered)}>DEBUG / {showDiscovered ? 'DISCOVERED' : 'UNDISCOVERED'}</button><div className="header-status"><i className={tracking ? 'status-dot status-dot--live' : 'status-dot'} />{tracking ? 'TRACKING' : 'READY'}</div></div></header>
     <div className="map-topline"><span>STOCKHOLM / SÖDERMALM</span><span>42.8% REVEALED</span></div>
     <div className="map-controls" aria-label="Map controls"><button type="button" aria-label="Zoom in" onClick={() => mapRef.current?.zoomIn()}>+</button><button type="button" aria-label="Zoom out" onClick={() => mapRef.current?.zoomOut()}>−</button><button type="button" aria-label="Center on location" onClick={() => mapRef.current?.flyTo({ center: [18.0649, 59.3326], zoom: 14 })}>◎</button></div>
     <div className="map-legend"><span><b className="legend-line legend-line--paved" />PAVED</span><span><b className="legend-line legend-line--gravel" />GRAVEL / PATH</span><span><b className="legend-line legend-line--hidden" />UNEXPLORED</span></div>
