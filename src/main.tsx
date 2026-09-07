@@ -122,6 +122,9 @@ function styleRoamMap(map: Map, showDiscovered: boolean) {
       } as any);
     }
   }
+  if (map.getLayer('roam-discovered-network')) {
+    map.setLayoutProperty('roam-discovered-network', 'visibility', showDiscovered ? 'visible' : 'none');
+  }
 }
 
 function MapCanvas({ mapRef, showDiscovered }: { mapRef: React.MutableRefObject<Map | null>; showDiscovered: boolean }) {
