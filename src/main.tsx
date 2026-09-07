@@ -64,7 +64,7 @@ function styleRoamMap(map: Map, showDiscovered: boolean, is3D: boolean, showBuil
       const isGravelPath = /track|path|bridleway/.test(id) && !isPedestrianFootpath && !isCycleway;
       const isPath = isCycleway || isPedestrianFootpath || isGravelPath;
       const isMajor = /motorway|trunk|primary/.test(id);
-      if (isPath) map.setLayerZoomRange(layer.id, 7, 24);
+      map.setLayerZoomRange(layer.id, 6, 24);
       const existingFilter = 'filter' in layer ? layer.filter : undefined;
       const parkingAisleFilter = ['!=', ['get', 'class'], 'parking_aisle'];
       const serviceRoadFilter = ['!=', ['get', 'class'], 'service'];
