@@ -11,6 +11,8 @@ const MAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
 const TERRAIN_SOURCE = 'roam-terrain';
 const HILLSHADE_SOURCE = 'roam-hillshade';
 const TERRAIN_TILEJSON = 'https://tiles.mapterhorn.com/tilejson.json';
+const ROAD_MIN_ZOOM = 6;
+const ROAD_MAX_ZOOM = 24;
 const UNPAVED_SURFACES = ['gravel', 'fine_gravel', 'dirt', 'earth', 'ground', 'unpaved', 'mud', 'sand', 'grass', 'woodchips', 'pebblestone', 'compacted'];
 const PATH_CLASSES = ['cycleway', 'path', 'pedestrian', 'footway', 'track', 'bridleway'];
 const LOCAL_STREET_CLASSES = ['minor', 'tertiary', 'secondary', 'residential', 'living_street', 'unclassified'];
@@ -64,7 +66,7 @@ function styleRoamMap(map: Map, showDiscovered: boolean, is3D: boolean, showBuil
       const isGravelPath = /track|path|bridleway/.test(id) && !isPedestrianFootpath && !isCycleway;
       const isPath = isCycleway || isPedestrianFootpath || isGravelPath;
       const isMajor = /motorway|trunk|primary/.test(id);
-      map.setLayerZoomRange(layer.id, 6, 24);
+      map.setLayerZoomRange(layer.id, ROAD_MIN_ZOOM, ROAD_MAX_ZOOM);
       const existingFilter = 'filter' in layer ? layer.filter : undefined;
       const parkingAisleFilter = ['!=', ['get', 'class'], 'parking_aisle'];
       const serviceRoadFilter = ['!=', ['get', 'class'], 'service'];
@@ -73,7 +75,7 @@ function styleRoamMap(map: Map, showDiscovered: boolean, is3D: boolean, showBuil
       const isContextRoad = isHighway;
       map.setPaintProperty(layer.id, 'line-color', isContextRoad ? '#46504d' : isCycleway ? ['match', ['get', 'surface'], UNPAVED_SURFACES, '#d59c67', '#28b6ff'] : surfaceColor('#55615c', '#72563d'));
       map.setPaintProperty(layer.id, 'line-opacity', isPedestrianFootpath && !showDiscovered ? 0 : isContextRoad ? 0.68 : isPath ? 0.52 : 0.46);
-      map.setPaintProperty(layer.id, 'line-width', isMajor ? ['interpolate', ['linear'], ['zoom'], 10, 1.5, 15, 6.5, 18, 12] : isPath ? ['interpolate', ['linear'], ['zoom'], 12, 1.1, 16, 2.8, 19, 4] : ['interpolate', ['linear'], ['zoom'], 10, 1, 15, 3.5, 18, 7]);
+      map.setPaintProperty(layer.id, 'line-width', isMajor ? ['interpolate', ['linear'], ['zoom'], 6, 1.2, 10, 1.5, 15, 6.5, 18, 12] : isPath ? ['interpolate', ['linear'], ['zoom'], 6, 1.4, 10, 1.7, 15, 3.2, 18, 5] : ['interpolate', ['linear'], ['zoom'], 6, 1, 10, 1.2, 15, 3.5, 18, 7]);
       map.setLayoutProperty(layer.id, 'line-cap', 'round');
       map.setLayoutProperty(layer.id, 'line-join', 'round');
       if (isPedestrianFootpath) map.setPaintProperty(layer.id, 'line-dasharray', [1, 2.5]);
@@ -84,14 +86,15 @@ function styleRoamMap(map: Map, showDiscovered: boolean, is3D: boolean, showBuil
     map.addLayer({
       id: 'roam-bikeable-paths',
       type: 'line',
-      minzoom: 6,
+      minzoom: ROAD_MIN_ZOOM,
+      maxzoom: ROAD_MAX_ZOOM,
       source: 'openmaptiles',
       'source-layer': 'transportation',
       filter: ['all', ['!=', ['get', 'class'], 'parking_aisle'], ['!=', ['get', 'class'], 'service'], ['match', ['get', 'class'], PATH_CLASSES, true, false], ['any', ['match', ['get', 'class'], ['cycleway'], true, false], ['match', ['get', 'bicycle'], ['yes', 'designated', 'permissive'], true, false], ['match', ['get', 'foot'], ['yes', 'designated', 'permissive'], true, false]]] as any,
       paint: {
         'line-color': ['case', ['==', ['get', 'class'], 'cycleway'], ['match', ['get', 'surface'], UNPAVED_SURFACES, '#d59c67', '#229be0'], surfaceColor('#55615c', '#72563d')],
-        'line-opacity': 0.52,
-        'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1.3, 16, 3, 19, 4.8],
+        'line-opacity': ['interpolate', ['linear'], ['zoom'], 6, 0.66, 12, 0.58, 16, 0.52, 19, 0.52],
+        'line-width': ['interpolate', ['linear'], ['zoom'], 6, 1.4, 10, 1.7, 15, 3.2, 18, 5],
       },
     });
   }
@@ -99,14 +102,15 @@ function styleRoamMap(map: Map, showDiscovered: boolean, is3D: boolean, showBuil
     map.addLayer({
       id: 'roam-discovered-network',
       type: 'line',
-      minzoom: 6,
+      minzoom: ROAD_MIN_ZOOM,
+      maxzoom: ROAD_MAX_ZOOM,
       source: 'openmaptiles',
       'source-layer': 'transportation',
       filter: ['all', ['!=', ['get', 'class'], 'parking_aisle'], ['!=', ['get', 'class'], 'service'], ['any', ['all', ['match', ['get', 'class'], PATH_CLASSES, true, false], ['any', ['match', ['get', 'class'], ['cycleway'], true, false], ['match', ['get', 'bicycle'], ['yes', 'designated', 'permissive'], true, false], ['match', ['get', 'foot'], ['yes', 'designated', 'permissive'], true, false]]], ['all', ['match', ['get', 'class'], LOCAL_STREET_CLASSES, true, false], ['!=', ['get', 'bicycle'], 'no']]]] as any,
       paint: {
         'line-color': ['case', ['==', ['get', 'class'], 'cycleway'], ['match', ['get', 'surface'], UNPAVED_SURFACES, '#d59c67', '#28b6ff'], ['match', ['get', 'surface'], UNPAVED_SURFACES, '#d59c67', '#f0eee7']],
         'line-opacity': 0.98,
-        'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1.3, 16, 3, 19, 4.8],
+        'line-width': ['interpolate', ['linear'], ['zoom'], 6, 1.4, 10, 1.7, 15, 3.2, 18, 5],
       },
       layout: { visibility: showDiscovered ? 'visible' : 'none' },
     } as any);
