@@ -19,7 +19,7 @@ const DEFAULT_LOCATION: LocationState = { city: 'STOCKHOLM', region: 'SÖDERMALM
 const surfaceColor = (pavedColor: string, unpavedColor: string) =>
   ['match', ['get', 'surface'], UNPAVED_SURFACES, unpavedColor, pavedColor] as any;
 
-function styleRoamMap(map: Map, showDiscovered: boolean, is3D: boolean) {
+function styleRoamMap(map: Map, showDiscovered: boolean, is3D: boolean, showBuildings3D: boolean) {
   const layers = map.getStyle().layers ?? [];
   const firstRoadLayer = layers.find((layer) => layer.type === 'line' && ('source-layer' in layer ? layer['source-layer'] === 'transportation' : false))?.id;
   map.setPaintProperty('background', 'background-color', '#0a0b0c');
@@ -119,16 +119,16 @@ function styleRoamMap(map: Map, showDiscovered: boolean, is3D: boolean) {
       source: 'openmaptiles',
       'source-layer': 'building',
       paint: {
-        'fill-extrusion-color': '#9ca29f',
-        'fill-extrusion-opacity': 0.58,
+        'fill-extrusion-color': '#27302e',
+        'fill-extrusion-opacity': 0.28,
         'fill-extrusion-height': ['coalesce', ['get', 'render_height'], ['get', 'height'], 0],
         'fill-extrusion-base': ['coalesce', ['get', 'render_min_height'], ['get', 'min_height'], 0],
         'fill-extrusion-vertical-gradient': true,
       },
-      layout: { visibility: is3D ? 'visible' : 'none' },
+      layout: { visibility: is3D && showBuildings3D ? 'visible' : 'none' },
     } as any, firstRoadLayer);
   }
-  if (map.getLayer('roam-buildings-3d')) map.setLayoutProperty('roam-buildings-3d', 'visibility', is3D ? 'visible' : 'none');
+  if (map.getLayer('roam-buildings-3d')) map.setLayoutProperty('roam-buildings-3d', 'visibility', is3D && showBuildings3D ? 'visible' : 'none');
   if (is3D) {
     if (!map.getSource(TERRAIN_SOURCE)) map.addSource(TERRAIN_SOURCE, { type: 'raster-dem', url: TERRAIN_TILEJSON, tileSize: 512, encoding: 'terrarium' } as any);
     if (!map.getSource(HILLSHADE_SOURCE)) map.addSource(HILLSHADE_SOURCE, { type: 'raster-dem', url: TERRAIN_TILEJSON, tileSize: 512, encoding: 'terrarium' } as any);
@@ -186,7 +186,7 @@ function findMapLocality(map: Map) {
   return { city: city?.name, region: region?.name };
 }
 
-function MapCanvas({ mapRef, showDiscovered, is3D, onLocationChange, onBearingChange }: { mapRef: React.MutableRefObject<Map | null>; showDiscovered: boolean; is3D: boolean; onLocationChange: (lng: number, lat: number, locality?: { city?: string; region?: string }) => void; onBearingChange: (bearing: number) => void }) {
+function MapCanvas({ mapRef, showDiscovered, is3D, showBuildings3D, onLocationChange, onBearingChange }: { mapRef: React.MutableRefObject<Map | null>; showDiscovered: boolean; is3D: boolean; showBuildings3D: boolean; onLocationChange: (lng: number, lat: number, locality?: { city?: string; region?: string }) => void; onBearingChange: (bearing: number) => void }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [mapReady, setMapReady] = useState(false);
   useEffect(() => {
@@ -194,7 +194,7 @@ function MapCanvas({ mapRef, showDiscovered, is3D, onLocationChange, onBearingCh
     const map = new maplibregl.Map({ container: containerRef.current, style: MAP_STYLE, center: [18.0649, 59.3326], zoom: 14, pitch: 42, bearing: -12, attributionControl: false, canvasContextAttributes: { antialias: true, powerPreference: 'high-performance' } });
     mapRef.current = map;
     map.on('load', () => {
-      styleRoamMap(map, showDiscovered, is3D);
+      styleRoamMap(map, showDiscovered, is3D, showBuildings3D);
       const center = map.getCenter();
       onLocationChange(center.lng, center.lat, findMapLocality(map));
       onBearingChange(map.getBearing());
@@ -208,14 +208,14 @@ function MapCanvas({ mapRef, showDiscovered, is3D, onLocationChange, onBearingCh
     return () => { map.remove(); mapRef.current = null; };
   }, [mapRef]);
   useEffect(() => {
-    if (mapReady && mapRef.current) styleRoamMap(mapRef.current, showDiscovered, is3D);
-  }, [mapReady, mapRef, showDiscovered, is3D]);
+    if (mapReady && mapRef.current) styleRoamMap(mapRef.current, showDiscovered, is3D, showBuildings3D);
+  }, [mapReady, mapRef, showDiscovered, is3D, showBuildings3D]);
   useEffect(() => {
     if (mapReady && mapRef.current) {
-      styleRoamMap(mapRef.current, showDiscovered, is3D);
+      styleRoamMap(mapRef.current, showDiscovered, is3D, showBuildings3D);
       mapRef.current.easeTo({ pitch: is3D ? 42 : 0, bearing: is3D ? -12 : 0, duration: 450 });
     }
-  }, [mapReady, mapRef, is3D, showDiscovered]);
+  }, [mapReady, mapRef, is3D, showDiscovered, showBuildings3D]);
   return <div className="map-canvas"><div ref={containerRef} className="maplibre-container" /><div className={is3D ? 'map-depth-fade' : 'map-depth-fade map-depth-fade--hidden'} aria-hidden="true" />
     {!mapReady && <div className="map-loading">LOADING ROAD DATA…</div>}
   </div>;
@@ -224,6 +224,7 @@ function MapCanvas({ mapRef, showDiscovered, is3D, onLocationChange, onBearingCh
 function MapView({ onOpenProgress }: { onOpenProgress: (location: LocationState) => void }) {
   const [showDiscovered, setShowDiscovered] = useState(true);
   const [is3D, setIs3D] = useState(true);
+  const [showBuildings3D, setShowBuildings3D] = useState(false);
   const [bearing, setBearing] = useState(-12);
   const [debugOpen, setDebugOpen] = useState(false);
   const [location, setLocation] = useState<LocationState>(DEFAULT_LOCATION);
@@ -236,10 +237,10 @@ function MapView({ onOpenProgress }: { onOpenProgress: (location: LocationState)
     return adjustedBearing;
   });
   const summaryWidth = Math.max(190, Math.min(320, 70 + Math.max(location.city.length + location.region.length, 18) * 6));
-  return <section className="map-view"><MapCanvas mapRef={mapRef} showDiscovered={showDiscovered} is3D={is3D} onLocationChange={handleLocationChange} onBearingChange={handleBearingChange} />
+  return <section className="map-view"><MapCanvas mapRef={mapRef} showDiscovered={showDiscovered} is3D={is3D} showBuildings3D={showBuildings3D} onLocationChange={handleLocationChange} onBearingChange={handleBearingChange} />
     <header className="map-header"><span className="map-header-spacer" aria-hidden="true" /><button className="location-summary map-ui-surface" style={{ width: `${summaryWidth}px` }} type="button" onClick={() => onOpenProgress(location)}><strong>{location.city} / {location.region}</strong><i className="summary-progress"><b className="summary-progress__discovered" style={{ width: '42.8%' }}><em className="summary-progress__paved" style={{ width: '61%' }} /><em className="summary-progress__unpaved" style={{ width: '39%' }} /></b></i><span>42.8% DISCOVERED</span></button><span className="map-header-spacer" aria-hidden="true" /></header>
     <div className="map-compass"><button className="map-ui-surface" type="button" aria-label="Reset compass north" onClick={() => mapRef.current?.easeTo({ bearing: 0, duration: 450 })}><span className="compass-rotor" style={{ transform: `rotate(${-bearing}deg)` }}><span className="compass-north-label">N</span><i className="compass-needle"><b className="compass-north">▲</b><b className="compass-south">▼</b></i></span></button></div><div className="map-controls" aria-label="Map controls"><button className="map-ui-surface" type="button" aria-label="Center on location" onClick={() => mapRef.current?.flyTo({ center: [18.0649, 59.3326], zoom: 14 })}>◎</button><button className="map-ui-surface map-mode-toggle" type="button" aria-label={`Switch to ${is3D ? '2D' : '3D'} view`} onClick={() => setIs3D(!is3D)}>{is3D ? '3D' : '2D'}</button><div className="zoom-group map-ui-surface"><button type="button" aria-label="Zoom in" onClick={() => mapRef.current?.zoomIn()}>+</button><button type="button" aria-label="Zoom out" onClick={() => mapRef.current?.zoomOut()}>−</button></div></div>
-    <div className="map-debug"><button className="map-ui-surface debug-icon" type="button" aria-label="Open debug settings" aria-expanded={debugOpen} onClick={() => setDebugOpen(!debugOpen)}>⌘</button>{debugOpen && <div className="debug-menu map-ui-surface"><p>DEBUG SETTINGS</p><button type="button" onClick={() => setShowDiscovered(!showDiscovered)}><span>DISCOVERED LAYER</span><b>{showDiscovered ? 'ON' : 'OFF'}</b></button><div><span>ROAD FILTER</span><b>BIKEABLE</b></div><div><span>RESTRICTED AREAS</span><b>MASKED</b></div></div>}</div>
+    <div className="map-debug"><button className="map-ui-surface debug-icon" type="button" aria-label="Open debug settings" aria-expanded={debugOpen} onClick={() => setDebugOpen(!debugOpen)}>⌘</button>{debugOpen && <div className="debug-menu map-ui-surface"><p>DEBUG SETTINGS</p><button type="button" onClick={() => setShowDiscovered(!showDiscovered)}><span>DISCOVERED LAYER</span><b>{showDiscovered ? 'ON' : 'OFF'}</b></button><button type="button" onClick={() => setShowBuildings3D(!showBuildings3D)}><span>BUILDINGS 3D</span><b>{showBuildings3D ? 'ON' : 'OFF'}</b></button><div><span>ROAD FILTER</span><b>BIKEABLE</b></div><div><span>RESTRICTED AREAS</span><b>MASKED</b></div></div>}</div>
   </section>;
 }
 
