@@ -48,6 +48,20 @@ function styleRoamMap(map: Map) {
       else if (isCycleway || isGravelPath) map.setPaintProperty(layer.id, 'line-dasharray', null);
     }
   }
+  if (map.getSource('openmaptiles') && !map.getLayer('roam-bikeable-paths')) {
+    map.addLayer({
+      id: 'roam-bikeable-paths',
+      type: 'line',
+      source: 'openmaptiles',
+      'source-layer': 'transportation',
+      filter: ['all', ['match', ['get', 'class'], ['path', 'pedestrian', 'footway'], true, false], ['match', ['get', 'bicycle'], ['yes', 'designated', 'permissive'], true, false]] as any,
+      paint: {
+        'line-color': '#d59c67',
+        'line-opacity': 0.95,
+        'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1, 16, 2.5, 19, 4],
+      },
+    });
+  }
 }
 
 function MapCanvas({ mapRef }: { mapRef: React.MutableRefObject<Map | null> }) {
