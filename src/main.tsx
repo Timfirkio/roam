@@ -9,7 +9,7 @@ type View = 'map' | 'sessions' | 'progress';
 const MAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
 const UNPAVED_SURFACES = ['gravel', 'fine_gravel', 'dirt', 'earth', 'ground', 'unpaved', 'mud', 'sand', 'grass', 'woodchips', 'pebblestone', 'compacted'];
 const PATH_CLASSES = ['cycleway', 'path', 'pedestrian', 'footway', 'track', 'bridleway'];
-const LOCAL_STREET_CLASSES = ['minor', 'tertiary', 'service', 'residential', 'living_street', 'unclassified'];
+const LOCAL_STREET_CLASSES = ['minor', 'tertiary', 'secondary', 'residential', 'living_street', 'unclassified'];
 
 const surfaceColor = (pavedColor: string, unpavedColor: string) =>
   ['match', ['get', 'surface'], UNPAVED_SURFACES, unpavedColor, pavedColor] as any;
@@ -30,11 +30,11 @@ function styleRoamMap(map: Map, showDiscovered: boolean) {
       map.setLayoutProperty(layer.id, 'visibility', 'none');
     }
     if (layer.type === 'fill' && isWater) {
-      map.setPaintProperty(layer.id, 'fill-color', '#142a3a');
+      map.setPaintProperty(layer.id, 'fill-color', '#102331');
       map.setPaintProperty(layer.id, 'fill-opacity', 0.92);
     }
     if (layer.type === 'fill' && isPark) {
-      map.setPaintProperty(layer.id, 'fill-color', '#13251f');
+      map.setPaintProperty(layer.id, 'fill-color', '#0e1b17');
       map.setPaintProperty(layer.id, 'fill-opacity', 0.86);
       if (id === 'park') map.setPaintProperty(layer.id, 'fill-outline-color', '#13251f');
     }
@@ -59,11 +59,12 @@ function styleRoamMap(map: Map, showDiscovered: boolean) {
       const isMajor = /motorway|trunk|primary/.test(id);
       const existingFilter = 'filter' in layer ? layer.filter : undefined;
       const parkingAisleFilter = ['!=', ['get', 'class'], 'parking_aisle'];
+      const serviceRoadFilter = ['!=', ['get', 'class'], 'service'];
       const explicitAccess = ['any', ['match', ['get', 'class'], ['cycleway'], true, false], ['match', ['get', 'bicycle'], ['yes', 'designated', 'permissive'], true, false], ['match', ['get', 'foot'], ['yes', 'designated', 'permissive'], true, false]];
-      map.setFilter(layer.id, ['all', ...(existingFilter ? [existingFilter] : []), parkingAisleFilter, ...(isPath ? [explicitAccess] : [])] as any);
+      map.setFilter(layer.id, ['all', ...(existingFilter ? [existingFilter] : []), parkingAisleFilter, serviceRoadFilter, ...(isPath ? [explicitAccess] : [])] as any);
       const isContextRoad = isHighway;
-      map.setPaintProperty(layer.id, 'line-color', isContextRoad ? '#46504d' : surfaceColor('#55615c', '#72563d'));
-      map.setPaintProperty(layer.id, 'line-opacity', isContextRoad ? 0.68 : isPath ? 0.52 : 0.46);
+      map.setPaintProperty(layer.id, 'line-color', isContextRoad ? '#46504d' : isCycleway ? surfaceColor('#229be0', '#72563d') : surfaceColor('#55615c', '#72563d'));
+      map.setPaintProperty(layer.id, 'line-opacity', isPedestrianFootpath && !showDiscovered ? 0 : isContextRoad ? 0.68 : isPath ? 0.52 : 0.46);
       map.setPaintProperty(layer.id, 'line-width', isMajor ? ['interpolate', ['linear'], ['zoom'], 10, 1.2, 15, 5.5, 18, 10] : isPath ? ['interpolate', ['linear'], ['zoom'], 12, 0.8, 16, 2, 19, 3] : ['interpolate', ['linear'], ['zoom'], 10, 0.7, 15, 2.8, 18, 6]);
       if (isPedestrianFootpath) map.setPaintProperty(layer.id, 'line-dasharray', [1, 2.5]);
       else if (isCycleway || isGravelPath || isContextRoad) map.setPaintProperty(layer.id, 'line-dasharray', null);
@@ -75,9 +76,9 @@ function styleRoamMap(map: Map, showDiscovered: boolean) {
       type: 'line',
       source: 'openmaptiles',
       'source-layer': 'transportation',
-      filter: ['all', ['!=', ['get', 'class'], 'parking_aisle'], ['match', ['get', 'class'], PATH_CLASSES, true, false], ['any', ['match', ['get', 'class'], ['cycleway'], true, false], ['match', ['get', 'bicycle'], ['yes', 'designated', 'permissive'], true, false], ['match', ['get', 'foot'], ['yes', 'designated', 'permissive'], true, false]]] as any,
+      filter: ['all', ['!=', ['get', 'class'], 'parking_aisle'], ['!=', ['get', 'class'], 'service'], ['match', ['get', 'class'], PATH_CLASSES, true, false], ['any', ['match', ['get', 'class'], ['cycleway'], true, false], ['match', ['get', 'bicycle'], ['yes', 'designated', 'permissive'], true, false], ['match', ['get', 'foot'], ['yes', 'designated', 'permissive'], true, false]]] as any,
       paint: {
-        'line-color': surfaceColor('#55615c', '#72563d'),
+        'line-color': ['case', ['==', ['get', 'class'], 'cycleway'], surfaceColor('#229be0', '#72563d'), surfaceColor('#55615c', '#72563d')],
         'line-opacity': 0.52,
         'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1, 16, 2.5, 19, 4],
       },
@@ -89,9 +90,9 @@ function styleRoamMap(map: Map, showDiscovered: boolean) {
       type: 'line',
       source: 'openmaptiles',
       'source-layer': 'transportation',
-      filter: ['all', ['!=', ['get', 'class'], 'parking_aisle'], ['any', ['all', ['match', ['get', 'class'], PATH_CLASSES, true, false], ['any', ['match', ['get', 'class'], ['cycleway'], true, false], ['match', ['get', 'bicycle'], ['yes', 'designated', 'permissive'], true, false], ['match', ['get', 'foot'], ['yes', 'designated', 'permissive'], true, false]]], ['all', ['match', ['get', 'class'], LOCAL_STREET_CLASSES, true, false], ['!=', ['get', 'bicycle'], 'no']]]] as any,
+      filter: ['all', ['!=', ['get', 'class'], 'parking_aisle'], ['!=', ['get', 'class'], 'service'], ['any', ['all', ['match', ['get', 'class'], PATH_CLASSES, true, false], ['any', ['match', ['get', 'class'], ['cycleway'], true, false], ['match', ['get', 'bicycle'], ['yes', 'designated', 'permissive'], true, false], ['match', ['get', 'foot'], ['yes', 'designated', 'permissive'], true, false]]], ['all', ['match', ['get', 'class'], LOCAL_STREET_CLASSES, true, false], ['!=', ['get', 'bicycle'], 'no']]]] as any,
       paint: {
-        'line-color': surfaceColor('#f0eee7', '#d59c67'),
+        'line-color': ['case', ['==', ['get', 'class'], 'cycleway'], surfaceColor('#28b6ff', '#d59c67'), surfaceColor('#f0eee7', '#d59c67')],
         'line-opacity': 0.98,
         'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1, 16, 2.5, 19, 4],
       },
