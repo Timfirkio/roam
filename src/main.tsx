@@ -41,6 +41,11 @@ function styleRoamMap(map: Map, showDiscovered: boolean) {
       const isGravelPath = /track|path|bridleway/.test(id) && !isPedestrianFootpath && !isCycleway;
       const isPath = isCycleway || isPedestrianFootpath || isGravelPath;
       const isMajor = /motorway|trunk|primary/.test(id);
+      if (isPath) {
+        const existingFilter = 'filter' in layer ? layer.filter : undefined;
+        const explicitAccess = ['any', ['match', ['get', 'class'], ['cycleway'], true, false], ['match', ['get', 'bicycle'], ['yes', 'designated', 'permissive'], true, false], ['match', ['get', 'foot'], ['yes', 'designated', 'permissive'], true, false]];
+        map.setFilter(layer.id, ['all', ...(existingFilter ? [existingFilter] : []), explicitAccess] as any);
+      }
       const isContextRoad = isHighway;
       map.setPaintProperty(layer.id, 'line-color', isContextRoad ? '#46504d' : isGravelPath || isPedestrianFootpath ? '#72563d' : '#55615c');
       map.setPaintProperty(layer.id, 'line-opacity', isContextRoad ? 0.68 : isPath ? 0.52 : 0.46);
@@ -55,7 +60,7 @@ function styleRoamMap(map: Map, showDiscovered: boolean) {
       type: 'line',
       source: 'openmaptiles',
       'source-layer': 'transportation',
-      filter: ['all', ['match', ['get', 'class'], ['path', 'pedestrian', 'footway'], true, false], ['match', ['get', 'bicycle'], ['yes', 'designated', 'permissive'], true, false]] as any,
+      filter: ['all', ['match', ['get', 'class'], ['path', 'pedestrian', 'footway', 'track', 'cycleway', 'bridleway'], true, false], ['any', ['match', ['get', 'class'], ['cycleway'], true, false], ['match', ['get', 'bicycle'], ['yes', 'designated', 'permissive'], true, false], ['match', ['get', 'foot'], ['yes', 'designated', 'permissive'], true, false]]] as any,
       paint: {
         'line-color': '#72563d',
         'line-opacity': 0.52,
@@ -69,7 +74,7 @@ function styleRoamMap(map: Map, showDiscovered: boolean) {
       type: 'line',
       source: 'openmaptiles',
       'source-layer': 'transportation',
-      filter: ['all', ['match', ['get', 'class'], ['cycleway', 'path', 'pedestrian', 'footway', 'track', 'bridleway', 'minor', 'tertiary', 'service', 'residential', 'living_street', 'unclassified'], true, false], ['!=', ['get', 'bicycle'], 'no']] as any,
+      filter: ['all', ['match', ['get', 'class'], ['cycleway', 'path', 'pedestrian', 'footway', 'track', 'bridleway', 'minor', 'tertiary', 'service', 'residential', 'living_street', 'unclassified'], true, false], ['any', ['match', ['get', 'class'], ['cycleway'], true, false], ['match', ['get', 'bicycle'], ['yes', 'designated', 'permissive'], true, false], ['match', ['get', 'foot'], ['yes', 'designated', 'permissive'], true, false]]] as any,
       paint: {
         'line-color': ['match', ['get', 'class'], ['path', 'pedestrian', 'footway', 'track', 'bridleway'], '#d59c67', '#f0eee7'],
         'line-opacity': 0.98,
