@@ -15,8 +15,22 @@ function styleRoamMap(map: Map) {
     const id = layer.id.toLowerCase();
     const sourceLayer = 'source-layer' in layer && typeof layer['source-layer'] === 'string' ? layer['source-layer'].toLowerCase() : '';
     const isRoad = id.includes('transportation') || sourceLayer === 'transportation';
-    if (layer.type === 'symbol' || id.includes('building') || id.includes('landcover') || id.includes('landuse') || id.includes('boundary')) {
+    const isWater = id.includes('water') || sourceLayer === 'water';
+    const isPark = /park|wood|forest|grass|meadow|cemetery|recreation|garden|landcover/.test(id) || /landcover|landuse/.test(sourceLayer);
+    if (layer.type === 'symbol' || id.includes('building') || id.includes('boundary')) {
       map.setLayoutProperty(layer.id, 'visibility', 'none');
+    }
+    if (layer.type === 'fill' && isWater) {
+      map.setPaintProperty(layer.id, 'fill-color', '#142a3a');
+      map.setPaintProperty(layer.id, 'fill-opacity', 0.92);
+    }
+    if (layer.type === 'fill' && isPark) {
+      map.setPaintProperty(layer.id, 'fill-color', '#13251f');
+      map.setPaintProperty(layer.id, 'fill-opacity', 0.86);
+    }
+    if (layer.type === 'line' && isWater) {
+      map.setPaintProperty(layer.id, 'line-color', '#24465a');
+      map.setPaintProperty(layer.id, 'line-opacity', 0.8);
     }
     if (isRoad && layer.type === 'line') {
       const isPath = /path|track|footway|cycleway|bridleway|pedestrian/.test(id);
