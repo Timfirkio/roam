@@ -23,6 +23,9 @@ const TERRAIN_TILE_RATIO = 1.5;
 const TERRAIN_EXAGGERATION = 1.05;
 const ROAD_MIN_ZOOM = 6;
 const ROAD_MAX_ZOOM = 24;
+const DEFAULT_MAP_ZOOM = 15;
+const DEFAULT_3D_PITCH = 60;
+const MAX_MAP_PITCH = 64;
 const UNPAVED_SURFACES = ['gravel', 'fine_gravel', 'dirt', 'earth', 'ground', 'unpaved', 'mud', 'sand', 'grass', 'woodchips', 'pebblestone', 'compacted'];
 const PATH_CLASSES = ['cycleway', 'path', 'pedestrian', 'footway', 'track', 'bridleway'];
 const LOCAL_STREET_CLASSES = ['minor', 'tertiary', 'secondary', 'residential', 'living_street', 'unclassified'];
@@ -112,7 +115,10 @@ function styleRoamMap(map: Map, showDiscovered: boolean, is3D: boolean, showBuil
       map.setFilter(layer.id, ['all', ...(existingFilter ? [existingFilter] : []), parkingAisleFilter, serviceRoadFilter, ...(isPath ? [pathAccessFeature] : [])] as any);
       const isContextRoad = isHighway;
       map.setPaintProperty(layer.id, 'line-color', ['case', nonBikeableRoadFeature, '#3b1d23', isContextRoad, '#46504d', cyclewayFeature, ['match', ['get', 'surface'], UNPAVED_SURFACES, '#d59c67', '#2bb8b0'], surfaceColor('#55615c', '#72563d')]);
-      map.setPaintProperty(layer.id, 'line-opacity', isPedestrianFootpath && !showDiscovered ? 0 : ['case', nonBikeableRoadFeature, 0.62, isContextRoad, 0.68, isPath, 0.34, 0.46]);
+      // Pedestrian-only source layers use a dotted treatment. Keep them hidden
+      // in the base map; the discovered GeoJSON overlay will reveal only the
+      // pieces the player has actually uncovered.
+      map.setPaintProperty(layer.id, 'line-opacity', isPedestrianFootpath ? 0 : ['case', nonBikeableRoadFeature, 0.62, isContextRoad, 0.68, isPath, 0.34, 0.46]);
       map.setPaintProperty(layer.id, 'line-width', isMajor ? ['interpolate', ['linear'], ['zoom'], 6, 1.2, 10, 1.5, 15, 6.5, 18, 12] : isPath ? ['interpolate', ['linear'], ['zoom'], 6, 1.4, 10, 1.7, 15, 3.2, 18, 5] : ['interpolate', ['linear'], ['zoom'], 6, 1, 10, 1.2, 15, 3.5, 18, 7]);
       map.setLayoutProperty(layer.id, 'line-cap', 'round');
       map.setLayoutProperty(layer.id, 'line-join', 'round');
@@ -311,7 +317,7 @@ function findMapLocality(map: Map) {
   return { city: city?.name, region: region?.name };
 }
 
-function MapCanvas({ mapRef, showDiscovered, is3D, showBuildings3D, showTerrain3D, playerLocation, discoveries, onDiscoveries, onLocationChange, onBearingChange, onZoomChange }: { mapRef: React.MutableRefObject<Map | null>; showDiscovered: boolean; is3D: boolean; showBuildings3D: boolean; showTerrain3D: boolean; playerLocation: PlayerLocation | null; discoveries: DiscoveredSegment[]; onDiscoveries: (segments: DiscoveredSegment[]) => void; onLocationChange: (lng: number, lat: number, locality?: { city?: string; region?: string }) => void; onBearingChange: (bearing: number) => void; onZoomChange: (zoom: number) => void }) {
+function MapCanvas({ mapRef, showDiscovered, is3D, showBuildings3D, showTerrain3D, playerLocation, discoveries, onDiscoveries, onLocationChange, onBearingChange, onZoomChange, onPitchChange }: { mapRef: React.MutableRefObject<Map | null>; showDiscovered: boolean; is3D: boolean; showBuildings3D: boolean; showTerrain3D: boolean; playerLocation: PlayerLocation | null; discoveries: DiscoveredSegment[]; onDiscoveries: (segments: DiscoveredSegment[]) => void; onLocationChange: (lng: number, lat: number, locality?: { city?: string; region?: string }) => void; onBearingChange: (bearing: number) => void; onZoomChange: (zoom: number) => void; onPitchChange: (pitch: number) => void }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const playerMarkerRef = useRef<maplibregl.Marker | null>(null);
   const centeredOnPlayerRef = useRef(false);
@@ -321,7 +327,7 @@ function MapCanvas({ mapRef, showDiscovered, is3D, showBuildings3D, showTerrain3
   useEffect(() => { discoveriesRef.current = discoveries; }, [discoveries]);
   useEffect(() => {
     if (!containerRef.current) return;
-    const map = new maplibregl.Map({ container: containerRef.current, style: MAP_STYLE, center: [18.0649, 59.3326], zoom: 14, pitch: 42, bearing: -12, maxPitch: 70, attributionControl: false, canvasContextAttributes: { antialias: true, powerPreference: 'high-performance' } });
+    const map = new maplibregl.Map({ container: containerRef.current, style: MAP_STYLE, center: [18.0649, 59.3326], zoom: DEFAULT_MAP_ZOOM, pitch: DEFAULT_3D_PITCH, bearing: 0, maxPitch: MAX_MAP_PITCH, attributionControl: false, canvasContextAttributes: { antialias: true, powerPreference: 'high-performance' } });
     mapRef.current = map;
     let removeNetworkProtocol = () => {};
     map.on('load', () => {
@@ -331,10 +337,12 @@ function MapCanvas({ mapRef, showDiscovered, is3D, showBuildings3D, showTerrain3
       onLocationChange(center.lng, center.lat, findMapLocality(map));
       onBearingChange(map.getBearing());
       onZoomChange(map.getZoom());
+      onPitchChange(map.getPitch());
       setMapReady(true);
     });
     map.on('rotate', () => onBearingChange(map.getBearing()));
     map.on('zoom', () => onZoomChange(map.getZoom()));
+    map.on('pitch', () => onPitchChange(map.getPitch()));
     map.on('moveend', () => {
       const center = map.getCenter();
       onLocationChange(center.lng, center.lat, findMapLocality(map));
@@ -347,10 +355,9 @@ function MapCanvas({ mapRef, showDiscovered, is3D, showBuildings3D, showTerrain3
   }, [mapReady, mapRef, showDiscovered, is3D, showBuildings3D, showTerrain3D]);
   useEffect(() => {
     if (mapReady && mapRef.current) {
-      styleRoamMap(mapRef.current, showDiscovered, is3D, showBuildings3D, showTerrain3D);
-      mapRef.current.easeTo({ pitch: is3D ? 42 : 0, bearing: is3D ? -12 : 0, duration: 450 });
+      mapRef.current.easeTo({ pitch: is3D ? DEFAULT_3D_PITCH : 0, duration: 450 });
     }
-  }, [mapReady, mapRef, is3D, showDiscovered, showBuildings3D, showTerrain3D]);
+  }, [mapReady, mapRef, is3D]);
   useEffect(() => {
     if (!mapReady || !mapRef.current) return;
     const source = mapRef.current.getSource(DISCOVERED_SOURCE) as maplibregl.GeoJSONSource | undefined;
@@ -395,8 +402,9 @@ function MapCanvas({ mapRef, showDiscovered, is3D, showBuildings3D, showTerrain3
 }
 
 function MapView({ onOpenProgress, showDiscovered, setShowDiscovered, is3D, setIs3D, showBuildings3D, setShowBuildings3D, showTerrain3D, setShowTerrain3D, showDebugMenu, playerLocation, discoveries, onDiscoveries }: { onOpenProgress: (location: LocationState) => void; showDiscovered: boolean; setShowDiscovered: (value: boolean) => void; is3D: boolean; setIs3D: (value: boolean) => void; showBuildings3D: boolean; setShowBuildings3D: (value: boolean) => void; showTerrain3D: boolean; setShowTerrain3D: (value: boolean) => void; showDebugMenu: boolean; playerLocation: PlayerLocation | null; discoveries: DiscoveredSegment[]; onDiscoveries: (segments: DiscoveredSegment[]) => void }) {
-  const [bearing, setBearing] = useState(-12);
-  const [zoom, setZoom] = useState(14);
+  const [bearing, setBearing] = useState(0);
+  const [zoom, setZoom] = useState(DEFAULT_MAP_ZOOM);
+  const [pitch, setPitch] = useState(DEFAULT_3D_PITCH);
   const [debugOpen, setDebugOpen] = useState(false);
   const [location, setLocation] = useState<LocationState>(DEFAULT_LOCATION);
   const mapRef = useRef<Map | null>(null);
@@ -410,10 +418,10 @@ function MapView({ onOpenProgress, showDiscovered, setShowDiscovered, is3D, setI
   const summaryWidth = Math.max(190, Math.min(320, 70 + Math.max(location.city.length + location.region.length, 18) * 6));
   const currentDistrict = findStockholmDistrict([location.lng, location.lat]);
   const discoveredMeters = discoveries.filter(segment => segment.regionId === currentDistrict?.id).reduce((total, segment) => total + segment.lengthMeters, 0);
-  return <section className="map-view"><MapCanvas mapRef={mapRef} showDiscovered={showDiscovered} is3D={is3D} showBuildings3D={showBuildings3D} showTerrain3D={showTerrain3D} playerLocation={playerLocation} discoveries={discoveries} onDiscoveries={onDiscoveries} onLocationChange={handleLocationChange} onBearingChange={handleBearingChange} onZoomChange={setZoom} />
+  return <section className="map-view"><MapCanvas mapRef={mapRef} showDiscovered={showDiscovered} is3D={is3D} showBuildings3D={showBuildings3D} showTerrain3D={showTerrain3D} playerLocation={playerLocation} discoveries={discoveries} onDiscoveries={onDiscoveries} onLocationChange={handleLocationChange} onBearingChange={handleBearingChange} onZoomChange={setZoom} onPitchChange={setPitch} />
     <header className="map-header"><span className="map-header-spacer" aria-hidden="true" /><button className="location-summary map-ui-surface" style={{ width: `${summaryWidth}px` }} type="button" onClick={() => onOpenProgress(location)}><strong>{location.city} / {currentDistrict?.name ?? location.region}</strong><ProgressBar stats={CURRENT_PROGRESS} className="summary-progress" /><span>{discoveredMeters > 0 ? `${discoveredMeters} M DISCOVERED` : 'CATALOG READY'}</span></button><span className="map-header-spacer" aria-hidden="true" /></header>
-    <div className="map-compass"><button className="map-ui-surface" type="button" aria-label="Reset compass north" onClick={() => mapRef.current?.easeTo({ bearing: 0, duration: 450 })}><span className="compass-rotor" style={{ transform: `rotate(${-bearing}deg)` }}><span className="compass-north-label">N</span><i className="compass-needle"><b className="compass-north">▲</b><b className="compass-south">▼</b></i></span></button></div><div className="map-controls" aria-label="Map controls"><button className="map-ui-surface" type="button" aria-label="Center on location" onClick={() => mapRef.current?.flyTo({ center: playerLocation ? [playerLocation.lng, playerLocation.lat] : [18.0649, 59.3326], zoom: playerLocation ? 15 : 14 })}>◎</button><button className="map-ui-surface map-mode-toggle" type="button" aria-label={`Switch to ${is3D ? '2D' : '3D'} view`} onClick={() => setIs3D(!is3D)}>{is3D ? '3D' : '2D'}</button><div className="zoom-group map-ui-surface"><button type="button" aria-label="Zoom in" onClick={() => mapRef.current?.zoomIn()}>+</button><button type="button" aria-label="Zoom out" onClick={() => mapRef.current?.zoomOut()}>−</button></div></div>
-    {showDebugMenu && <div className="map-debug"><button className="map-ui-surface debug-icon" type="button" aria-label="Open debug settings" aria-expanded={debugOpen} onClick={() => setDebugOpen(!debugOpen)}>⌘</button>{debugOpen && <div className="debug-menu map-ui-surface"><p>DEBUG SETTINGS</p><button type="button" role="switch" aria-checked={showDiscovered} onClick={() => setShowDiscovered(!showDiscovered)}><span>DISCOVERED LAYER</span><b className={showDiscovered ? 'switch switch--on' : 'switch'} aria-hidden="true" /></button><button type="button" role="switch" aria-checked={showBuildings3D} onClick={() => setShowBuildings3D(!showBuildings3D)}><span>BUILDINGS 3D</span><b className={showBuildings3D ? 'switch switch--on' : 'switch'} aria-hidden="true" /></button><button type="button" role="switch" aria-checked={showTerrain3D} onClick={() => setShowTerrain3D(!showTerrain3D)}><span>TERRAIN 3D</span><b className={showTerrain3D ? 'switch switch--on' : 'switch'} aria-hidden="true" /></button><div><span>ZOOM LEVEL</span><b className="debug-value">{zoom.toFixed(1)}</b></div></div>}</div>}
+    <div className="map-compass"><button className="map-ui-surface" type="button" aria-label="Reset compass north" onClick={() => mapRef.current?.easeTo({ bearing: 0, duration: 450 })}><span className="compass-rotor" style={{ transform: `rotate(${-bearing}deg)` }}><span className="compass-north-label">N</span><i className="compass-needle"><b className="compass-north">▲</b><b className="compass-south">▼</b></i></span></button></div><div className="map-controls" aria-label="Map controls"><button className="map-ui-surface" type="button" aria-label="Center on location" onClick={() => mapRef.current?.flyTo({ center: playerLocation ? [playerLocation.lng, playerLocation.lat] : [18.0649, 59.3326], zoom: DEFAULT_MAP_ZOOM })}>◎</button><button className="map-ui-surface map-mode-toggle" type="button" aria-label={`Switch to ${is3D ? '2D' : '3D'} view`} onClick={() => setIs3D(!is3D)}>{is3D ? '3D' : '2D'}</button><div className="zoom-group map-ui-surface"><button type="button" aria-label="Zoom in" onClick={() => mapRef.current?.zoomIn()}>+</button><button type="button" aria-label="Zoom out" onClick={() => mapRef.current?.zoomOut()}>−</button></div></div>
+    {showDebugMenu && <div className="map-debug"><button className="map-ui-surface debug-icon" type="button" aria-label="Open debug settings" aria-expanded={debugOpen} onClick={() => setDebugOpen(!debugOpen)}>⌘</button>{debugOpen && <div className="debug-menu map-ui-surface"><p>DEBUG SETTINGS</p><button type="button" role="switch" aria-checked={showDiscovered} onClick={() => setShowDiscovered(!showDiscovered)}><span>DISCOVERED LAYER</span><b className={showDiscovered ? 'switch switch--on' : 'switch'} aria-hidden="true" /></button><button type="button" role="switch" aria-checked={showBuildings3D} onClick={() => setShowBuildings3D(!showBuildings3D)}><span>BUILDINGS 3D</span><b className={showBuildings3D ? 'switch switch--on' : 'switch'} aria-hidden="true" /></button><button type="button" role="switch" aria-checked={showTerrain3D} onClick={() => setShowTerrain3D(!showTerrain3D)}><span>TERRAIN 3D</span><b className={showTerrain3D ? 'switch switch--on' : 'switch'} aria-hidden="true" /></button><div><span>ZOOM LEVEL</span><b className="debug-value">{zoom.toFixed(1)}</b></div><div><span>CAMERA PITCH</span><b className="debug-value">{pitch.toFixed(0)}°</b></div></div>}</div>}
   </section>;
 }
 
