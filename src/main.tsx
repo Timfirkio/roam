@@ -343,6 +343,8 @@ function MapCanvas({ mapRef, showDiscovered, is3D, showBuildings3D, showTerrain3
   const containerRef = useRef<HTMLDivElement>(null);
   const playerMarkerRef = useRef<maplibregl.Marker | null>(null);
   const markerAnimationFrameRef = useRef<number | null>(null);
+  const markerRotationFrameRef = useRef<number | null>(null);
+  const markerRotationRef = useRef(0);
   const onFollowPlayerChangeRef = useRef(onFollowPlayerChange);
   const discoveriesRef = useRef(discoveries);
   const [mapReady, setMapReady] = useState(false);
@@ -378,7 +380,7 @@ function MapCanvas({ mapRef, showDiscovered, is3D, showBuildings3D, showTerrain3
     map.on('rotatestart', stopFollowingForUserEvent);
     map.on('pitchstart', stopFollowingForUserEvent);
     map.on('zoomstart', (event: any) => { if (event.originalEvent) stopFollowingForGesture(); });
-    return () => { if (markerAnimationFrameRef.current !== null) cancelAnimationFrame(markerAnimationFrameRef.current); playerMarkerRef.current?.remove(); playerMarkerRef.current = null; map.remove(); removeNetworkProtocol(); mapRef.current = null; };
+    return () => { if (markerAnimationFrameRef.current !== null) cancelAnimationFrame(markerAnimationFrameRef.current); if (markerRotationFrameRef.current !== null) cancelAnimationFrame(markerRotationFrameRef.current); playerMarkerRef.current?.remove(); playerMarkerRef.current = null; map.remove(); removeNetworkProtocol(); mapRef.current = null; };
   }, [mapRef]);
   useEffect(() => {
     if (mapReady && mapRef.current) styleRoamMap(mapRef.current, showDiscovered, is3D, showBuildings3D, showTerrain3D);
@@ -412,7 +414,10 @@ function MapCanvas({ mapRef, showDiscovered, is3D, showBuildings3D, showTerrain3
     if (!mapReady || !mapRef.current) return;
     if (!playerLocation) {
       if (markerAnimationFrameRef.current !== null) cancelAnimationFrame(markerAnimationFrameRef.current);
+      if (markerRotationFrameRef.current !== null) cancelAnimationFrame(markerRotationFrameRef.current);
       markerAnimationFrameRef.current = null;
+      markerRotationFrameRef.current = null;
+      markerRotationRef.current = 0;
       playerMarkerRef.current?.remove();
       playerMarkerRef.current = null;
       return;
@@ -444,7 +449,27 @@ function MapCanvas({ mapRef, showDiscovered, is3D, showBuildings3D, showTerrain3
       };
       markerAnimationFrameRef.current = requestAnimationFrame(animateMarker);
     }
-    marker.setRotation(playerLocation.travelHeading ?? 0);
+    const targetRotation = playerLocation.travelHeading ?? 0;
+    if (markerWasCreated) {
+      markerRotationRef.current = targetRotation;
+      marker.setRotation(targetRotation);
+    } else {
+      if (markerRotationFrameRef.current !== null) cancelAnimationFrame(markerRotationFrameRef.current);
+      const startRotation = markerRotationRef.current;
+      const shortestTurn = ((targetRotation - startRotation + 540) % 360) - 180;
+      const finalRotation = startRotation + shortestTurn;
+      const startedAt = performance.now();
+      const animateRotation = (now: number) => {
+        const progress = Math.min((now - startedAt) / 500, 1);
+        const eased = 1 - (1 - progress) ** 3;
+        const rotation = startRotation + (finalRotation - startRotation) * eased;
+        markerRotationRef.current = rotation;
+        marker.setRotation(rotation);
+        if (progress < 1) markerRotationFrameRef.current = requestAnimationFrame(animateRotation);
+        else markerRotationFrameRef.current = null;
+      };
+      markerRotationFrameRef.current = requestAnimationFrame(animateRotation);
+    }
     marker.getElement().classList.toggle('player-marker--moving', playerLocation.isMoving);
     marker.getElement().classList.toggle('player-marker--stationary', !playerLocation.isMoving);
     if (followPlayer) {
