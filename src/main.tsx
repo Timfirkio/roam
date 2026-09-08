@@ -312,7 +312,10 @@ function MapCanvas({ mapRef, showDiscovered, is3D, showBuildings3D, showTerrain3
       const element = document.createElement('div');
       element.className = 'player-marker';
       element.setAttribute('aria-label', 'Your current location');
-      playerMarkerRef.current = new maplibregl.Marker({ element, anchor: 'center' }).addTo(mapRef.current);
+      // addTo immediately projects the marker, so coordinates must exist first.
+      playerMarkerRef.current = new maplibregl.Marker({ element, anchor: 'center' })
+        .setLngLat([playerLocation.lng, playerLocation.lat])
+        .addTo(mapRef.current);
     }
     const marker = playerMarkerRef.current;
     marker.setLngLat([playerLocation.lng, playerLocation.lat]);
