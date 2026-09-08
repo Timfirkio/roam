@@ -267,6 +267,7 @@ function findMapLocality(map: Map) {
 function MapCanvas({ mapRef, showDiscovered, is3D, showBuildings3D, showTerrain3D, playerLocation, onLocationChange, onBearingChange, onZoomChange }: { mapRef: React.MutableRefObject<Map | null>; showDiscovered: boolean; is3D: boolean; showBuildings3D: boolean; showTerrain3D: boolean; playerLocation: PlayerLocation | null; onLocationChange: (lng: number, lat: number, locality?: { city?: string; region?: string }) => void; onBearingChange: (bearing: number) => void; onZoomChange: (zoom: number) => void }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const playerMarkerRef = useRef<maplibregl.Marker | null>(null);
+  const centeredOnPlayerRef = useRef(false);
   const [mapReady, setMapReady] = useState(false);
   useEffect(() => {
     if (!containerRef.current) return;
@@ -304,6 +305,7 @@ function MapCanvas({ mapRef, showDiscovered, is3D, showBuildings3D, showTerrain3
     if (!playerLocation) {
       playerMarkerRef.current?.remove();
       playerMarkerRef.current = null;
+      centeredOnPlayerRef.current = false;
       return;
     }
     if (!playerMarkerRef.current) {
@@ -315,6 +317,10 @@ function MapCanvas({ mapRef, showDiscovered, is3D, showBuildings3D, showTerrain3
     const marker = playerMarkerRef.current;
     marker.setLngLat([playerLocation.lng, playerLocation.lat]);
     marker.getElement().style.setProperty('--player-heading', `${playerLocation.heading ?? 0}deg`);
+    if (!centeredOnPlayerRef.current) {
+      mapRef.current.flyTo({ center: [playerLocation.lng, playerLocation.lat], zoom: 15, duration: 700 });
+      centeredOnPlayerRef.current = true;
+    }
   }, [mapReady, mapRef, playerLocation]);
   return <div className="map-canvas"><div ref={containerRef} className="maplibre-container" /><div className={is3D ? 'map-depth-fade' : 'map-depth-fade map-depth-fade--hidden'} aria-hidden="true" />
     {!mapReady && <div className="map-loading">LOADING ROAD DATA…</div>}
@@ -327,17 +333,6 @@ function MapView({ onOpenProgress, showDiscovered, setShowDiscovered, is3D, setI
   const [debugOpen, setDebugOpen] = useState(false);
   const [location, setLocation] = useState<LocationState>(DEFAULT_LOCATION);
   const mapRef = useRef<Map | null>(null);
-  const centeredOnPlayerRef = useRef(false);
-  useEffect(() => {
-    if (!playerLocation) {
-      centeredOnPlayerRef.current = false;
-      return;
-    }
-    if (!centeredOnPlayerRef.current && mapRef.current) {
-      mapRef.current.flyTo({ center: [playerLocation.lng, playerLocation.lat], zoom: 15, duration: 700 });
-      centeredOnPlayerRef.current = true;
-    }
-  }, [mapRef, playerLocation]);
   const handleLocationChange = (lng: number, lat: number, locality?: { city?: string; region?: string }) => setLocation((current) => ({ ...current, lng, lat, city: locality?.city?.toUpperCase() || current.city, region: locality?.region?.toUpperCase() || current.region }));
   const handleBearingChange = (nextBearing: number) => setBearing((previousBearing) => {
     let adjustedBearing = nextBearing;
