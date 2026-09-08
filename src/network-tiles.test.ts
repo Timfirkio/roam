@@ -14,7 +14,7 @@ function fixture() {
 const decode = (data: ArrayBuffer) => new VectorTile(new PbfReader(data)).layers.transportation;
 
 describe('complete cycling network tiles', () => {
-  it.each([12, 13])('preserves cycleway tags and geographic position at z%i', zoom => {
+  it.each([12, 13])('preserves cycleway tags and geographic position at z%i', (zoom: number) => {
     const scale = 2 ** (14 - zoom);
     const tile = decode(mergeNetworkTiles([{ data: fixture(), dx: 1, dy: 1 }], zoom));
     const feature = tile.feature(0);
