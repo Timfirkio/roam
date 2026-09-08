@@ -8,13 +8,14 @@ import { NETWORK_MIN_ZOOM } from './network-tiles';
 import { DISCOVERY_RADIUS_METERS, discoverSegments, type DiscoveredSegment, type RoadCandidate } from './discovery';
 import { loadDiscoveredSegments, saveDiscoveredSegments } from './discovery-store';
 import { findStockholmDistrict, STOCKHOLM_DISTRICTS } from './stockholm-catalog';
+import { nextNavigationState, type NavigationState } from './player-navigation';
 import { isDiscoverableProperties, roadTypeForProperties, stableRoadCandidateId } from './road-rules';
 import { STOCKHOLM_ROAD_NETWORK, STOCKHOLM_ROAD_NETWORK_BY_DISTRICT } from './road-network-catalog';
 
 type View = 'map' | 'sessions' | 'progress' | 'settings';
 type LocationState = { city: string; region: string; lng: number; lat: number };
 type GpsPermission = 'prompt' | 'granted' | 'denied';
-type PlayerLocation = { lng: number; lat: number; heading: number | null; accuracy: number; timestamp: number };
+type PlayerLocation = NavigationState & { accuracy: number };
 
 const MAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
 const TERRAIN_SOURCE = 'roam-terrain';
@@ -379,16 +380,19 @@ function MapCanvas({ mapRef, showDiscovered, is3D, showBuildings3D, showTerrain3
     }
     if (!playerMarkerRef.current) {
       const element = document.createElement('div');
-      element.className = 'player-marker';
+      element.className = 'player-marker player-marker--stationary';
       element.setAttribute('aria-label', 'Your current location');
+      element.innerHTML = '<svg class="player-marker__arrow" viewBox="0 0 32 40" aria-hidden="true"><path d="M16 1 31 35 16 29 1 35Z" /></svg>';
       // addTo immediately projects the marker, so coordinates must exist first.
-      playerMarkerRef.current = new maplibregl.Marker({ element, anchor: 'center' })
+      playerMarkerRef.current = new maplibregl.Marker({ element, anchor: 'center', rotationAlignment: 'map', pitchAlignment: 'map' })
         .setLngLat([playerLocation.lng, playerLocation.lat])
         .addTo(mapRef.current);
     }
     const marker = playerMarkerRef.current;
     marker.setLngLat([playerLocation.lng, playerLocation.lat]);
-    marker.getElement().style.setProperty('--player-heading', `${playerLocation.heading ?? 0}deg`);
+    marker.setRotation(playerLocation.travelHeading ?? 0);
+    marker.getElement().classList.toggle('player-marker--moving', playerLocation.isMoving);
+    marker.getElement().classList.toggle('player-marker--stationary', !playerLocation.isMoving);
     if (!centeredOnPlayerRef.current) {
       mapRef.current.flyTo({ center: [playerLocation.lng, playerLocation.lat], zoom: 15, duration: 700 });
       centeredOnPlayerRef.current = true;
@@ -453,6 +457,7 @@ function App() {
   });
   const [gpsEnabled, setGpsEnabled] = useState(() => localStorage.getItem(GPS_ENABLED_STORAGE_KEY) === 'true');
   const [playerLocation, setPlayerLocation] = useState<PlayerLocation | null>(null);
+  const navigationRef = useRef<NavigationState | null>(null);
   const [discoveries, setDiscoveries] = useState<DiscoveredSegment[]>([]);
   const gpsWatchRef = useRef<number | null>(null);
   useEffect(() => { loadDiscoveredSegments().then(setDiscoveries).catch(() => {}); }, []);
@@ -470,12 +475,20 @@ function App() {
     if (!gpsEnabled || !navigator.geolocation) {
       if (gpsWatchRef.current !== null) navigator.geolocation?.clearWatch(gpsWatchRef.current);
       gpsWatchRef.current = null;
-      if (!gpsEnabled) setPlayerLocation(null);
+      if (!gpsEnabled) { navigationRef.current = null; setPlayerLocation(null); }
       return;
     }
     const handlePosition = (position: GeolocationPosition) => {
       setGpsPermission('granted');
-      setPlayerLocation({ lng: position.coords.longitude, lat: position.coords.latitude, heading: Number.isFinite(position.coords.heading) ? position.coords.heading : null, accuracy: position.coords.accuracy, timestamp: position.timestamp });
+      const navigation = nextNavigationState(navigationRef.current, {
+        lng: position.coords.longitude,
+        lat: position.coords.latitude,
+        heading: Number.isFinite(position.coords.heading) ? position.coords.heading : null,
+        speed: Number.isFinite(position.coords.speed) ? position.coords.speed : null,
+        timestamp: position.timestamp,
+      });
+      navigationRef.current = navigation;
+      setPlayerLocation({ ...navigation, accuracy: position.coords.accuracy });
     };
     const handleError = (error: GeolocationPositionError) => {
       if (error.code === error.PERMISSION_DENIED) {
@@ -490,6 +503,7 @@ function App() {
   const handleGpsChange = (enabled: boolean) => {
     if (!enabled) {
       setGpsEnabled(false);
+      navigationRef.current = null;
       setPlayerLocation(null);
       localStorage.setItem(GPS_ENABLED_STORAGE_KEY, 'false');
       return;
