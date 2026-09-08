@@ -6,7 +6,7 @@ import './styles.css';
 import { installNetworkSource, NETWORK_SOURCE } from './network-source';
 import { NETWORK_MIN_ZOOM } from './network-tiles';
 
-type View = 'map' | 'sessions' | 'progress';
+type View = 'map' | 'sessions' | 'progress' | 'settings';
 type LocationState = { city: string; region: string; lng: number; lat: number };
 
 const MAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
@@ -54,6 +54,8 @@ function ProgressBar({ stats, className = '' }: { stats: ProgressStats; classNam
 function styleRoamMap(map: Map, showDiscovered: boolean, is3D: boolean, showBuildings3D: boolean, showTerrain3D: boolean) {
   const layers = map.getStyle().layers ?? [];
   const firstRoadLayer = layers.find((layer) => layer.type === 'line' && ('source-layer' in layer ? layer['source-layer'] === 'transportation' : false))?.id;
+  const showBuildingExtrusions = is3D && showBuildings3D && !showTerrain3D;
+  const showBuildingFootprints = is3D && showBuildings3D && showTerrain3D;
   map.setPaintProperty('background', 'background-color', '#0a0b0c');
   for (const layer of layers) {
     const id = layer.id.toLowerCase();
@@ -161,7 +163,28 @@ function styleRoamMap(map: Map, showDiscovered: boolean, is3D: boolean, showBuil
       layout: { visibility: is3D && showBuildings3D ? 'visible' : 'none' },
     } as any, firstRoadLayer);
   }
-  if (map.getLayer('roam-buildings-3d')) map.setLayoutProperty('roam-buildings-3d', 'visibility', is3D && showBuildings3D ? 'visible' : 'none');
+  if (map.getSource('openmaptiles') && !map.getLayer('roam-building-footprints')) {
+    map.addLayer({
+      id: 'roam-building-footprints',
+      type: 'fill',
+      minzoom: 13,
+      source: 'openmaptiles',
+      'source-layer': 'building',
+      paint: {
+        'fill-color': '#27302e',
+        'fill-opacity': 0.2,
+        'fill-outline-color': '#3b4642',
+      },
+      layout: { visibility: showBuildingFootprints ? 'visible' : 'none' },
+    } as any, firstRoadLayer);
+  }
+  // Keep transparent extrusions behind every transportation layer. This is
+  // especially important with terrain enabled, where MapLibre's 3D render
+  // pass can otherwise make an incorrectly anchored extrusion cover roads.
+  const roadLayer = map.getStyle().layers?.find((layer) => layer.type === 'line' && ('source-layer' in layer ? layer['source-layer'] === 'transportation' : false));
+  if (roadLayer && map.getLayer('roam-buildings-3d')) map.moveLayer('roam-buildings-3d', roadLayer.id);
+  if (map.getLayer('roam-buildings-3d')) map.setLayoutProperty('roam-buildings-3d', 'visibility', showBuildingExtrusions ? 'visible' : 'none');
+  if (map.getLayer('roam-building-footprints')) map.setLayoutProperty('roam-building-footprints', 'visibility', showBuildingFootprints ? 'visible' : 'none');
   if (is3D && showTerrain3D) {
     if (!map.getSource(TERRAIN_SOURCE)) map.addSource(TERRAIN_SOURCE, { type: 'raster-dem', url: TERRAIN_TILEJSON, tileSize: 512, encoding: 'terrarium' } as any);
     if (!map.getSource(HILLSHADE_SOURCE)) map.addSource(HILLSHADE_SOURCE, { type: 'raster-dem', url: TERRAIN_TILEJSON, tileSize: 512, encoding: 'terrarium' } as any);
@@ -276,11 +299,7 @@ function MapCanvas({ mapRef, showDiscovered, is3D, showBuildings3D, showTerrain3
   </div>;
 }
 
-function MapView({ onOpenProgress }: { onOpenProgress: (location: LocationState) => void }) {
-  const [showDiscovered, setShowDiscovered] = useState(true);
-  const [is3D, setIs3D] = useState(true);
-  const [showBuildings3D, setShowBuildings3D] = useState(false);
-  const [showTerrain3D, setShowTerrain3D] = useState(false);
+function MapView({ onOpenProgress, showDiscovered, setShowDiscovered, is3D, setIs3D, showBuildings3D, setShowBuildings3D, showTerrain3D, setShowTerrain3D }: { onOpenProgress: (location: LocationState) => void; showDiscovered: boolean; setShowDiscovered: (value: boolean) => void; is3D: boolean; setIs3D: (value: boolean) => void; showBuildings3D: boolean; setShowBuildings3D: (value: boolean) => void; showTerrain3D: boolean; setShowTerrain3D: (value: boolean) => void }) {
   const [bearing, setBearing] = useState(-12);
   const [zoom, setZoom] = useState(14);
   const [debugOpen, setDebugOpen] = useState(false);
@@ -297,8 +316,16 @@ function MapView({ onOpenProgress }: { onOpenProgress: (location: LocationState)
   return <section className="map-view"><MapCanvas mapRef={mapRef} showDiscovered={showDiscovered} is3D={is3D} showBuildings3D={showBuildings3D} showTerrain3D={showTerrain3D} onLocationChange={handleLocationChange} onBearingChange={handleBearingChange} onZoomChange={setZoom} />
     <header className="map-header"><span className="map-header-spacer" aria-hidden="true" /><button className="location-summary map-ui-surface" style={{ width: `${summaryWidth}px` }} type="button" onClick={() => onOpenProgress(location)}><strong>{location.city} / {location.region}</strong><ProgressBar stats={CURRENT_PROGRESS} className="summary-progress" /><span>{CURRENT_PROGRESS.discovered.toFixed(1)}% DISCOVERED</span></button><span className="map-header-spacer" aria-hidden="true" /></header>
     <div className="map-compass"><button className="map-ui-surface" type="button" aria-label="Reset compass north" onClick={() => mapRef.current?.easeTo({ bearing: 0, duration: 450 })}><span className="compass-rotor" style={{ transform: `rotate(${-bearing}deg)` }}><span className="compass-north-label">N</span><i className="compass-needle"><b className="compass-north">▲</b><b className="compass-south">▼</b></i></span></button></div><div className="map-controls" aria-label="Map controls"><button className="map-ui-surface" type="button" aria-label="Center on location" onClick={() => mapRef.current?.flyTo({ center: [18.0649, 59.3326], zoom: 14 })}>◎</button><button className="map-ui-surface map-mode-toggle" type="button" aria-label={`Switch to ${is3D ? '2D' : '3D'} view`} onClick={() => setIs3D(!is3D)}>{is3D ? '3D' : '2D'}</button><div className="zoom-group map-ui-surface"><button type="button" aria-label="Zoom in" onClick={() => mapRef.current?.zoomIn()}>+</button><button type="button" aria-label="Zoom out" onClick={() => mapRef.current?.zoomOut()}>−</button></div></div>
-    <div className="map-debug"><button className="map-ui-surface debug-icon" type="button" aria-label="Open debug settings" aria-expanded={debugOpen} onClick={() => setDebugOpen(!debugOpen)}>⌘</button>{debugOpen && <div className="debug-menu map-ui-surface"><p>DEBUG SETTINGS</p><button type="button" onClick={() => setShowDiscovered(!showDiscovered)}><span>DISCOVERED LAYER</span><b>{showDiscovered ? 'ON' : 'OFF'}</b></button><button type="button" onClick={() => setShowBuildings3D(!showBuildings3D)}><span>BUILDINGS 3D</span><b>{showBuildings3D ? 'ON' : 'OFF'}</b></button><button type="button" onClick={() => setShowTerrain3D(!showTerrain3D)}><span>TERRAIN 3D</span><b>{showTerrain3D ? 'ON' : 'OFF'}</b></button><div><span>ROAD FILTER</span><b>BIKEABLE</b></div><div><span>ZOOM LEVEL</span><b>{zoom.toFixed(1)}</b></div></div>}</div>
+    <div className="map-debug"><button className="map-ui-surface debug-icon" type="button" aria-label="Open debug settings" aria-expanded={debugOpen} onClick={() => setDebugOpen(!debugOpen)}>⌘</button>{debugOpen && <div className="debug-menu map-ui-surface"><p>DEBUG SETTINGS</p><button type="button" role="switch" aria-checked={showDiscovered} onClick={() => setShowDiscovered(!showDiscovered)}><span>DISCOVERED LAYER</span><b className={showDiscovered ? 'switch switch--on' : 'switch'} aria-hidden="true" /></button><button type="button" role="switch" aria-checked={showBuildings3D} onClick={() => setShowBuildings3D(!showBuildings3D)}><span>BUILDINGS 3D</span><b className={showBuildings3D ? 'switch switch--on' : 'switch'} aria-hidden="true" /></button><button type="button" role="switch" aria-checked={showTerrain3D} onClick={() => setShowTerrain3D(!showTerrain3D)}><span>TERRAIN 3D</span><b className={showTerrain3D ? 'switch switch--on' : 'switch'} aria-hidden="true" /></button><div><span>ROAD FILTER</span><b className="debug-value">BIKEABLE</b></div><div><span>ZOOM LEVEL</span><b className="debug-value">{zoom.toFixed(1)}</b></div></div>}</div>
   </section>;
+}
+
+function SettingToggle({ label, description, value, onChange }: { label: string; description: string; value: boolean; onChange: (value: boolean) => void }) {
+  return <button className="setting-row" type="button" role="switch" aria-checked={value} onClick={() => onChange(!value)}><span><strong>{label}</strong><small>{description}</small></span><b className={value ? 'setting-toggle setting-toggle--on' : 'setting-toggle'}>{value ? 'ON' : 'OFF'}</b></button>;
+}
+
+function SettingsView({ showDiscovered, setShowDiscovered, showBuildings3D, setShowBuildings3D, showTerrain3D, setShowTerrain3D }: { showDiscovered: boolean; setShowDiscovered: (value: boolean) => void; showBuildings3D: boolean; setShowBuildings3D: (value: boolean) => void; showTerrain3D: boolean; setShowTerrain3D: (value: boolean) => void }) {
+  return <section className="settings-view"><div className="settings-header"><p className="eyebrow">ROAM / SETTINGS</p><h1>Settings</h1><p>Shape the map to match how you explore. Changes apply immediately.</p></div><div className="settings-group"><p className="settings-group-title">MAP DISPLAY</p><SettingToggle label="BUILDINGS 3D" description="Show building massing above the map." value={showBuildings3D} onChange={setShowBuildings3D} /><SettingToggle label="TERRAIN 3D" description="Show elevation and terrain shading." value={showTerrain3D} onChange={setShowTerrain3D} /><SettingToggle label="DISCOVERED NETWORK" description="Highlight roads and paths you have uncovered." value={showDiscovered} onChange={setShowDiscovered} /></div><div className="settings-note"><strong>3D VIEW</strong><span>Use the 3D button on the map to switch between flat and tilted views.</span></div></section>;
 }
 
 function PlaceholderView({ title, eyebrow, copy }: { title: string; eyebrow: string; copy: string }) { return <section className="placeholder-view"><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p>{copy}</p><div className="empty-state">MODULE READY<br /><span>Next build slice</span></div></section>; }
@@ -317,8 +344,12 @@ function ProgressView({ location }: { location: LocationState }) {
 function App() {
   const [view, setView] = useState<View>('map');
   const [progressLocation, setProgressLocation] = useState<LocationState>(DEFAULT_LOCATION);
+  const [showDiscovered, setShowDiscovered] = useState(true);
+  const [is3D, setIs3D] = useState(true);
+  const [showBuildings3D, setShowBuildings3D] = useState(false);
+  const [showTerrain3D, setShowTerrain3D] = useState(false);
   const openProgress = (location: LocationState) => { setProgressLocation(location); setView('progress'); };
-  return <main className="app-shell"><div className="app-content">{view === 'map' && <MapView onOpenProgress={openProgress} />}{view === 'sessions' && <PlaceholderView eyebrow="ROAM / SESSIONS" title="Sessions" copy="A record of every route you take. Session summaries will live here." />}{view === 'progress' && <ProgressView location={progressLocation} />}</div><nav className="bottom-nav" aria-label="Primary navigation">{([['map', '◈', 'MAP'], ['sessions', '⌁', 'SESSIONS'], ['progress', '▦', 'PROGRESS']] as const).map(([key, icon, label]) => <button key={key} className={view === key ? 'nav-item nav-item--active' : 'nav-item'} onClick={() => setView(key)} type="button"><span className="nav-icon">{icon}</span><span>{label}</span></button>)}</nav></main>;
+  return <main className="app-shell"><div className="app-content">{view === 'map' && <MapView onOpenProgress={openProgress} showDiscovered={showDiscovered} setShowDiscovered={setShowDiscovered} is3D={is3D} setIs3D={setIs3D} showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} />}{view === 'sessions' && <PlaceholderView eyebrow="ROAM / SESSIONS" title="Sessions" copy="A record of every route you take. Session summaries will live here." />}{view === 'progress' && <ProgressView location={progressLocation} />}{view === 'settings' && <SettingsView showDiscovered={showDiscovered} setShowDiscovered={setShowDiscovered} showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} />}</div><nav className="bottom-nav" aria-label="Primary navigation">{([['map', '◈', 'MAP'], ['sessions', '⌁', 'SESSIONS'], ['progress', '▦', 'PROGRESS'], ['settings', '⚙', 'SETTINGS']] as const).map(([key, icon, label]) => <button key={key} className={view === key ? 'nav-item nav-item--active' : 'nav-item'} onClick={() => setView(key)} type="button"><span className="nav-icon">{icon}</span><span>{label}</span></button>)}</nav></main>;
 }
 
 createRoot(document.getElementById('root')!).render(<StrictMode><App /></StrictMode>);
