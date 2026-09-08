@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "test": "vitest run",
+    "index:roads": "node scripts/build-road-network-index.mjs",
     "lint": "eslint ."
   },
   "dependencies": {
