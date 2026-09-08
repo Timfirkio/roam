@@ -8,6 +8,8 @@ import { NETWORK_MIN_ZOOM } from './network-tiles';
 import { DISCOVERY_RADIUS_METERS, discoverSegments, type DiscoveredSegment, type RoadCandidate } from './discovery';
 import { loadDiscoveredSegments, saveDiscoveredSegments } from './discovery-store';
 import { findStockholmDistrict, STOCKHOLM_DISTRICTS } from './stockholm-catalog';
+import { isDiscoverableProperties, roadTypeForProperties, stableRoadCandidateId } from './road-rules';
+import { STOCKHOLM_ROAD_NETWORK, STOCKHOLM_ROAD_NETWORK_BY_DISTRICT } from './road-network-catalog';
 
 type View = 'map' | 'sessions' | 'progress' | 'settings';
 type LocationState = { city: string; region: string; lng: number; lat: number };
@@ -254,24 +256,21 @@ function styleRoamMap(map: Map, showDiscovered: boolean, is3D: boolean, showBuil
 }
 
 function roadTypeForFeature(properties: Record<string, unknown>) {
-  const roadClass = String(properties.class ?? '');
-  const subclass = String(properties.subclass ?? '');
-  const surface = String(properties.surface ?? '');
-  if (roadClass === 'cycleway' || subclass === 'cycleway') return 'cycleway' as const;
-  if (roadClass === 'footway' || roadClass === 'pedestrian') return 'footpath' as const;
-  if (PATH_CLASSES.includes(roadClass)) return UNPAVED_SURFACES.includes(surface) ? 'unpaved-path' as const : 'footpath' as const;
-  return 'paved-road' as const;
+  return roadTypeForProperties(properties);
+}
+
+function progressStatsForDistrict(districtId: string, discoveries: DiscoveredSegment[]): ProgressStats {
+  const denominator = STOCKHOLM_ROAD_NETWORK_BY_DISTRICT.get(districtId)?.denominators;
+  if (!denominator) return CURRENT_PROGRESS;
+  const discoveredIds = new Set(discoveries.filter(segment => segment.regionId === districtId).map(segment => segment.id));
+  const counts = { 'paved-road': 0, cycleway: 0, 'unpaved-path': 0, footpath: 0 };
+  for (const segment of STOCKHOLM_ROAD_NETWORK.segments) if (discoveredIds.has(segment.id) && segment.roadType in counts) counts[segment.roadType]++;
+  const percentage = (value: number, total: number) => total ? Math.min(100, value / total * 100) : 0;
+  return { discovered: percentage(discoveredIds.size, denominator.segments), pavedBikeableRoads: percentage(counts['paved-road'], denominator.byRoadType['paved-road'].segments), pavedCycleways: percentage(counts.cycleway, denominator.byRoadType.cycleway.segments), unpavedPaths: percentage(counts['unpaved-path'], denominator.byRoadType['unpaved-path'].segments), footpaths: percentage(counts.footpath, denominator.byRoadType.footpath.segments) };
 }
 
 function isDiscoverableFeature(properties: Record<string, unknown>) {
-  const roadClass = String(properties.class ?? '');
-  const bicycle = String(properties.bicycle ?? '');
-  const access = String(properties.access ?? '');
-  const vehicle = String(properties.vehicle ?? '');
-  const motorVehicle = String(properties.motor_vehicle ?? '');
-  if (roadClass === 'parking_aisle' || roadClass === 'service' || bicycle === 'no' || access === 'no' || access === 'private' || vehicle === 'no' || motorVehicle === 'no') return false;
-  if (PATH_CLASSES.includes(roadClass)) return ['yes', 'designated', 'permissive'].includes(bicycle) || ['yes', 'designated', 'permissive'].includes(String(properties.foot)) || roadClass === 'cycleway';
-  return LOCAL_STREET_CLASSES.includes(roadClass);
+  return isDiscoverableProperties(properties);
 }
 
 function candidatesFromMap(map: Map, location: PlayerLocation): RoadCandidate[] {
@@ -288,9 +287,8 @@ function candidatesFromMap(map: Map, location: PlayerLocation): RoadCandidate[] 
         const lngs = coordinates.map(([lng]) => lng);
         const lats = coordinates.map(([, lat]) => lat);
         if (Math.max(...lngs) < location.lng - longitudePadding || Math.min(...lngs) > location.lng + longitudePadding || Math.max(...lats) < location.lat - latitudePadding || Math.min(...lats) > location.lat + latitudePadding) return;
-        const geometryKey = coordinates.map(([lng, lat]) => `${lng.toFixed(6)},${lat.toFixed(6)}`).join(';');
-        const sourceId = feature.id ?? properties.osm_id ?? properties.id ?? geometryKey;
-        candidates.push({ id: `${sourceId}-${part}-${geometryKey}`, geometry: { type: 'LineString', coordinates }, roadType: roadTypeForFeature(properties) });
+        const roadType = roadTypeForFeature(properties);
+        candidates.push({ id: stableRoadCandidateId(coordinates, roadType), geometry: { type: 'LineString', coordinates }, roadType });
       });
     });
     return candidates;
@@ -430,7 +428,7 @@ function PlaceholderView({ title, eyebrow, copy }: { title: string; eyebrow: str
 
 function ProgressView({ location, discoveries }: { location: LocationState; discoveries: DiscoveredSegment[] }) {
   const currentDistrict = findStockholmDistrict([location.lng, location.lat]);
-  return <section className="progress-view"><div className="progress-header"><p className="eyebrow">ROAM / PROGRESS</p><h1>Progress</h1><p>All 117 Stockholm districts are cataloged. Road-length totals are being indexed before completion percentages are shown.</p></div><div className="progress-current"><span className="progress-label">CURRENT AREA</span><strong>{location.city} / {currentDistrict?.name ?? location.region}</strong></div><div className="progress-areas">{STOCKHOLM_DISTRICTS.map(district => { const discoveredMeters = discoveries.filter(segment => segment.regionId === district.id).reduce((total, segment) => total + segment.lengthMeters, 0); const current = district.id === currentDistrict?.id; return <article className={current ? 'progress-area progress-area--current' : 'progress-area'} key={district.id}><div className="progress-area-top"><div><strong>{district.name}</strong><span>STOCKHOLM</span></div><b>{discoveredMeters} M</b></div><ProgressBar stats={CURRENT_PROGRESS} /><small>{discoveredMeters > 0 ? `${discoveredMeters} M DISCOVERED` : 'NO ROADS DISCOVERED YET'} · NETWORK INDEX PENDING</small></article>; })}</div></section>;
+  return <section className="progress-view"><div className="progress-header"><p className="eyebrow">ROAM / PROGRESS</p><h1>Progress</h1><p>All 117 Stockholm districts are cataloged. The initial road network index covers five districts and is versioned for accurate completion percentages.</p></div><div className="progress-current"><span className="progress-label">CURRENT AREA</span><strong>{location.city} / {currentDistrict?.name ?? location.region}</strong></div><div className="progress-areas">{STOCKHOLM_DISTRICTS.map(district => { const discoveredMeters = discoveries.filter(segment => segment.regionId === district.id).reduce((total, segment) => total + segment.lengthMeters, 0); const denominator = STOCKHOLM_ROAD_NETWORK_BY_DISTRICT.get(district.id)?.denominators; const stats = progressStatsForDistrict(district.id, discoveries); const current = district.id === currentDistrict?.id; return <article className={current ? 'progress-area progress-area--current' : 'progress-area'} key={district.id}><div className="progress-area-top"><div><strong>{district.name}</strong><span>STOCKHOLM</span></div><b>{denominator ? `${stats.discovered.toFixed(1)}%` : `${discoveredMeters} M`}</b></div><ProgressBar stats={stats} /><small>{denominator ? `${discoveredMeters} M DISCOVERED · ${denominator.lengthMeters} M INDEXED` : 'NETWORK INDEX NOT YET BUILT'}</small></article>; })}</div></section>;
 }
 
 function App() {
