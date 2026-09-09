@@ -10,10 +10,22 @@ function catalogId(name: string) {
   return `stockholm-${name.toLocaleLowerCase('sv-SE').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')}`;
 }
 
+function sortableDistrictName(name: string) {
+  return name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('sv-SE');
+}
+
+export function compareDistrictNames(a: string, b: string) {
+  const normalizedA = sortableDistrictName(a);
+  const normalizedB = sortableDistrictName(b);
+  if (normalizedA < normalizedB) return -1;
+  if (normalizedA > normalizedB) return 1;
+  return a.localeCompare(b, 'sv-SE');
+}
+
 export const STOCKHOLM_CATALOG_VERSION = 'stockholm-stadsdelar-2021-04-13';
 export const STOCKHOLM_DISTRICTS: StockholmDistrict[] = (boundaries.features as unknown as Array<{ properties: { name: string }; geometry: Geometry }>)
   .map(feature => ({ id: catalogId(feature.properties.name), name: feature.properties.name, geometry: feature.geometry }))
-  .sort((a, b) => a.name.localeCompare(b.name, 'sv-SE'));
+  .sort((a, b) => compareDistrictNames(a.name, b.name));
 
 function pointInRing([lng, lat]: Position, ring: Position[]) {
   let inside = false;
