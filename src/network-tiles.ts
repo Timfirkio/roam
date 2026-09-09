@@ -7,6 +7,7 @@ export const NETWORK_DETAIL_ZOOM = 14;
 const EXTENT = 8192;
 type Point = ReturnType<VectorTileFeatureLike['loadGeometry']>[number][number];
 export type DetailTile = { data: ArrayBuffer; dx: number; dy: number };
+const detailTileCache = new Map<string, ArrayBuffer>();
 
 // Remove child-tile buffers at internal seams so translucent lines aren't drawn twice.
 function clipLine(line: Point[], bounds: number[]): Point[][] {
@@ -61,10 +62,10 @@ export function mergeNetworkTiles(tiles: DetailTile[], zoom: number): ArrayBuffe
   return Uint8Array.from(data).buffer;
 }
 
-// One loader per map. Cache raw detail tiles across parent zoom changes, and cap
-// network concurrency globally rather than starting 16 requests per visible tile.
+// Reuse raw detail tiles while the app is open, across parent zoom changes and
+// map remounts. HTTP cache handles persistence between app launches.
 export function createNetworkTileLoader(template: string, fetchTile: typeof fetch = fetch) {
-  const cache = new Map<string, ArrayBuffer>();
+  const cache = detailTileCache;
   let active = 0;
   const queue: (() => void)[] = [];
   async function readTile(x: number, y: number, signal: AbortSignal) {
@@ -77,7 +78,7 @@ export function createNetworkTileLoader(template: string, fetchTile: typeof fetc
       signal.throwIfAborted();
       const reused = cache.get(url);
       if (reused) return reused;
-      const response = await fetchTile(url, { signal });
+      const response = await fetchTile(url, { signal, cache: 'force-cache' });
       if (!response.ok) throw new Error(`Network tile failed: ${response.status}`);
       const data = await response.arrayBuffer();
       cache.set(url, data);

@@ -46,6 +46,7 @@ const nonBikeableRoadFeature = ['all', ['!', ['match', ['get', 'class'], PATH_CL
 const DEFAULT_LOCATION: LocationState = { city: 'STOCKHOLM', region: 'SÖDERMALM', lng: 18.0649, lat: 59.3326 };
 const GPS_ENABLED_STORAGE_KEY = 'roam.gps.enabled';
 const GPS_PERMISSION_STORAGE_KEY = 'roam.gps.permission';
+const LAST_MAP_CENTER_STORAGE_KEY = 'roam.map.last-center';
 const DISCOVERED_SOURCE = 'roam-discovered-network';
 const PLAYER_DISCOVERY_SOURCE = 'roam-player-discovery-radius';
 const PLAYER_DISCOVERY_FILL = 'roam-player-discovery-radius-fill';
@@ -346,6 +347,15 @@ function findMapLocality(map: Map) {
   return { city: city?.name, region: region?.name };
 }
 
+function loadCachedMapCenter(): [number, number] | null {
+  try {
+    const cached = JSON.parse(localStorage.getItem(LAST_MAP_CENTER_STORAGE_KEY) ?? 'null') as { lng?: unknown; lat?: unknown } | null;
+    return cached && typeof cached.lng === 'number' && typeof cached.lat === 'number' ? [cached.lng, cached.lat] : null;
+  } catch {
+    return null;
+  }
+}
+
 function MapCanvas({ mapRef, showDiscovered, is3D, showBuildings3D, showTerrain3D, playerLocation, followPlayer, activeRotationFollow, discoveries, onDiscoveries, onLocationChange, onBearingChange, onZoomChange, onPitchChange, onFollowPlayerChange }: { mapRef: React.MutableRefObject<Map | null>; showDiscovered: boolean; is3D: boolean; showBuildings3D: boolean; showTerrain3D: boolean; playerLocation: PlayerLocation | null; followPlayer: boolean; activeRotationFollow: boolean; discoveries: DiscoveredSegment[]; onDiscoveries: (segments: DiscoveredSegment[]) => void; onLocationChange: (lng: number, lat: number, locality?: { city?: string; region?: string }) => void; onBearingChange: (bearing: number) => void; onZoomChange: (zoom: number) => void; onPitchChange: (pitch: number) => void; onFollowPlayerChange: (following: boolean) => void }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const playerMarkerRef = useRef<maplibregl.Marker | null>(null);
@@ -354,13 +364,15 @@ function MapCanvas({ mapRef, showDiscovered, is3D, showBuildings3D, showTerrain3
   const markerRotationRef = useRef(0);
   const onFollowPlayerChangeRef = useRef(onFollowPlayerChange);
   const discoveriesRef = useRef(discoveries);
+  const initialCenterRef = useRef<[number, number]>(loadCachedMapCenter() ?? [18.0649, 59.3326]);
+  const hasCenteredOnFirstLiveLocationRef = useRef(false);
   const [mapReady, setMapReady] = useState(false);
   const [networkRevision, setNetworkRevision] = useState(0);
   useEffect(() => { discoveriesRef.current = discoveries; }, [discoveries]);
   useEffect(() => { onFollowPlayerChangeRef.current = onFollowPlayerChange; }, [onFollowPlayerChange]);
   useEffect(() => {
     if (!containerRef.current) return;
-    const map = new maplibregl.Map({ container: containerRef.current, style: MAP_STYLE, center: [18.0649, 59.3326], zoom: DEFAULT_MAP_ZOOM, pitch: DEFAULT_3D_PITCH, bearing: 0, maxPitch: MAX_MAP_PITCH, attributionControl: false, canvasContextAttributes: { antialias: true, powerPreference: 'high-performance' } });
+    const map = new maplibregl.Map({ container: containerRef.current, style: MAP_STYLE, center: initialCenterRef.current, zoom: DEFAULT_MAP_ZOOM, pitch: DEFAULT_3D_PITCH, bearing: 0, maxPitch: MAX_MAP_PITCH, attributionControl: false, canvasContextAttributes: { antialias: true, powerPreference: 'high-performance' } });
     mapRef.current = map;
     let removeNetworkProtocol = () => {};
     map.on('load', () => {
@@ -417,6 +429,11 @@ function MapCanvas({ mapRef, showDiscovered, is3D, showBuildings3D, showTerrain3
     discoveriesRef.current = [...discoveriesRef.current, ...newlyDiscovered];
     onDiscoveries(newlyDiscovered);
   }, [mapReady, mapRef, networkRevision, onDiscoveries, playerLocation]);
+  useEffect(() => {
+    if (!mapReady || !mapRef.current || !playerLocation || hasCenteredOnFirstLiveLocationRef.current) return;
+    hasCenteredOnFirstLiveLocationRef.current = true;
+    mapRef.current.jumpTo({ center: [playerLocation.lng, playerLocation.lat], zoom: DEFAULT_MAP_ZOOM, pitch: is3D ? DEFAULT_3D_PITCH : 0 });
+  }, [is3D, mapReady, mapRef, playerLocation]);
   useEffect(() => {
     if (!mapReady || !mapRef.current) return;
     if (!playerLocation) {
@@ -487,12 +504,12 @@ function MapCanvas({ mapRef, showDiscovered, is3D, showBuildings3D, showTerrain3
       });
     }
   }, [followPlayer, mapReady, mapRef, playerLocation]);
-  return <div className="map-canvas"><div ref={containerRef} className="maplibre-container" /><div className={is3D ? 'map-depth-fade' : 'map-depth-fade map-depth-fade--hidden'} aria-hidden="true" />
+  return <div className="map-canvas"><div ref={containerRef} className={mapReady ? 'maplibre-container maplibre-container--ready' : 'maplibre-container'} /><div className={is3D ? 'map-depth-fade' : 'map-depth-fade map-depth-fade--hidden'} aria-hidden="true" />
     {!mapReady && <div className="map-loading">LOADING ROAD DATA…</div>}
   </div>;
 }
 
-function MapView({ onOpenProgress, showDiscovered, setShowDiscovered, is3D, setIs3D, showBuildings3D, setShowBuildings3D, showTerrain3D, setShowTerrain3D, showDebugMenu, playerLocation, discoveries, onDiscoveries }: { onOpenProgress: (location: LocationState) => void; showDiscovered: boolean; setShowDiscovered: (value: boolean) => void; is3D: boolean; setIs3D: (value: boolean) => void; showBuildings3D: boolean; setShowBuildings3D: (value: boolean) => void; showTerrain3D: boolean; setShowTerrain3D: (value: boolean) => void; showDebugMenu: boolean; playerLocation: PlayerLocation | null; discoveries: DiscoveredSegment[]; onDiscoveries: (segments: DiscoveredSegment[]) => void }) {
+function MapView({ onOpenProgress, onRequestLocation, showDiscovered, setShowDiscovered, is3D, setIs3D, showBuildings3D, setShowBuildings3D, showTerrain3D, setShowTerrain3D, showDebugMenu, playerLocation, discoveries, onDiscoveries }: { onOpenProgress: (location: LocationState) => void; onRequestLocation: () => void; showDiscovered: boolean; setShowDiscovered: (value: boolean) => void; is3D: boolean; setIs3D: (value: boolean) => void; showBuildings3D: boolean; setShowBuildings3D: (value: boolean) => void; showTerrain3D: boolean; setShowTerrain3D: (value: boolean) => void; showDebugMenu: boolean; playerLocation: PlayerLocation | null; discoveries: DiscoveredSegment[]; onDiscoveries: (segments: DiscoveredSegment[]) => void }) {
   const [bearing, setBearing] = useState(0);
   const [zoom, setZoom] = useState(DEFAULT_MAP_ZOOM);
   const [pitch, setPitch] = useState(DEFAULT_3D_PITCH);
@@ -514,7 +531,7 @@ function MapView({ onOpenProgress, showDiscovered, setShowDiscovered, is3D, setI
   const discoveredMeters = discoveries.filter(segment => segment.regionId === currentDistrict?.id).reduce((total, segment) => total + segment.lengthMeters, 0);
   const centerOnPlayer = () => {
     if (!playerLocation) {
-      mapRef.current?.flyTo({ center: [18.0649, 59.3326], zoom: DEFAULT_MAP_ZOOM });
+      onRequestLocation();
       return;
     }
     if (!followPlayer) {
@@ -735,6 +752,7 @@ function App() {
       });
       navigationRef.current = navigation;
       setPlayerLocation({ ...navigation, accuracy: position.coords.accuracy });
+      localStorage.setItem(LAST_MAP_CENTER_STORAGE_KEY, JSON.stringify({ lng: position.coords.longitude, lat: position.coords.latitude, timestamp: position.timestamp }));
     };
     const handleError = (error: GeolocationPositionError) => {
       if (error.code === error.PERMISSION_DENIED) {
@@ -778,7 +796,7 @@ function App() {
       return [...current, ...newSegments.filter(segment => !known.has(segment.id))];
     });
   };
-  return <main className="app-shell"><div className="app-content">{view === 'map' && <MapView onOpenProgress={openProgress} showDiscovered={showDiscovered} setShowDiscovered={setShowDiscovered} is3D={is3D} setIs3D={setIs3D} showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} showDebugMenu={showDebugMenu} playerLocation={playerLocation} discoveries={discoveries} onDiscoveries={handleDiscoveries} />}{view === 'sessions' && <PlaceholderView title="Sessions" copy="A record of every route you take. Session summaries will live here." />}{view === 'progress' && <ProgressView location={progressLocation} discoveries={discoveries} />}{view === 'settings' && <SettingsView showDiscovered={showDiscovered} setShowDiscovered={setShowDiscovered} showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} showDebugMenu={showDebugMenu} setShowDebugMenu={setShowDebugMenu} gpsEnabled={gpsEnabled} gpsPermission={gpsPermission} onGpsChange={handleGpsChange} onOpenDesignSystem={() => setView('design-system')} />}{view === 'design-system' && <DesignSystemView onBack={() => setView('settings')} />}</div><PrimaryNavigation view={view} onChange={setView} /></main>;
+  return <main className="app-shell"><div className="app-content">{view === 'map' && <MapView onOpenProgress={openProgress} onRequestLocation={() => handleGpsChange(true)} showDiscovered={showDiscovered} setShowDiscovered={setShowDiscovered} is3D={is3D} setIs3D={setIs3D} showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} showDebugMenu={showDebugMenu} playerLocation={playerLocation} discoveries={discoveries} onDiscoveries={handleDiscoveries} />}{view === 'sessions' && <PlaceholderView title="Sessions" copy="A record of every route you take. Session summaries will live here." />}{view === 'progress' && <ProgressView location={progressLocation} discoveries={discoveries} />}{view === 'settings' && <SettingsView showDiscovered={showDiscovered} setShowDiscovered={setShowDiscovered} showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} showDebugMenu={showDebugMenu} setShowDebugMenu={setShowDebugMenu} gpsEnabled={gpsEnabled} gpsPermission={gpsPermission} onGpsChange={handleGpsChange} onOpenDesignSystem={() => setView('design-system')} />}{view === 'design-system' && <DesignSystemView onBack={() => setView('settings')} />}</div><PrimaryNavigation view={view} onChange={setView} /></main>;
 }
 
 const rootElement = document.getElementById('root')!;
