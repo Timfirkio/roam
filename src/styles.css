@@ -108,6 +108,8 @@
   --radius-pill: 9999px;
   --spacing-control: 2.75rem;
   --spacing-control-compact: 2.25rem;
+  --spacing-map-edge: calc(var(--spacing) * 4);
+  --spacing-session-dock-height: 4.75rem;
   --ease-outdoor: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -174,6 +176,23 @@ aside.rounded-control.border-l-2.border-accent { display: none; }
 .map-compass { position: absolute; z-index: 2; top: 20px; right: 12px; }.map-compass button { position: relative; display: flex; width: 38px; height: 38px; align-items: center; justify-content: center; padding: 0; border-radius: 50%; font-size: 8px; line-height: 1; }.compass-rotor { position: absolute; inset: 0; transition: transform .15s ease-out; transform-origin: center; }.compass-needle { position: absolute; top: 50%; left: 50%; display: flex; flex-direction: column; align-items: center; gap: 1px; font-style: normal; line-height: .7; transform: translate(-50%, -50%); transform-origin: center; }.compass-north-label { position: absolute; top: 1px; left: 50%; color: #7f8b86; font-size: 8px; font-weight: 700; transform: translateX(-50%); }.compass-north { color: #d59c67; font-size: 14px; }.compass-south { color: #f0ede3; font-size: 14px; }.map-mode-toggle { font-size: 9px !important; letter-spacing: .04em; }
 .location-control { color: #2bb8b0 !important; }.location-control span { display: block; font-size: 18px; line-height: 1; text-shadow: 0 0 10px #2bb8b088; }.location-control--following { border-color: #87f4e8; background: #173b3bdd; color: #f0fffd !important; box-shadow: 0 0 0 1px #2bb8b055 inset, 0 0 16px #2bb8b066; }.location-control--following span { color: #b9fff7; font-size: 16px; text-shadow: 0 0 10px #2bb8b0cc; }
 .location-control--active { border-color: #b9fff7; background: #1a5250ee; box-shadow: 0 0 0 2px #2bb8b077 inset, 0 0 22px #2bb8b0bb; animation: location-follow-glow 1.8s ease-in-out infinite; }.location-control--active span { transform: translateY(-1px); }.player-marker__arrow { transition-duration: 320ms; } @keyframes location-follow-glow { 50% { box-shadow: 0 0 0 3px #b9fff766 inset, 0 0 30px #2bb8b0dd; } } @media (prefers-reduced-motion: reduce) { .location-control--active { animation: none; } }
+
+/* The ride dock is persistent on the map, so every fixed control shares the
+   same edge inset and leaves one space-4 gap above the dock. */
+.map-view--has-session-dock .session-dock { right: var(--spacing-map-edge); bottom: var(--spacing-map-edge); left: var(--spacing-map-edge); min-height: var(--spacing-session-dock-height); }
+.map-view--has-session-dock .map-controls { right: var(--spacing-map-edge); bottom: calc(var(--spacing-session-dock-height) + var(--spacing-map-edge) + var(--spacing-map-edge)); }
+.map-view--has-session-dock .map-debug { left: var(--spacing-map-edge); bottom: calc(var(--spacing-session-dock-height) + var(--spacing-map-edge) + var(--spacing-map-edge)); }
+.map-view--has-session-dock .map-compass { right: var(--spacing-map-edge); }
+@media (min-width: 720px) { .map-view--has-session-dock .session-dock { right: var(--spacing-map-edge); bottom: var(--spacing-map-edge); left: var(--spacing-map-edge); } }
+.map-header { align-items: center; padding: var(--spacing-map-edge); }
+.location-summary { width: max-content; min-width: 0; max-width: calc(100vw - (var(--spacing-map-edge) * 4)); min-height: var(--spacing-control); gap: calc(var(--spacing) * 1); padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3); border-radius: var(--radius-control); }
+.location-summary strong, .location-summary span { font-size: inherit; letter-spacing: inherit; }
+.neighborhood-progress { width: 100%; gap: 0; }
+.map-header .map-compass { position: static; justify-self: end; }
+.map-compass button { width: var(--spacing-control); height: var(--spacing-control); border-radius: var(--radius-control); }
+.session-dock .dock-label { margin-bottom: 0; color: inherit; font-size: inherit; letter-spacing: inherit; }
+.session-dock strong { font-size: inherit; letter-spacing: inherit; }
+.session-dock { padding: calc(var(--spacing) * 3) calc(var(--spacing) * 4); }
 .progress-bar { height: 0.5rem; overflow: hidden; border-radius: var(--radius-pill); background: var(--color-surface-interactive); }
 .progress-bar__paved-roads { background: var(--color-paper-100); }
 .progress-bar__paved-cycleways { background: var(--color-location-500); }
