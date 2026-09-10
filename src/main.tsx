@@ -427,14 +427,19 @@ function MapCanvas({ mapRef, showDiscovered, showDistrictBoundaries, is3D, showB
   const markerRotationFrameRef = useRef<number | null>(null);
   const markerRotationRef = useRef(0);
   const onFollowPlayerChangeRef = useRef(onFollowPlayerChange);
+  const onDiscoveriesRef = useRef(onDiscoveries);
+  const cameraFrameRef = useRef<number | null>(null);
   const discoveriesRef = useRef(discoveries);
   const initialCenterRef = useRef<[number, number]>(loadCachedMapCenter() ?? [18.0649, 59.3326]);
   const hasCenteredOnFirstLiveLocationRef = useRef(false);
   const [mapReady, setMapReady] = useState(false);
   const [mapDistrictName, setMapDistrictName] = useState<string | null>(null);
   const [networkRevision, setNetworkRevision] = useState(0);
+  const discoveryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastDiscoveryAttemptRef = useRef(0);
   useEffect(() => { discoveriesRef.current = discoveries; }, [discoveries]);
   useEffect(() => { onFollowPlayerChangeRef.current = onFollowPlayerChange; }, [onFollowPlayerChange]);
+  useEffect(() => { onDiscoveriesRef.current = onDiscoveries; }, [onDiscoveries]);
   useEffect(() => {
     if (!containerRef.current) return;
     const map = new maplibregl.Map({ container: containerRef.current, style: MAP_STYLE, center: initialCenterRef.current, zoom: DEFAULT_MAP_ZOOM, pitch: DEFAULT_3D_PITCH, bearing: 0, maxPitch: MAX_MAP_PITCH, attributionControl: false, canvasContextAttributes: { antialias: true, powerPreference: 'high-performance' } });
@@ -452,9 +457,21 @@ function MapCanvas({ mapRef, showDiscovered, showDistrictBoundaries, is3D, showB
       onPitchChange(map.getPitch());
       setMapReady(true);
     });
-    map.on('rotate', () => onBearingChange(map.getBearing()));
-    map.on('zoom', () => onZoomChange(map.getZoom()));
-    map.on('pitch', () => onPitchChange(map.getPitch()));
+    // Camera events fire once per animation frame while a gesture/animation is
+    // active. Coalesce them so the React controls do not rerender in lockstep
+    // with MapLibre's renderer.
+    const scheduleCameraState = () => {
+      if (cameraFrameRef.current !== null) return;
+      cameraFrameRef.current = requestAnimationFrame(() => {
+        cameraFrameRef.current = null;
+        onBearingChange(map.getBearing());
+        onZoomChange(map.getZoom());
+        onPitchChange(map.getPitch());
+      });
+    };
+    map.on('rotate', scheduleCameraState);
+    map.on('zoom', scheduleCameraState);
+    map.on('pitch', scheduleCameraState);
     map.on('moveend', () => {
       const center = map.getCenter();
       setMapDistrictName(findStockholmDistrict([center.lng, center.lat])?.name ?? null);
@@ -467,11 +484,11 @@ function MapCanvas({ mapRef, showDiscovered, showDistrictBoundaries, is3D, showB
     map.on('rotatestart', stopFollowingForUserEvent);
     map.on('pitchstart', stopFollowingForUserEvent);
     map.on('zoomstart', (event: any) => { if (event.originalEvent) stopFollowingForGesture(); });
-    return () => { if (markerAnimationFrameRef.current !== null) cancelAnimationFrame(markerAnimationFrameRef.current); if (markerRotationFrameRef.current !== null) cancelAnimationFrame(markerRotationFrameRef.current); playerMarkerRef.current?.remove(); playerMarkerRef.current = null; map.remove(); removeNetworkProtocol(); mapRef.current = null; };
+    return () => { if (markerAnimationFrameRef.current !== null) cancelAnimationFrame(markerAnimationFrameRef.current); if (markerRotationFrameRef.current !== null) cancelAnimationFrame(markerRotationFrameRef.current); if (cameraFrameRef.current !== null) cancelAnimationFrame(cameraFrameRef.current); playerMarkerRef.current?.remove(); playerMarkerRef.current = null; map.remove(); removeNetworkProtocol(); mapRef.current = null; };
   }, [mapRef]);
   useEffect(() => {
-    if (mapReady && mapRef.current) styleRoamMap(mapRef.current, showDiscovered, showDistrictBoundaries, playerLocation && followPlayer ? findStockholmDistrict([playerLocation.lng, playerLocation.lat])?.name ?? mapDistrictName : mapDistrictName, is3D, showBuildings3D, showTerrain3D);
-  }, [mapReady, mapRef, showDiscovered, showDistrictBoundaries, is3D, showBuildings3D, showTerrain3D, playerLocation, followPlayer, mapDistrictName]);
+    if (mapReady && mapRef.current) styleRoamMap(mapRef.current, showDiscovered, showDistrictBoundaries, mapDistrictName, is3D, showBuildings3D, showTerrain3D);
+  }, [mapReady, mapRef, showDiscovered, showDistrictBoundaries, is3D, showBuildings3D, showTerrain3D, mapDistrictName]);
   useEffect(() => {
     if (mapReady && mapRef.current) {
       mapRef.current.easeTo({ pitch: is3D ? DEFAULT_3D_PITCH : 0, duration: 450 });
@@ -486,17 +503,30 @@ function MapCanvas({ mapRef, showDiscovered, showDistrictBoundaries, is3D, showB
     if (!mapReady || !mapRef.current) return;
     const source = mapRef.current.getSource(PLAYER_DISCOVERY_SOURCE) as maplibregl.GeoJSONSource | undefined;
     source?.setData(playerLocation
-      ? circle([playerLocation.lng, playerLocation.lat], DISCOVERY_RADIUS_METERS, { units: 'meters', steps: 64 }) as any
+      ? circle([playerLocation.lng, playerLocation.lat], DISCOVERY_RADIUS_METERS, { units: 'meters', steps: 24 }) as any
       : { type: 'FeatureCollection', features: [] });
   }, [mapReady, mapRef, playerLocation]);
   useEffect(() => {
     if (!mapReady || !mapRef.current || !playerLocation) return;
-    const district = findStockholmDistrict([playerLocation.lng, playerLocation.lat]);
-    const newlyDiscovered = discoverSegments(playerLocation, candidatesFromMap(mapRef.current, playerLocation), new Set(discoveriesRef.current.map(segment => segment.id)), district);
-    if (!newlyDiscovered.length) return;
-    discoveriesRef.current = [...discoveriesRef.current, ...newlyDiscovered];
-    onDiscoveries(newlyDiscovered);
-  }, [mapReady, mapRef, networkRevision, onDiscoveries, playerLocation]);
+    if (discoveryTimeoutRef.current !== null) clearTimeout(discoveryTimeoutRef.current);
+    // `idle` can fire repeatedly while a pan brings several tile batches in.
+    // Debounce the scan and enforce a small floor between scans; the GPS watch
+    // still supplies the authoritative sample every few seconds.
+    discoveryTimeoutRef.current = setTimeout(() => {
+      discoveryTimeoutRef.current = null;
+      const now = Date.now();
+      if (now - lastDiscoveryAttemptRef.current < 750) return;
+      lastDiscoveryAttemptRef.current = now;
+      const map = mapRef.current;
+      if (!map) return;
+      const district = findStockholmDistrict([playerLocation.lng, playerLocation.lat]);
+      const newlyDiscovered = discoverSegments(playerLocation, candidatesFromMap(map, playerLocation), new Set(discoveriesRef.current.map(segment => segment.id)), district);
+      if (!newlyDiscovered.length) return;
+      discoveriesRef.current = [...discoveriesRef.current, ...newlyDiscovered];
+      onDiscoveriesRef.current(newlyDiscovered);
+    }, 120);
+    return () => { if (discoveryTimeoutRef.current !== null) { clearTimeout(discoveryTimeoutRef.current); discoveryTimeoutRef.current = null; } };
+  }, [mapReady, mapRef, networkRevision, playerLocation]);
   useEffect(() => {
     if (!mapReady || !mapRef.current || !playerLocation || hasCenteredOnFirstLiveLocationRef.current) return;
     hasCenteredOnFirstLiveLocationRef.current = true;
@@ -832,7 +862,9 @@ function App() {
       if (!gpsEnabled) { navigationRef.current = null; setPlayerLocation(null); }
       return;
     }
+    let disposed = false;
     const handlePosition = (position: Position) => {
+      if (disposed) return;
       setGpsPermission('granted');
       const navigation = nextNavigationState(navigationRef.current, {
         lng: position.coords.longitude,
@@ -853,10 +885,14 @@ function App() {
       }
     };
     void Geolocation.watchPosition({ enableHighAccuracy: true, maximumAge: 5000, timeout: 15000, minimumUpdateInterval: 5000, interval: 5000 }, (position, error) => {
+      if (disposed) return;
       if (position) handlePosition(position);
       if (error) handleError(error);
-    }).then((watchId) => { gpsWatchRef.current = watchId; }).catch(handleError);
-    return () => { if (gpsWatchRef.current !== null) void Geolocation.clearWatch({ id: gpsWatchRef.current }); gpsWatchRef.current = null; };
+    }).then((watchId) => {
+      if (disposed) void Geolocation.clearWatch({ id: watchId });
+      else gpsWatchRef.current = watchId;
+    }).catch(handleError);
+    return () => { disposed = true; if (gpsWatchRef.current !== null) void Geolocation.clearWatch({ id: gpsWatchRef.current }); gpsWatchRef.current = null; };
   }, [gpsEnabled]);
   const handleGpsChange = (enabled: boolean, startBackgroundRide = false) => {
     if (!enabled) {
