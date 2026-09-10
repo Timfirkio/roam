@@ -12,6 +12,7 @@ import { findStockholmDistrict, STOCKHOLM_DISTRICTS } from './stockholm-catalog'
 import { nextNavigationState, type NavigationState } from './player-navigation';
 import { Geolocation, type CallbackID, type Position } from '@capacitor/geolocation';
 import { Capacitor } from '@capacitor/core';
+import { RideTracking } from './ride-background-tracking';
 import { isDiscoverableProperties, roadTypeForProperties, stableRoadCandidateId } from './road-rules';
 import { STOCKHOLM_ROAD_NETWORK, STOCKHOLM_ROAD_NETWORK_BY_DISTRICT } from './road-network-catalog';
 import { Button as ShadcnButton } from '@/components/ui/button';
@@ -789,12 +790,13 @@ function App() {
     }).then((watchId) => { gpsWatchRef.current = watchId; }).catch(handleError);
     return () => { if (gpsWatchRef.current !== null) void Geolocation.clearWatch({ id: gpsWatchRef.current }); gpsWatchRef.current = null; };
   }, [gpsEnabled]);
-  const handleGpsChange = (enabled: boolean) => {
+  const handleGpsChange = (enabled: boolean, startBackgroundRide = false) => {
     if (!enabled) {
       setGpsEnabled(false);
       navigationRef.current = null;
       setPlayerLocation(null);
       localStorage.setItem(GPS_ENABLED_STORAGE_KEY, 'false');
+      if (Capacitor.isNativePlatform()) void RideTracking.stop().catch(() => {});
       return;
     }
     if (!Capacitor.isNativePlatform()) {
@@ -803,6 +805,7 @@ function App() {
         setGpsEnabled(true);
         localStorage.setItem(GPS_PERMISSION_STORAGE_KEY, 'granted');
         localStorage.setItem(GPS_ENABLED_STORAGE_KEY, 'true');
+        if (startBackgroundRide) void RideTracking.start().catch(() => {});
       }, (error) => {
         if (error.code === error.PERMISSION_DENIED) {
           setGpsPermission('denied');
@@ -820,6 +823,7 @@ function App() {
       setGpsEnabled(true);
       localStorage.setItem(GPS_PERMISSION_STORAGE_KEY, 'granted');
       localStorage.setItem(GPS_ENABLED_STORAGE_KEY, 'true');
+      if (startBackgroundRide) void RideTracking.start().catch(() => {});
     }).catch((error: unknown) => {
       if (typeof error === 'object' && error !== null && 'code' in error && (error as { code: number }).code === 1) {
         setGpsPermission('denied');
@@ -830,7 +834,7 @@ function App() {
   };
   const handleSessionChange = (active: boolean) => {
     setSessionActive(active);
-    handleGpsChange(active);
+    handleGpsChange(active, active);
   };
   const openProgress = (location: LocationState) => { setProgressLocation(location); setView('progress'); };
   const handleDiscoveries = (newSegments: DiscoveredSegment[]) => {
