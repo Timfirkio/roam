@@ -201,6 +201,11 @@ aside.rounded-control.border-l-2.border-accent { display: none; }
 .progress-bar__paved-cycleways { background: var(--color-location-500); }
 .progress-bar__unpaved { background: var(--color-accent); }
 .progress-bar__footpaths { background: var(--color-text-subtle); }
+.district-progress-card > [data-slot="item"] { transition: background-color .2s ease, border-color .2s ease; }
+.district-progress-card:hover > [data-slot="item"] { border-color: #8a9690; background: #17201fcc; }
+.district-progress-card .progress-bar, .location-summary .progress-bar { border-radius: 0; transition: background-color .2s ease, width .35s ease; }
+.district-progress-card:hover .progress-bar, .district-progress-current .progress-bar, .location-summary:hover .progress-bar { background: var(--color-border-muted); }
+.district-progress-current .progress-bar__paved-roads, .location-summary .progress-bar__paved-roads { background: var(--color-paper-100); }
 .bottom-nav-list { display: flex; width: 100%; height: 100%; align-items: stretch; justify-content: stretch; gap: 0 !important; border: 0 !important; }
 .bottom-nav .nav-item { flex: 1; border: 0 !important; border-radius: 0 !important; }
 .bottom-nav .nav-item::after { right: 24%; bottom: 0; left: 24%; height: 2px; }
@@ -261,7 +266,7 @@ aside.rounded-control.border-l-2.border-accent { display: none; }
 .session-dock > .min-w-0 > strong { font-size: var(--text-label); line-height: 1.25; }
 .session-dock > .min-w-0 { display: flex; flex-direction: column; gap: calc(var(--spacing) * 0.5); }
 .session-dock-stats { display: flex; flex-wrap: wrap; gap: calc(var(--spacing) * 3); color: var(--color-text-subtle); line-height: var(--text-label--line-height); }
-@media (hover: none) {
+@media (hover: none), (pointer: coarse) {
   [data-slot="button"].map-ui-surface:hover { border-color: #3a4542 !important; background: #101516cc !important; }
   [data-slot="button"]:is(.bg-accent-button):hover { border-color: var(--color-accent) !important; background: var(--color-accent-button) !important; }
   [data-slot="button"]:is(.bg-surface-raised):hover { border-color: var(--color-border) !important; background: var(--color-surface-raised) !important; }
@@ -270,6 +275,11 @@ aside.rounded-control.border-l-2.border-accent { display: none; }
   .nav-item:hover:not([data-active]) { color: #626e69 !important; }
   .zoom-group button:hover { background: transparent !important; }
   .debug-menu button:hover { color: #9fa9a4 !important; }
+  .setting-row:hover { color: var(--color-text) !important; }
+  .debug-toggle:hover { border-color: #4b5753 !important; color: #9fa9a4 !important; }
+  .track-button:hover { background: #f0ede3 !important; }
+  .district-progress-card:hover > [data-slot="item"] { border-color: var(--color-border) !important; background: var(--color-surface-raised) !important; }
+  .district-progress-card:hover .progress-bar { background: var(--color-surface-interactive) !important; }
 }
 .location-summary .district-progress-title { font-size: var(--text-body-lg); font-weight: 400; line-height: var(--text-body-lg--line-height); }
 .location-summary .district-progress-title-context { color: var(--color-text-subtle); font-weight: 400; }
