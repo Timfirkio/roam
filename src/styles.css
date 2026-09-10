@@ -35,6 +35,9 @@
   --color-paper-300: #b8b5ab;
   --color-location-500: #2bb8b0;
   --color-location-200: #b9fff7;
+  --color-location-muted: rgba(240, 237, 227, 0.06);
+  --color-location-current-border: #718783;
+  --color-location-current-text: #dbe8e4;
   --color-danger-500: #e36d5b;
   --color-danger-600: #b74d42;
   --color-danger-700: #85362f;
@@ -245,7 +248,12 @@ aside.rounded-control.border-l-2.border-accent { display: none; }
 .district-progress-description { font-family: var(--font-mono); }
 .location-summary .district-progress-title { font-size: var(--text-body); line-height: 1.55; }
 .location-summary .district-progress-description { font-size: var(--text-body); line-height: 1.55; }
-.district-progress-percent { color: var(--color-text); font-family: var(--font-mono); font-size: var(--text-mono-heading); font-weight: 600; line-height: 1.2; }
+.district-progress-percent { color: var(--color-text); font-family: var(--font-mono); font-size: var(--text-data); font-weight: 600; line-height: var(--text-data--line-height); }
+.district-progress-card[role="button"] { cursor: pointer; }
+.district-progress-card[role="button"]:focus-visible { border-radius: var(--radius-panel); outline: 3px solid var(--color-accent); outline-offset: 3px; }
+.district-progress-current { border-color: var(--color-location-current-border) !important; background: var(--color-location-muted) !important; }
+.district-progress-current .district-progress-percent { color: var(--color-location-current-text); }
+.district-current-badge { border: 1px solid var(--color-location-current-border); border-radius: var(--radius-pill); padding: 0 calc(var(--spacing) * 2); color: var(--color-location-current-text); font-family: var(--font-mono); font-size: var(--text-overline); font-weight: 600; line-height: 1.5; text-transform: uppercase; }
 .map-controls .map-compass { position: static; top: auto; right: auto; }
 .map-controls .map-compass button { width: 44px; height: 44px; border-radius: 50%; }
 .session-dock > .min-w-0 > strong { font-size: var(--text-label); line-height: 1.25; }
@@ -253,3 +261,51 @@ aside.rounded-control.border-l-2.border-accent { display: none; }
 .location-summary .district-progress-title { font-size: var(--text-body-lg); font-weight: 400; line-height: var(--text-body-lg--line-height); }
 .location-summary .district-progress-title-context { color: var(--color-text-subtle); font-weight: 400; }
 .location-summary .district-progress-title-active { color: var(--color-text); font-weight: 600; }
+.municipality-progress-group { overflow: hidden; border: 1px solid var(--color-border); border-radius: var(--radius-panel); background: var(--color-surface-raised); }
+.municipality-progress-group[open] { border-color: var(--color-border-strong); }
+.municipality-progress-summary, .region-progress-summary { display: block; cursor: pointer; list-style: none; }
+.municipality-progress-summary { padding: calc(var(--spacing) * 4); }
+.region-progress-group { overflow: hidden; border: 1px solid var(--color-border); border-radius: var(--radius-panel); background: var(--color-surface-raised); }
+.region-progress-group[open] { border-color: var(--color-border-strong); }
+.region-progress-summary { position: relative; padding: calc(var(--spacing) * 4); padding-right: calc(var(--spacing) * 12); }
+.region-progress-summary::-webkit-details-marker { display: none; }
+.municipality-progress-summary::-webkit-details-marker, .region-progress-summary::-webkit-details-marker { display: none; }
+.municipality-progress-summary::after, .region-progress-summary > .accordion-chevron { position: absolute; top: 50%; right: calc(var(--spacing) * 4); width: 0.55rem; height: 0.55rem; border-right: 2px solid var(--color-text-subtle); border-bottom: 2px solid var(--color-text-subtle); content: ''; transform: translateY(-65%) rotate(45deg); transition: transform 180ms ease, border-color 180ms ease; }
+.municipality-progress-group[open] > .municipality-progress-summary::after, .region-progress-group[open] > .region-progress-summary > .accordion-chevron { border-color: var(--color-accent); transform: translateY(-35%) rotate(225deg); }
+.region-progress-list { display: grid; gap: calc(var(--spacing) * 3); border-top: 1px solid var(--color-border-muted); padding: calc(var(--spacing) * 3); background: var(--color-surface); }
+.region-progress-districts { display: grid; gap: calc(var(--spacing) * 2); border-top: 1px solid var(--color-border-muted); padding: calc(var(--spacing) * 3); background: var(--color-surface); }
+.accordion-summary { display: flex; align-items: center; justify-content: space-between; gap: calc(var(--spacing) * 4); }
+.accordion-summary-title { color: var(--color-text); font-family: var(--font-sans); font-size: var(--text-body-lg); font-weight: 600; line-height: var(--text-body-lg--line-height); }
+.accordion-summary-end { display: flex; align-items: center; gap: calc(var(--spacing) * 4); }
+.municipality-progress-group::details-content, .region-progress-group::details-content { block-size: 0; overflow: hidden; transition: block-size 220ms ease, content-visibility 220ms allow-discrete; }
+.municipality-progress-group[open]::details-content, .region-progress-group[open]::details-content { block-size: auto; }
+.municipality-progress-group, .region-progress-group { interpolate-size: allow-keywords; }
+.municipality-select { display: flex; width: 100%; max-width: none; flex-direction: column; gap: calc(var(--spacing) * 2); margin-top: calc(var(--spacing) * 6); }
+.municipality-select select { min-height: var(--spacing-control); border: 1px solid var(--color-border-strong); border-radius: var(--radius-control); padding: 0 calc(var(--spacing) * 3); background: var(--color-surface-raised); color: var(--color-text); font-family: var(--font-sans); font-size: var(--text-body); }
+.municipality-progress-group { overflow: visible; border: 0; border-radius: 0; background: transparent; }
+.municipality-progress-summary { padding: calc(var(--spacing) * 5) 0; }
+.region-progress-list { gap: calc(var(--spacing) * 4); border-top: 1px solid var(--color-border-muted); padding: calc(var(--spacing) * 4) 0 0; background: transparent; }
+.region-progress-group { overflow: visible; border: 0; border-radius: 0; background: transparent; }
+.region-progress-group[open] { border-color: transparent; }
+.region-progress-summary { padding: calc(var(--spacing) * 3) calc(var(--spacing) * 10) calc(var(--spacing) * 3) 0; }
+.region-progress-summary .progress-bar { display: none; }
+.region-progress-districts { gap: calc(var(--spacing) * 2); border-top: 0; padding: calc(var(--spacing) * 2) 0 0; background: transparent; }
+.region-progress-summary .accordion-chevron { right: calc(var(--spacing) * 2); }
+.region-accordion-list { width: 100%; gap: calc(var(--spacing) * 4); }
+.region-accordion-item { border-bottom: 0; }
+.region-accordion-item:not(:last-child) { border-bottom: 1px solid var(--color-border-muted); }
+.region-accordion-trigger { width: 100%; align-items: center !important; gap: calc(var(--spacing) * 5); padding: calc(var(--spacing) * 3) 0; text-decoration: none; }
+.region-accordion-trigger > [data-slot="accordion-trigger-icon"] { align-self: center; margin-left: 0 !important; }
+.region-accordion-trigger:hover { text-decoration: none; }
+.region-accordion-summary { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: calc(var(--spacing) * 4); }
+.region-accordion-title { color: var(--color-text); font-family: var(--font-sans); font-size: var(--text-body-lg); font-weight: 600; line-height: var(--text-body-lg--line-height); }
+.region-accordion-data { display: flex; align-items: center; gap: calc(var(--spacing) * 3); color: var(--color-text-subtle); font-family: var(--font-mono); font-size: var(--text-data); line-height: var(--text-data--line-height); white-space: nowrap; }
+.region-accordion-data strong { color: var(--color-text); font-size: var(--text-data); font-weight: 600; line-height: var(--text-data--line-height); }
+.region-accordion-content > div { padding: 0; }
+.region-accordion-content[data-open] { animation: region-accordion-in 220ms var(--ease-outdoor); }
+.region-accordion-content[data-closed] { animation: region-accordion-out 180ms var(--ease-outdoor); }
+@keyframes region-accordion-in { from { opacity: 0; transform: translateY(-0.5rem); } to { opacity: 1; transform: translateY(0); } }
+@keyframes region-accordion-out { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(-0.5rem); } }
+[data-slot="select-content"] { max-height: min(24rem, calc(100svh - 8rem)); min-width: 16rem; overflow-y: auto; border: 1px solid var(--color-border-strong); border-radius: var(--radius-control); background: var(--color-surface-raised); color: var(--color-text); box-shadow: 0 1rem 3rem rgba(0, 0, 0, .35); }
+[data-slot="select-item"] { min-height: var(--spacing-control-compact); color: var(--color-text); font-family: var(--font-sans); font-size: var(--text-body); }
+[data-slot="select-item"][data-highlighted] { background: var(--color-surface-interactive); color: var(--color-text); }
