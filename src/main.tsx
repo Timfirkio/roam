@@ -10,6 +10,8 @@ import { DISCOVERY_RADIUS_METERS, discoverSegments, type DiscoveredSegment, type
 import { loadDiscoveredSegments, saveDiscoveredSegments } from './discovery-store';
 import { findStockholmDistrict, STOCKHOLM_DISTRICTS } from './stockholm-catalog';
 import { nextNavigationState, type NavigationState } from './player-navigation';
+import { Geolocation, type CallbackID, type Position } from '@capacitor/geolocation';
+import { Capacitor } from '@capacitor/core';
 import { isDiscoverableProperties, roadTypeForProperties, stableRoadCandidateId } from './road-rules';
 import { STOCKHOLM_ROAD_NETWORK, STOCKHOLM_ROAD_NETWORK_BY_DISTRICT } from './road-network-catalog';
 import { Button as ShadcnButton } from '@/components/ui/button';
@@ -737,9 +739,14 @@ function App() {
   const [playerLocation, setPlayerLocation] = useState<PlayerLocation | null>(null);
   const navigationRef = useRef<NavigationState | null>(null);
   const [discoveries, setDiscoveries] = useState<DiscoveredSegment[]>([]);
-  const gpsWatchRef = useRef<number | null>(null);
+  const gpsWatchRef = useRef<CallbackID | null>(null);
   useEffect(() => { loadDiscoveredSegments().then(setDiscoveries).catch(() => {}); }, []);
   useEffect(() => {
+    // Capacitor exposes Android permissions through its plugin; the browser
+    // Permissions API remains useful for keeping the web UI in sync.
+    Geolocation.checkPermissions().then((status) => {
+      setGpsPermission(status.location === 'granted' ? 'granted' : status.location === 'denied' ? 'denied' : 'prompt');
+    }).catch(() => {});
     if (!navigator.permissions?.query) return;
     let permissionStatus: PermissionStatus | null = null;
     navigator.permissions.query({ name: 'geolocation' }).then((status) => {
@@ -750,34 +757,37 @@ function App() {
     return () => { if (permissionStatus) permissionStatus.onchange = null; };
   }, []);
   useEffect(() => {
-    if (!gpsEnabled || !navigator.geolocation) {
-      if (gpsWatchRef.current !== null) navigator.geolocation?.clearWatch(gpsWatchRef.current);
+    if (!gpsEnabled) {
+      if (gpsWatchRef.current !== null) void Geolocation.clearWatch({ id: gpsWatchRef.current });
       gpsWatchRef.current = null;
       if (!gpsEnabled) { navigationRef.current = null; setPlayerLocation(null); }
       return;
     }
-    const handlePosition = (position: GeolocationPosition) => {
+    const handlePosition = (position: Position) => {
       setGpsPermission('granted');
       const navigation = nextNavigationState(navigationRef.current, {
         lng: position.coords.longitude,
         lat: position.coords.latitude,
-        heading: Number.isFinite(position.coords.heading) ? position.coords.heading : null,
-        speed: Number.isFinite(position.coords.speed) ? position.coords.speed : null,
+        heading: typeof position.coords.heading === 'number' && Number.isFinite(position.coords.heading) ? position.coords.heading : null,
+        speed: typeof position.coords.speed === 'number' && Number.isFinite(position.coords.speed) ? position.coords.speed : null,
         timestamp: position.timestamp,
       });
       navigationRef.current = navigation;
       setPlayerLocation({ ...navigation, accuracy: position.coords.accuracy });
       localStorage.setItem(LAST_MAP_CENTER_STORAGE_KEY, JSON.stringify({ lng: position.coords.longitude, lat: position.coords.latitude, timestamp: position.timestamp }));
     };
-    const handleError = (error: GeolocationPositionError) => {
-      if (error.code === error.PERMISSION_DENIED) {
+    const handleError = (error: unknown) => {
+      if (typeof error === 'object' && error !== null && 'code' in error && (error as { code: number }).code === 1) {
         setGpsPermission('denied');
         setGpsEnabled(false);
         localStorage.setItem(GPS_PERMISSION_STORAGE_KEY, 'denied');
       }
     };
-    gpsWatchRef.current = navigator.geolocation.watchPosition(handlePosition, handleError, { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 });
-    return () => { if (gpsWatchRef.current !== null) navigator.geolocation.clearWatch(gpsWatchRef.current); gpsWatchRef.current = null; };
+    void Geolocation.watchPosition({ enableHighAccuracy: true, maximumAge: 5000, timeout: 15000, minimumUpdateInterval: 5000, interval: 5000 }, (position, error) => {
+      if (position) handlePosition(position);
+      if (error) handleError(error);
+    }).then((watchId) => { gpsWatchRef.current = watchId; }).catch(handleError);
+    return () => { if (gpsWatchRef.current !== null) void Geolocation.clearWatch({ id: gpsWatchRef.current }); gpsWatchRef.current = null; };
   }, [gpsEnabled]);
   const handleGpsChange = (enabled: boolean) => {
     if (!enabled) {
@@ -787,22 +797,36 @@ function App() {
       localStorage.setItem(GPS_ENABLED_STORAGE_KEY, 'false');
       return;
     }
-    if (!navigator.geolocation) {
-      setGpsPermission('denied');
+    if (!Capacitor.isNativePlatform()) {
+      navigator.geolocation.getCurrentPosition(() => {
+        setGpsPermission('granted');
+        setGpsEnabled(true);
+        localStorage.setItem(GPS_PERMISSION_STORAGE_KEY, 'granted');
+        localStorage.setItem(GPS_ENABLED_STORAGE_KEY, 'true');
+      }, (error) => {
+        if (error.code === error.PERMISSION_DENIED) {
+          setGpsPermission('denied');
+          localStorage.setItem(GPS_PERMISSION_STORAGE_KEY, 'denied');
+          setSessionActive(false);
+        }
+      }, { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 });
       return;
     }
-    navigator.geolocation.getCurrentPosition(() => {
+    void Geolocation.requestPermissions({ permissions: ['location'] }).then((status) => {
+      if (status.location !== 'granted') throw new Error('Location permission was not granted');
+      return Geolocation.getCurrentPosition({ enableHighAccuracy: true, maximumAge: 0, timeout: 15000 });
+    }).then(() => {
       setGpsPermission('granted');
       setGpsEnabled(true);
       localStorage.setItem(GPS_PERMISSION_STORAGE_KEY, 'granted');
       localStorage.setItem(GPS_ENABLED_STORAGE_KEY, 'true');
-    }, (error) => {
-      if (error.code === error.PERMISSION_DENIED) {
+    }).catch((error: unknown) => {
+      if (typeof error === 'object' && error !== null && 'code' in error && (error as { code: number }).code === 1) {
         setGpsPermission('denied');
         localStorage.setItem(GPS_PERMISSION_STORAGE_KEY, 'denied');
         setSessionActive(false);
       }
-    }, { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 });
+    });
   };
   const handleSessionChange = (active: boolean) => {
     setSessionActive(active);

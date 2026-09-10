@@ -14,10 +14,14 @@
     "preview": "vite preview",
     "test": "vitest run",
     "index:roads": "node scripts/build-road-network-index.mjs",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "cap:sync": "pnpm build && cap sync android",
+    "android:open": "cap open android"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
+    "@capacitor/core": "^8.5.1",
+    "@capacitor/geolocation": "^8.2.2",
     "@mapbox/vector-tile": "3.0.0",
     "@maplibre/vt-pbf": "4.3.2",
     "@phosphor-icons/react": "^2.1.10",
@@ -31,6 +35,8 @@
     "react-dom": "^19.1.0"
   },
   "devDependencies": {
+    "@capacitor/android": "^8.5.1",
+    "@capacitor/cli": "^8.5.1",
     "@tailwindcss/vite": "^4.3.3",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",

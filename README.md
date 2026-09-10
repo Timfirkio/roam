@@ -21,14 +21,38 @@ Early MVP scaffold. The first vertical slice is intentionally local-first:
 - Turf.js for client-side geometry operations
 - IndexedDB for the MVP's offline/local-first state
 - Supabase/PostGIS when sync, accounts, and leaderboards are validated
-- Capacitor as the mobile packaging path after the PWA loop works
+- Capacitor for the Android shell and native device APIs
 
 ## Local development
 
 ```bash
-npm install
-npm run dev
+pnpm install --frozen-lockfile
+pnpm dev
 ```
+
+## Android development
+
+The repository now includes a Capacitor Android project in `android/`. The normal
+native development loop is:
+
+```bash
+pnpm cap:sync
+pnpm android:open
+```
+
+Open the generated project in Android Studio, choose an Android device, and run it.
+The app uses Capacitor Geolocation for live GPS fixes on Android and retains the
+browser implementation on the web.
+
+### Background ride recording
+
+The current integration deliberately records only while the app is foregrounded.
+Reliable Android background tracking needs a native foreground location service,
+a persistent notification, and a separate background-location permission flow.
+The next implementation step is to add that service and persist its fixes locally
+so the web layer can recover the route when the app is reopened. It should not be
+implemented as a plain WebView geolocation watch: Android will pause or stop that
+when the app is backgrounded.
 
 The map provider and tile key will be configured through `.env.local` once the map shell is implemented. Never commit API keys.
 
@@ -36,4 +60,3 @@ The map provider and tile key will be configured through `.env.local` once the m
 
 - [Build plan](docs/BUILD_PLAN.md)
 - [Architecture notes](docs/ARCHITECTURE.md)
-

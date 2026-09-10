@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Roam</string>
+    <string name="title_activity_main">Roam</string>
+    <string name="package_name">com.roam.exploration</string>
+    <string name="custom_url_scheme">com.roam.exploration</string>
+</resources>
