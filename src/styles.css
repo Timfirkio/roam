@@ -248,6 +248,8 @@ aside.rounded-control.border-l-2.border-accent { display: none; }
 .district-progress-description { font-family: var(--font-mono); }
 .location-summary .district-progress-title { font-size: var(--text-body); line-height: 1.55; }
 .location-summary .district-progress-description { font-size: var(--text-body); line-height: 1.55; }
+.location-summary .district-progress-top { align-items: baseline; }
+.location-summary .district-progress-percent { font-size: var(--text-body-lg); line-height: var(--text-body-lg--line-height); }
 .district-progress-percent { color: var(--color-text); font-family: var(--font-mono); font-size: var(--text-data); font-weight: 600; line-height: var(--text-data--line-height); }
 .district-progress-card[role="button"] { cursor: pointer; }
 .district-progress-card[role="button"]:focus-visible { border-radius: var(--radius-panel); outline: 3px solid var(--color-accent); outline-offset: 3px; }
@@ -258,6 +260,17 @@ aside.rounded-control.border-l-2.border-accent { display: none; }
 .map-controls .map-compass button { width: 44px; height: 44px; border-radius: 50%; }
 .session-dock > .min-w-0 > strong { font-size: var(--text-label); line-height: 1.25; }
 .session-dock > .min-w-0 { display: flex; flex-direction: column; gap: calc(var(--spacing) * 0.5); }
+.session-dock-stats { display: flex; flex-wrap: wrap; gap: calc(var(--spacing) * 3); color: var(--color-text-subtle); line-height: var(--text-label--line-height); }
+@media (hover: none) {
+  [data-slot="button"].map-ui-surface:hover { border-color: #3a4542 !important; background: #101516cc !important; }
+  [data-slot="button"]:is(.bg-accent-button):hover { border-color: var(--color-accent) !important; background: var(--color-accent-button) !important; }
+  [data-slot="button"]:is(.bg-surface-raised):hover { border-color: var(--color-border) !important; background: var(--color-surface-raised) !important; }
+  [data-slot="button"]:is(.bg-transparent):hover { border-color: transparent !important; background: transparent !important; color: var(--color-text-muted) !important; }
+  [data-slot="button"]:is(.bg-danger-button):hover { border-color: var(--color-danger-500) !important; background: var(--color-danger-button) !important; }
+  .nav-item:hover:not([data-active]) { color: #626e69 !important; }
+  .zoom-group button:hover { background: transparent !important; }
+  .debug-menu button:hover { color: #9fa9a4 !important; }
+}
 .location-summary .district-progress-title { font-size: var(--text-body-lg); font-weight: 400; line-height: var(--text-body-lg--line-height); }
 .location-summary .district-progress-title-context { color: var(--color-text-subtle); font-weight: 400; }
 .location-summary .district-progress-title-active { color: var(--color-text); font-weight: 600; }

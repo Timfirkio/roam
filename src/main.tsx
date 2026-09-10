@@ -11,7 +11,7 @@ import { loadDiscoveredSegments, saveDiscoveredSegments } from './discovery-stor
 import { findStockholmDistrict, STOCKHOLM_DISTRICTS, type StockholmDistrict } from './stockholm-catalog';
 import { STOCKHOLM_MUNICIPALITY, STOCKHOLM_REGION_BY_DISTRICT, STOCKHOLM_REGIONS } from './stockholm-hierarchy';
 import { SWEDEN_MUNICIPALITIES, SWEDEN_MUNICIPALITIES_SORTED } from './sweden-municipalities';
-import { nextNavigationState, type NavigationState } from './player-navigation';
+import { distanceMeters, nextNavigationState, type NavigationState } from './player-navigation';
 import { Geolocation, type CallbackID, type Position } from '@capacitor/geolocation';
 import { Capacitor } from '@capacitor/core';
 import { RideTracking } from './ride-background-tracking';
@@ -106,6 +106,12 @@ function ProgressBar({ stats, className = '' }: { stats: ProgressStats; classNam
 function DistrictProgressContent({ title, distance, percentage, stats }: { title: ReactNode; distance: string; percentage: string; stats: ProgressStats }) {
   return <div className="district-progress-content"><div className="district-progress-top"><div className="district-progress-title">{title}</div><div className="district-progress-percent">{percentage}</div></div><div className="district-progress-description">{distance}</div><ProgressBar stats={stats} />
   </div>;
+}
+
+function formatSessionTime(totalSeconds: number) {
+  const minutes = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
+  const seconds = Math.floor(totalSeconds % 60).toString().padStart(2, '0');
+  return `${minutes}:${seconds}`;
 }
 
 function AccordionSummary({ title, percentage }: { title: ReactNode; percentage: string }) {
@@ -635,7 +641,7 @@ function MapCanvas({ mapRef, showDiscovered, showDistrictBoundaries, is3D, showB
   </div>;
 }
 
-function MapView({ onOpenProgress, onRequestLocation, sessionActive, onSessionChange, showDiscovered, setShowDiscovered, showDistrictBoundaries, setShowDistrictBoundaries, is3D, setIs3D, showBuildings3D, setShowBuildings3D, showTerrain3D, setShowTerrain3D, showDebugMenu, playerLocation, discoveries, onDiscoveries }: { onOpenProgress: (location: LocationState) => void; onRequestLocation: () => void; sessionActive: boolean; onSessionChange: (active: boolean) => void; showDiscovered: boolean; setShowDiscovered: (value: boolean) => void; showDistrictBoundaries: boolean; setShowDistrictBoundaries: (value: boolean) => void; is3D: boolean; setIs3D: (value: boolean) => void; showBuildings3D: boolean; setShowBuildings3D: (value: boolean) => void; showTerrain3D: boolean; setShowTerrain3D: (value: boolean) => void; showDebugMenu: boolean; playerLocation: PlayerLocation | null; discoveries: DiscoveredSegment[]; onDiscoveries: (segments: DiscoveredSegment[]) => void }) {
+function MapView({ onOpenProgress, onRequestLocation, onLocationUpdate, sessionActive, onSessionChange, sessionElapsedSeconds, sessionDistanceMeters, sessionDiscoveredMeters, showDiscovered, setShowDiscovered, showDistrictBoundaries, setShowDistrictBoundaries, is3D, setIs3D, showBuildings3D, setShowBuildings3D, showTerrain3D, setShowTerrain3D, showDebugMenu, playerLocation, discoveries, onDiscoveries }: { onOpenProgress: (location: LocationState) => void; onRequestLocation: () => void; onLocationUpdate: (location: LocationState) => void; sessionActive: boolean; onSessionChange: (active: boolean) => void; sessionElapsedSeconds: number; sessionDistanceMeters: number; sessionDiscoveredMeters: number; showDiscovered: boolean; setShowDiscovered: (value: boolean) => void; showDistrictBoundaries: boolean; setShowDistrictBoundaries: (value: boolean) => void; is3D: boolean; setIs3D: (value: boolean) => void; showBuildings3D: boolean; setShowBuildings3D: (value: boolean) => void; showTerrain3D: boolean; setShowTerrain3D: (value: boolean) => void; showDebugMenu: boolean; playerLocation: PlayerLocation | null; discoveries: DiscoveredSegment[]; onDiscoveries: (segments: DiscoveredSegment[]) => void }) {
   const [bearing, setBearing] = useState(0);
   const [zoom, setZoom] = useState(DEFAULT_MAP_ZOOM);
   const [pitch, setPitch] = useState(DEFAULT_3D_PITCH);
@@ -657,7 +663,7 @@ function MapView({ onOpenProgress, onRequestLocation, sessionActive, onSessionCh
     return () => observer.disconnect();
   }, []);
   useEffect(() => { if (!playerLocation) { setFollowPlayer(false); setActiveRotationFollow(false); } }, [playerLocation]);
-  const handleLocationChange = (lng: number, lat: number, locality?: { city?: string; region?: string }) => setLocation((current) => ({ ...current, lng, lat, city: locality?.city?.toUpperCase() || current.city, region: locality?.region?.toUpperCase() || current.region }));
+  const handleLocationChange = (lng: number, lat: number, locality?: { city?: string; region?: string }) => { const nextLocation = { ...location, lng, lat, city: locality?.city?.toUpperCase() || location.city, region: locality?.region?.toUpperCase() || location.region }; setLocation(nextLocation); onLocationUpdate(nextLocation); };
   const handleBearingChange = (nextBearing: number) => setBearing((previousBearing) => {
     let adjustedBearing = nextBearing;
     while (adjustedBearing - previousBearing > 180) adjustedBearing -= 360;
@@ -696,7 +702,7 @@ function MapView({ onOpenProgress, onRequestLocation, sessionActive, onSessionCh
   const locationControlLabel = activeRotationFollow ? 'Active heading follow' : isFollowingPlayer ? 'Following your location' : 'Follow your location';
   return <section className="map-view map-view--has-session-dock"><MapCanvas mapRef={mapRef} showDiscovered={showDiscovered} showDistrictBoundaries={showDistrictBoundaries} is3D={is3D} showBuildings3D={showBuildings3D} showTerrain3D={showTerrain3D} playerLocation={playerLocation} followPlayer={followPlayer} activeRotationFollow={activeRotationFollow} discoveries={discoveries} onDiscoveries={onDiscoveries} onLocationChange={handleLocationChange} onBearingChange={handleBearingChange} onZoomChange={setZoom} onPitchChange={setPitch} onFollowPlayerChange={handleFollowChange} />{!isFollowingPlayer && <div className="map-center-crosshair" aria-hidden="true"><span /></div>}
     <header className="map-header"><span className="map-header-spacer" aria-hidden="true" /><ShadcnButton variant="secondary" className="location-summary map-ui-surface" onClick={() => onOpenProgress(location)}><DistrictProgressContent title={<><span className="district-progress-title-context">{formatItemText(location.city)} / </span><span className="district-progress-title-active">{formatItemText(currentDistrict?.name ?? location.region)}</span></>} distance={currentDistrictDenominator ? `${formatDistance(discoveredBikeableMeters)} / ${formatDistance(bikeableLengthMeters(currentDistrictDenominator))}` : discoveredMeters > 0 ? `${formatDistance(discoveredMeters)} discovered` : 'Catalog ready'} percentage={currentDistrictDenominator ? `${currentDistrictStats.discovered.toFixed(1)}%` : '—'} stats={currentDistrictStats} /></ShadcnButton></header>
-    <div className="map-controls" style={{ bottom: sessionDockOffset }} aria-label="Map controls"><div className="map-compass"><ShadcnButton variant="secondary" size="icon" className="map-ui-surface" aria-label="Reset compass north" onClick={resetCompass}><span className="compass-rotor" style={{ transform: `rotate(${-bearing}deg)` }}><i className="compass-needle"><b className="compass-north">▲</b><b className="compass-south">▼</b></i></span></ShadcnButton></div><ShadcnButton variant="secondary" size="icon" className={locationControlClass} aria-label={locationControlLabel} aria-pressed={isFollowingPlayer} onClick={centerOnPlayer}><CrosshairSimple weight="regular" aria-hidden="true" /></ShadcnButton><ShadcnButton variant="secondary" size="sm" className="map-ui-surface map-mode-toggle" aria-label={`Switch to ${is3D ? '2D' : '3D'} view`} onClick={() => setIs3D(!is3D)}>{is3D ? '3D' : '2D'}</ShadcnButton><ButtonGroup orientation="vertical" className="zoom-group map-ui-surface"><ShadcnButton variant="ghost" size="icon" aria-label="Zoom in" onClick={() => mapRef.current?.zoomIn()}><Plus weight="regular" aria-hidden="true" /></ShadcnButton><ShadcnButton variant="ghost" size="icon" aria-label="Zoom out" onClick={() => mapRef.current?.zoomOut()}><Minus weight="regular" aria-hidden="true" /></ShadcnButton></ButtonGroup></div><div ref={sessionDockRef} className="session-dock map-ui-surface"><div className="min-w-0"><span className="dock-label font-sans text-body font-semibold tracking-normal text-text">{sessionActive ? 'Session active' : 'Ready to ride'}</span><strong className="block font-sans text-body font-normal tracking-normal text-text-subtle">{sessionActive ? (wakeLockStatus === 'active' ? 'Screen stays awake' : wakeLockStatus === 'unsupported' ? 'Screen lock unavailable here' : 'Keeping ride active') : 'Start a recording'}</strong></div><ShadcnButton variant={sessionActive ? 'destructive' : 'primary'} onClick={() => onSessionChange(!sessionActive)}>{sessionActive ? 'End ride' : 'Start ride'}</ShadcnButton></div>
+    <div className="map-controls" style={{ bottom: sessionDockOffset }} aria-label="Map controls"><div className="map-compass"><ShadcnButton variant="secondary" size="icon" className="map-ui-surface" aria-label="Reset compass north" onClick={resetCompass}><span className="compass-rotor" style={{ transform: `rotate(${-bearing}deg)` }}><i className="compass-needle"><b className="compass-north">▲</b><b className="compass-south">▼</b></i></span></ShadcnButton></div><ShadcnButton variant="secondary" size="icon" className={locationControlClass} aria-label={locationControlLabel} aria-pressed={isFollowingPlayer} onClick={centerOnPlayer}><CrosshairSimple weight="regular" aria-hidden="true" /></ShadcnButton><ShadcnButton variant="secondary" size="sm" className="map-ui-surface map-mode-toggle" aria-label={`Switch to ${is3D ? '2D' : '3D'} view`} onClick={() => setIs3D(!is3D)}>{is3D ? '3D' : '2D'}</ShadcnButton><ButtonGroup orientation="vertical" className="zoom-group map-ui-surface"><ShadcnButton variant="ghost" size="icon" aria-label="Zoom in" onClick={() => mapRef.current?.zoomIn()}><Plus weight="regular" aria-hidden="true" /></ShadcnButton><ShadcnButton variant="ghost" size="icon" aria-label="Zoom out" onClick={() => mapRef.current?.zoomOut()}><Minus weight="regular" aria-hidden="true" /></ShadcnButton></ButtonGroup></div><div ref={sessionDockRef} className="session-dock map-ui-surface"><div className="min-w-0"><span className="dock-label font-sans text-body-lg font-semibold tracking-normal text-text">{sessionActive ? 'Session active' : 'Ready to roam'}</span>{sessionActive ? <div className="session-dock-stats font-mono text-label"><span>{formatSessionTime(sessionElapsedSeconds)} • {formatDistance(sessionDistanceMeters)} ({formatDistance(sessionDiscoveredMeters)} new)</span></div> : <strong className="block font-mono text-label font-normal tracking-normal text-text-subtle">Start a recording</strong>}</div><ShadcnButton variant={sessionActive ? 'destructive' : 'primary'} onClick={() => onSessionChange(!sessionActive)}>{sessionActive ? 'Stop' : 'Record'}</ShadcnButton></div>
     {showDebugMenu && <div className="map-debug" style={{ bottom: sessionDockOffset }}><ShadcnButton variant="secondary" size="icon" className="map-ui-surface debug-icon" aria-label="Open debug settings" aria-expanded={debugOpen} onClick={() => setDebugOpen(!debugOpen)}><Bug weight="regular" aria-hidden="true" /></ShadcnButton>{debugOpen && <div className="debug-menu map-ui-surface"><p>DEBUG SETTINGS</p><label><span>DISCOVERED LAYER</span><Switch checked={showDiscovered} onCheckedChange={setShowDiscovered} aria-label="Discovered layer" /></label><label><span>DISTRICT BOUNDARIES</span><Switch checked={showDistrictBoundaries} onCheckedChange={setShowDistrictBoundaries} aria-label="District boundaries" /></label><label><span>BUILDINGS 3D</span><Switch checked={showBuildings3D} onCheckedChange={setShowBuildings3D} aria-label="Buildings 3D" /></label><label><span>TERRAIN 3D</span><Switch checked={showTerrain3D} onCheckedChange={setShowTerrain3D} aria-label="Terrain 3D" /></label><div><span>ZOOM LEVEL</span><b className="debug-value">{zoom.toFixed(1)}</b></div><div><span>CAMERA PITCH</span><b className="debug-value">{pitch.toFixed(0)}°</b></div></div>}</div>}
   </section>;
 }
@@ -1001,10 +1007,26 @@ function App() {
   });
   const [gpsEnabled, setGpsEnabled] = useState(() => localStorage.getItem(GPS_ENABLED_STORAGE_KEY) === 'true');
   const [sessionActive, setSessionActive] = useState(false);
+  const sessionActiveRef = useRef(false);
+  const sessionLastPositionRef = useRef<Pick<NavigationState, 'lng' | 'lat'> | null>(null);
+  const [sessionDistanceMeters, setSessionDistanceMeters] = useState(0);
+  const [sessionDiscoveredMeters, setSessionDiscoveredMeters] = useState(0);
+  const [sessionStartedAt, setSessionStartedAt] = useState<number | null>(null);
+  const [sessionElapsedSeconds, setSessionElapsedSeconds] = useState(0);
   const [playerLocation, setPlayerLocation] = useState<PlayerLocation | null>(null);
   const navigationRef = useRef<NavigationState | null>(null);
   const [discoveries, setDiscoveries] = useState<DiscoveredSegment[]>([]);
   const gpsWatchRef = useRef<CallbackID | null>(null);
+  useEffect(() => {
+    if (sessionStartedAt === null) {
+      setSessionElapsedSeconds(0);
+      return;
+    }
+    const updateElapsed = () => setSessionElapsedSeconds(Math.max(0, Math.floor((Date.now() - sessionStartedAt) / 1000)));
+    updateElapsed();
+    const timer = window.setInterval(updateElapsed, 1000);
+    return () => window.clearInterval(timer);
+  }, [sessionStartedAt]);
   useEffect(() => { loadDiscoveredSegments().then(setDiscoveries).catch(() => {}); }, []);
   useEffect(() => {
     // Capacitor exposes Android permissions through its plugin; the browser
@@ -1032,9 +1054,14 @@ function App() {
     const handlePosition = (position: Position) => {
       if (disposed) return;
       setGpsPermission('granted');
+      const currentPosition = { lng: position.coords.longitude, lat: position.coords.latitude };
+      setProgressLocation(previous => ({ ...previous, ...currentPosition }));
+      if (sessionActiveRef.current) {
+        if (sessionLastPositionRef.current) setSessionDistanceMeters(distance => distance + distanceMeters(sessionLastPositionRef.current!, currentPosition));
+        sessionLastPositionRef.current = currentPosition;
+      }
       const navigation = nextNavigationState(navigationRef.current, {
-        lng: position.coords.longitude,
-        lat: position.coords.latitude,
+        ...currentPosition,
         heading: typeof position.coords.heading === 'number' && Number.isFinite(position.coords.heading) ? position.coords.heading : null,
         speed: typeof position.coords.speed === 'number' && Number.isFinite(position.coords.speed) ? position.coords.speed : null,
         timestamp: position.timestamp,
@@ -1107,7 +1134,14 @@ function App() {
     localStorage.setItem(DISTRICT_BOUNDARIES_STORAGE_KEY, String(visible));
   };
   const handleSessionChange = (active: boolean) => {
+    sessionActiveRef.current = active;
     setSessionActive(active);
+    setSessionStartedAt(active ? Date.now() : null);
+    sessionLastPositionRef.current = null;
+    if (active) {
+      setSessionDistanceMeters(0);
+      setSessionDiscoveredMeters(0);
+    }
     handleGpsChange(active, active);
   };
   const openProgress = (location: LocationState) => { setProgressLocation(location); setView('progress'); };
@@ -1117,8 +1151,9 @@ function App() {
       const known = new Set(current.map(segment => segment.id));
       return [...current, ...newSegments.filter(segment => !known.has(segment.id))];
     });
+    if (sessionActiveRef.current) setSessionDiscoveredMeters(distance => distance + newSegments.reduce((total, segment) => total + segment.lengthMeters, 0));
   };
-  return <main className="app-shell"><div className="app-content">{view === 'map' && <MapView onOpenProgress={openProgress} onRequestLocation={() => handleGpsChange(true)} sessionActive={sessionActive} onSessionChange={handleSessionChange} showDiscovered={showDiscovered} setShowDiscovered={setShowDiscovered} showDistrictBoundaries={showDistrictBoundaries} setShowDistrictBoundaries={handleDistrictBoundariesChange} is3D={is3D} setIs3D={setIs3D} showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} showDebugMenu={showDebugMenu} playerLocation={playerLocation} discoveries={discoveries} onDiscoveries={handleDiscoveries} />}{view === 'sessions' && <PlaceholderView title="Sessions" copy="A record of every route you take. Session summaries will live here." />}{view === 'progress' && <GlobalProgressView location={progressLocation} discoveries={discoveries} />}{view === 'settings' && <SettingsView showDiscovered={showDiscovered} setShowDiscovered={setShowDiscovered} showDistrictBoundaries={showDistrictBoundaries} setShowDistrictBoundaries={handleDistrictBoundariesChange} showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} showDebugMenu={showDebugMenu} setShowDebugMenu={setShowDebugMenu} gpsEnabled={gpsEnabled} gpsPermission={gpsPermission} onGpsChange={handleGpsChange} onOpenDesignSystem={() => setView('design-system')} />}{view === 'design-system' && <DesignSystemView onBack={() => setView('settings')} />}</div><PrimaryNavigation view={view} onChange={setView} /></main>;
+  return <main className="app-shell"><div className="app-content">{view === 'map' && <MapView onOpenProgress={openProgress} onRequestLocation={() => handleGpsChange(true)} onLocationUpdate={setProgressLocation} sessionActive={sessionActive} onSessionChange={handleSessionChange} sessionElapsedSeconds={sessionElapsedSeconds} sessionDistanceMeters={sessionDistanceMeters} sessionDiscoveredMeters={sessionDiscoveredMeters} showDiscovered={showDiscovered} setShowDiscovered={setShowDiscovered} showDistrictBoundaries={showDistrictBoundaries} setShowDistrictBoundaries={handleDistrictBoundariesChange} is3D={is3D} setIs3D={setIs3D} showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} showDebugMenu={showDebugMenu} playerLocation={playerLocation} discoveries={discoveries} onDiscoveries={handleDiscoveries} />}{view === 'sessions' && <PlaceholderView title="Sessions" copy="A record of every route you take. Session summaries will live here." />}{view === 'progress' && <GlobalProgressView location={progressLocation} discoveries={discoveries} />}{view === 'settings' && <SettingsView showDiscovered={showDiscovered} setShowDiscovered={setShowDiscovered} showDistrictBoundaries={showDistrictBoundaries} setShowDistrictBoundaries={handleDistrictBoundariesChange} showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} showDebugMenu={showDebugMenu} setShowDebugMenu={setShowDebugMenu} gpsEnabled={gpsEnabled} gpsPermission={gpsPermission} onGpsChange={handleGpsChange} onOpenDesignSystem={() => setView('design-system')} />}{view === 'design-system' && <DesignSystemView onBack={() => setView('settings')} />}</div><PrimaryNavigation view={view} onChange={setView} /></main>;
 }
 
 const rootElement = document.getElementById('root')!;

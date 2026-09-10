@@ -1,5 +1,6 @@
 import hierarchy from './data/stockholm-hierarchy.json';
 import { STOCKHOLM_DISTRICTS, type StockholmDistrict } from './stockholm-catalog';
+import { compareDisplayNames } from './sorting';
 
 export type StockholmRegion = {
   id: string;
@@ -17,8 +18,8 @@ export const STOCKHOLM_MUNICIPALITY = hierarchy.municipality;
 export const STOCKHOLM_REGIONS: StockholmRegion[] = hierarchy.regions.map(region => ({
   id: region.id,
   name: region.name,
-  districts: region.districtIds.map(resolveDistrict),
-}));
+  districts: region.districtIds.map(resolveDistrict).sort(compareDisplayNames),
+})).sort(compareDisplayNames);
 
 export const STOCKHOLM_REGION_BY_DISTRICT = new Map(
   STOCKHOLM_REGIONS.flatMap(region => region.districts.map(district => [district.id, region] as const)),
