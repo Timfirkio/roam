@@ -8,8 +8,7 @@ const ROOT = path.resolve(import.meta.dirname, '..');
 const ZOOM = 14;
 const CHUNK_METERS = 12;
 const SOURCE_CATALOG = 'openfreemap-planet';
-const CATALOG_VERSION = 'road-network-stockholm-2026-09-08-v1';
-const DISTRICT_NAMES = ['SÖDERMALM', 'LILJEHOLMEN', 'ÅRSTA', 'ENSKEDE GÅRD', 'STUREBY'];
+const CATALOG_VERSION = 'road-network-stockholm-2026-09-10-v2';
 const UNPAVED_SURFACES = ['gravel', 'fine_gravel', 'dirt', 'earth', 'ground', 'unpaved', 'mud', 'sand', 'grass', 'woodchips', 'pebblestone', 'compacted'];
 const PATH_CLASSES = ['cycleway', 'path', 'pedestrian', 'footway', 'track', 'bridleway'];
 const LOCAL_STREET_CLASSES = ['minor', 'tertiary', 'secondary', 'residential', 'living_street', 'unclassified'];
@@ -49,16 +48,23 @@ function tileXY(lng, lat) {
   return [Math.floor((lng + 180) / 360 * n), Math.floor((1 - Math.asinh(Math.tan(lat * Math.PI / 180)) / Math.PI) / 2 * n)];
 }
 function bbox(geometry) {
-  const points = geometry.type === 'Polygon' ? geometry.coordinates.flat() : geometry.coordinates.flat(2);
+  const points = geometry.type === 'Polygon'
+    ? geometry.coordinates.flat()
+    : geometry.type === 'MultiPolygon'
+      ? geometry.coordinates.flat(2)
+      : geometry.type === 'LineString'
+        ? geometry.coordinates
+        : geometry.coordinates.flat();
   return [Math.min(...points.map(p => p[0])), Math.min(...points.map(p => p[1])), Math.max(...points.map(p => p[0])), Math.max(...points.map(p => p[1]))];
 }
+function boundsOverlap(a, b) { return a[0] <= b[2] && a[2] >= b[0] && a[1] <= b[3] && a[3] >= b[1]; }
 function geometryKey(coordinates) { return coordinates.map(([lng, lat]) => `${lng.toFixed(6)},${lat.toFixed(6)}`).join(';'); }
 
 const metadata = await (await fetch('https://tiles.openfreemap.org/planet')).json();
 const tileTemplate = metadata.tiles[0];
 const boundaries = JSON.parse(await fs.readFile(path.join(ROOT, 'src/data/stockholm-districts.geo.json'), 'utf8'));
-const districts = boundaries.features.filter(feature => DISTRICT_NAMES.includes(feature.properties.name)).map(feature => ({ id: catalogId(feature.properties.name), name: feature.properties.name, geometry: feature.geometry }));
-if (districts.length !== DISTRICT_NAMES.length) throw new Error('Could not resolve all requested districts from the official boundary catalog');
+const districts = boundaries.features.map(feature => ({ id: catalogId(feature.properties.name), name: feature.properties.name, geometry: feature.geometry }));
+if (!districts.length) throw new Error('Could not resolve any districts from the official boundary catalog');
 
 const tiles = new Map();
 for (const district of districts) {
@@ -94,17 +100,24 @@ for (const road of roads.values()) {
   const chunks = lineChunk(lineString(road.coordinates), CHUNK_METERS / 1000, { units: 'kilometers' }).features;
   chunks.forEach((chunk, index) => segments.push({ id: `${road.id}:${index}`, roadType: road.type, geometry: chunk.geometry, lengthMeters: Math.round(length(chunk, { units: 'kilometers' }) * 1000) }));
 }
-const districtBoundaries = districts.map(district => feature(district.geometry));
-const indexedSegments = segments.filter(segment => districtBoundaries.some(boundary => booleanIntersects(feature(segment.geometry), boundary)));
+const districtBoundaries = districts.map(district => ({ id: district.id, feature: feature(district.geometry), bounds: bbox(district.geometry) }));
+const indexedSegments = segments.filter(segment => {
+  const segmentBounds = bbox(segment.geometry);
+  return districtBoundaries.some(boundary => boundsOverlap(segmentBounds, boundary.bounds) && booleanIntersects(feature(segment.geometry), boundary.feature));
+});
 const districtEntries = districts.map(district => {
-  const boundary = feature(district.geometry);
-  const included = indexedSegments.filter(segment => booleanIntersects(feature(segment.geometry), boundary));
+  const boundary = districtBoundaries.find(candidate => candidate.id === district.id).feature;
+  const boundaryBounds = bbox(district.geometry);
+  const included = indexedSegments.filter(segment => boundsOverlap(bbox(segment.geometry), boundaryBounds) && booleanIntersects(feature(segment.geometry), boundary));
   const byType = Object.fromEntries(['paved-road', 'cycleway', 'unpaved-path', 'footpath'].map(type => {
     const typed = included.filter(segment => segment.roadType === type);
     return [type, { segments: typed.length, lengthMeters: typed.reduce((sum, segment) => sum + segment.lengthMeters, 0) }];
   }));
   return { id: district.id, name: district.name, denominators: { segments: included.length, lengthMeters: included.reduce((sum, segment) => sum + segment.lengthMeters, 0), byRoadType: byType } };
 });
-const output = { version: CATALOG_VERSION, generatedAt: new Date().toISOString(), source: { provider: SOURCE_CATALOG, zoom: ZOOM, tileCount: tiles.size, tileTemplate }, coverage: { districtCount: districtEntries.length, districts: districtEntries }, segments: indexedSegments.map(({ id, roadType }) => ({ id, roadType })) };
+// Geometry and segment IDs are deliberately not copied into the app bundle.
+// The client discovers against the detailed network tiles; this manifest only
+// supplies denominators for progress bars.
+const output = { version: CATALOG_VERSION, generatedAt: new Date().toISOString(), source: { provider: SOURCE_CATALOG, zoom: ZOOM, tileCount: tiles.size, tileTemplate }, coverage: { districtCount: districtEntries.length, districts: districtEntries } };
 await fs.writeFile(path.join(ROOT, 'src/data/road-network-stockholm.json'), `${JSON.stringify(output)}\n`);
 console.log(`wrote ${indexedSegments.length} segments for ${districtEntries.length} districts from ${tiles.size} z${ZOOM} tiles`);
