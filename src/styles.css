@@ -267,19 +267,23 @@ aside.rounded-control.border-l-2.border-accent { display: none; }
 .session-dock > .min-w-0 { display: flex; flex-direction: column; gap: calc(var(--spacing) * 0.5); }
 .session-dock-stats { display: flex; flex-wrap: wrap; gap: calc(var(--spacing) * 3); color: var(--color-text-subtle); line-height: var(--text-label--line-height); }
 @media (hover: none), (pointer: coarse) {
-  [data-slot="button"].map-ui-surface:hover { border-color: #3a4542 !important; background: #101516cc !important; }
-  [data-slot="button"]:is(.bg-accent-button):hover { border-color: var(--color-accent) !important; background: var(--color-accent-button) !important; }
-  [data-slot="button"]:is(.bg-surface-raised):hover { border-color: var(--color-border) !important; background: var(--color-surface-raised) !important; }
-  [data-slot="button"]:is(.bg-transparent):hover { border-color: transparent !important; background: transparent !important; color: var(--color-text-muted) !important; }
-  [data-slot="button"]:is(.bg-danger-button):hover { border-color: var(--color-danger-500) !important; background: var(--color-danger-button) !important; }
-  .nav-item:hover:not([data-active]) { color: #626e69 !important; }
-  .zoom-group button:hover { background: transparent !important; }
-  .debug-menu button:hover { color: #9fa9a4 !important; }
-  .setting-row:hover { color: var(--color-text) !important; }
-  .debug-toggle:hover { border-color: #4b5753 !important; color: #9fa9a4 !important; }
-  .track-button:hover { background: #f0ede3 !important; }
-  .district-progress-card:hover > [data-slot="item"] { border-color: var(--color-border) !important; background: var(--color-surface-raised) !important; }
-  .district-progress-card:hover .progress-bar { background: var(--color-surface-interactive) !important; }
+  /* Touch browsers keep :hover after a tap. Reset only a non-pressed hover so
+     the deliberate :active feedback remains visible while the finger is down. */
+  [data-slot="button"].map-ui-surface:hover:not(:active) { border-color: #3a4542 !important; background: #101516cc !important; }
+  [data-slot="button"]:is(.bg-accent-button):hover:not(:active) { border-color: var(--color-accent) !important; background: var(--color-accent-button) !important; }
+  [data-slot="button"]:is(.bg-surface-raised):hover:not(:active) { border-color: var(--color-border) !important; background: var(--color-surface-raised) !important; }
+  [data-slot="button"]:is(.bg-transparent):hover:not(:active) { border-color: transparent !important; background: transparent !important; color: var(--color-text-muted) !important; }
+  [data-slot="button"]:is(.bg-danger-button):hover:not(:active) { border-color: var(--color-danger-500) !important; background: var(--color-danger-button) !important; }
+  [data-slot="tabs-trigger"]:hover:not(:active):not([data-active]), .nav-item:hover:not(:active):not([data-active]) { color: var(--color-text-subtle) !important; }
+  .region-accordion-trigger:hover:not(:active), [data-slot="accordion-trigger"]:hover:not(:active) { text-decoration: none !important; }
+  .zoom-group button:hover:not(:active) { background: transparent !important; }
+  .debug-menu button:hover:not(:active) { color: #9fa9a4 !important; }
+  .setting-row:hover:not(:active), .debug-menu label:hover:not(:active) { color: var(--color-text) !important; }
+  .debug-toggle:hover:not(:active) { border-color: #4b5753 !important; color: #9fa9a4 !important; }
+  .track-button:hover:not(:active) { background: #f0ede3 !important; }
+  .district-progress-card:hover:not(:active) > [data-slot="item"] { border-color: var(--color-border) !important; background: var(--color-surface-raised) !important; }
+  .district-progress-card:hover:not(:active) .progress-bar { background: var(--color-surface-interactive) !important; }
+  [data-slot="button"]:active, [data-slot="tabs-trigger"]:active, .nav-item:active { transform: translateY(1px); }
 }
 .location-summary .district-progress-title { font-size: var(--text-body-lg); font-weight: 400; line-height: var(--text-body-lg--line-height); }
 .location-summary .district-progress-title-context { color: var(--color-text-subtle); font-weight: 400; }
