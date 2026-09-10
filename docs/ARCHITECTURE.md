@@ -62,6 +62,7 @@ Adapters
 - Discovery writes should be idempotent. Replaying a session must not inflate counts.
 - Keep raw tracks separate from derived discoveries so the matching algorithm can improve later.
 - Region progress should be derived from segment sets where possible, not maintained as an untrusted counter.
+- The shipped region manifest should contain only denominators and source metadata. Segment geometry is served by network tiles and discovered IDs are stored locally; do not embed a global segment catalog in the client.
 
 ## Battery and performance guardrails
 
