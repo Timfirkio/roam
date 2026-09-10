@@ -6,8 +6,10 @@ const config: CapacitorConfig = {
   webDir: 'dist',
   plugins: {
     Geolocation: {
-      // Android uses this to avoid receiving a burst of redundant GPS fixes.
-      minimumUpdateInterval: 5000,
+      // A five-second fix is visibly too sparse on a bicycle. The native ride
+      // service remains the source of truth while a session is active; this is
+      // the lightweight live-map watch used outside of a recording.
+      minimumUpdateInterval: 2000,
     },
   },
 };

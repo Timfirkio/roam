@@ -1,4 +1,4 @@
-import { StrictMode, useEffect, useRef, useState, type ComponentPropsWithoutRef, type ReactNode } from 'react';
+import { StrictMode, useCallback, useEffect, useRef, useState, type ComponentPropsWithoutRef, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import maplibregl, { type Map } from 'maplibre-gl';
 import { circle } from '@turf/turf';
@@ -14,7 +14,8 @@ import { SWEDEN_MUNICIPALITIES, SWEDEN_MUNICIPALITIES_SORTED } from './sweden-mu
 import { distanceMeters, nextNavigationState, type NavigationState } from './player-navigation';
 import { Geolocation, type CallbackID, type Position } from '@capacitor/geolocation';
 import { Capacitor } from '@capacitor/core';
-import { RideTracking } from './ride-background-tracking';
+import { RideTracking, type RideTrackingPoint } from './ride-background-tracking';
+import { loadSessions, saveSession, type RideSession } from './session-store';
 import { isDiscoverableProperties, roadTypeForProperties, stableRoadCandidateId } from './road-rules';
 import { STOCKHOLM_ROAD_NETWORK_BY_DISTRICT } from './road-network-catalog';
 import { Button as ShadcnButton } from '@/components/ui/button';
@@ -112,6 +113,25 @@ function formatSessionTime(totalSeconds: number) {
   const minutes = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
   const seconds = Math.floor(totalSeconds % 60).toString().padStart(2, '0');
   return `${minutes}:${seconds}`;
+}
+
+function gpxDocument(points: RideTrackingPoint[]) {
+  const escapeXml = (value: string) => value.replace(/[<>&'\"]/g, character => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' })[character]!);
+  const trackPoints = points
+    .filter(point => Number.isFinite(point.lat) && Number.isFinite(point.lng) && Number.isFinite(point.timestamp))
+    .sort((a, b) => a.timestamp - b.timestamp)
+    .map(point => `      <trkpt lat="${point.lat}" lon="${point.lng}"><time>${new Date(point.timestamp).toISOString()}</time>${typeof point.speed === 'number' ? `<extensions><speed>${point.speed}</speed></extensions>` : ''}</trkpt>`)
+    .join('\n');
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Roam" xmlns="http://www.topografix.com/GPX/1/1">\n  <metadata><name>${escapeXml('Roam ride')}</name></metadata>\n  <trk><name>${escapeXml('Roam ride')}</name><trkseg>\n${trackPoints}\n  </trkseg></trk>\n</gpx>\n`;
+}
+
+function downloadGpx(contents: string, fileName: string) {
+  const url = URL.createObjectURL(new Blob([contents], { type: 'application/gpx+xml' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 function AccordionSummary({ title, percentage }: { title: ReactNode; percentage: string }) {
@@ -873,6 +893,29 @@ function SettingsView({ showDiscovered, setShowDiscovered, showDistrictBoundarie
 
 function PlaceholderView({ title, copy }: { title: string; copy: string }) { return <section className="min-h-[calc(100svh-76px)] overflow-auto bg-surface px-6 pb-32 pt-10 text-text sm:px-8"><div className="mx-auto max-w-2xl"><h1 className="font-sans text-title font-semibold tracking-display">{title}</h1><p className="mt-4 max-w-xl text-body-lg text-text-muted">{copy}</p><Item variant="outline" className="mt-10"><ItemContent><ItemTitle>Module ready</ItemTitle><ItemDescription>The next Sessions build slice will add route history and saved rides.</ItemDescription></ItemContent><ItemActions><span className="font-mono text-label text-accent">NEXT</span></ItemActions></Item></div></section>; }
 
+function SessionRoutePreview({ points }: { points: RideSession['points'] }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!containerRef.current || points.length < 2) return;
+    const coordinates = points.map(point => [point.lng, point.lat] as [number, number]);
+    const map = new maplibregl.Map({ container: containerRef.current, style: MAP_STYLE, center: coordinates[0], zoom: 13, attributionControl: false, interactive: false });
+    map.on('load', () => {
+      styleRoamMap(map, false, false, null, false, false, false);
+      map.addSource('session-route', { type: 'geojson', data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates } } });
+      map.addLayer({ id: 'session-route-line', type: 'line', source: 'session-route', paint: { 'line-color': '#2bb8b0', 'line-width': 4, 'line-opacity': .9 } });
+      const bounds = coordinates.reduce((result, coordinate) => result.extend(coordinate), new maplibregl.LngLatBounds(coordinates[0], coordinates[0]));
+      map.fitBounds(bounds, { padding: 28, duration: 0, maxZoom: 15 });
+    });
+    return () => map.remove();
+  }, [points]);
+  return <div ref={containerRef} className="mt-4 h-40 overflow-hidden rounded-control border border-border-muted" aria-label="Session route preview" />;
+}
+
+function SessionsView({ sessions, onExport, exportStatus }: { sessions: RideSession[]; onExport: (session: RideSession) => void; exportStatus: 'idle' | 'exported' | 'error' }) {
+  const status = exportStatus === 'exported' ? 'GPX ready to save or share.' : exportStatus === 'error' ? 'Could not create the GPX file. Try again.' : null;
+  return <section className="min-h-[calc(100svh-76px)] overflow-auto bg-surface px-6 pb-32 pt-10 text-text sm:px-8"><div className="mx-auto max-w-2xl"><h1 className="font-sans text-title font-semibold tracking-display">Sessions</h1><p className="mt-4 max-w-xl text-body-lg text-text-muted">Your recorded rides stay on this device until account sync is available.</p>{sessions.length === 0 ? <Item variant="outline" className="mt-10"><ItemContent><ItemTitle>No saved rides yet</ItemTitle><ItemDescription>Rides shorter than 30 seconds are discarded.</ItemDescription></ItemContent></Item> : <div className="mt-10 space-y-4">{sessions.map(session => <Item key={session.id} variant="outline" className="block p-4"><div className="flex items-start justify-between gap-4"><ItemContent><ItemTitle>{session.title}</ItemTitle><ItemDescription>{new Date(session.startedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</ItemDescription></ItemContent><ShadcnButton variant="secondary" size="sm" onClick={() => onExport(session)}>Export GPX</ShadcnButton></div><div className="mt-3 font-mono text-label text-text-muted">{formatSessionTime(session.durationSeconds)} • {formatDistance(session.distanceMeters)} ({formatDistance(session.newDistanceMeters)} new)</div>{session.points.length > 1 && <SessionRoutePreview points={session.points} />}</Item>)}</div>}{status && <p className="mt-4 font-mono text-label text-accent">{status}</p>}</div></section>;
+}
+
 function LegacyProgressView({ location, discoveries }: { location: LocationState; discoveries: DiscoveredSegment[] }) {
   const [selectedMunicipality, setSelectedMunicipality] = useState('Stockholm');
   const currentDistrict = findStockholmDistrict([location.lng, location.lat]) as NonNullable<ReturnType<typeof findStockholmDistrict>>;
@@ -1009,14 +1052,47 @@ function App() {
   const [sessionActive, setSessionActive] = useState(false);
   const sessionActiveRef = useRef(false);
   const sessionLastPositionRef = useRef<Pick<NavigationState, 'lng' | 'lat'> | null>(null);
+  const lastProcessedLocationTimestampRef = useRef(0);
+  const sessionTrackPointsRef = useRef<RideTrackingPoint[]>([]);
+  const sessionDistanceRef = useRef(0);
+  const sessionDiscoveredMetersRef = useRef(0);
   const [sessionDistanceMeters, setSessionDistanceMeters] = useState(0);
   const [sessionDiscoveredMeters, setSessionDiscoveredMeters] = useState(0);
+  const [gpxExportStatus, setGpxExportStatus] = useState<'idle' | 'exported' | 'error'>('idle');
   const [sessionStartedAt, setSessionStartedAt] = useState<number | null>(null);
   const [sessionElapsedSeconds, setSessionElapsedSeconds] = useState(0);
   const [playerLocation, setPlayerLocation] = useState<PlayerLocation | null>(null);
   const navigationRef = useRef<NavigationState | null>(null);
   const [discoveries, setDiscoveries] = useState<DiscoveredSegment[]>([]);
+  const [sessions, setSessions] = useState<RideSession[]>([]);
   const gpsWatchRef = useRef<CallbackID | null>(null);
+  const processLocationFix = useCallback((fix: { lng: number; lat: number; accuracy: number; timestamp: number; speed?: number | null; bearing?: number | null }) => {
+    // Native and WebView providers can report the same underlying GPS fix.
+    // Ignoring an already-consumed timestamp prevents double-counted distance.
+    if (fix.timestamp <= lastProcessedLocationTimestampRef.current) return;
+    lastProcessedLocationTimestampRef.current = fix.timestamp;
+    const currentPosition = { lng: fix.lng, lat: fix.lat };
+    setGpsPermission('granted');
+    setProgressLocation(previous => ({ ...previous, ...currentPosition }));
+    if (sessionActiveRef.current) {
+      if (sessionLastPositionRef.current) {
+        sessionDistanceRef.current += distanceMeters(sessionLastPositionRef.current, currentPosition);
+        setSessionDistanceMeters(sessionDistanceRef.current);
+      }
+      sessionLastPositionRef.current = currentPosition;
+      sessionTrackPointsRef.current.push({ ...fix });
+      if (sessionTrackPointsRef.current.length > 21600) sessionTrackPointsRef.current.shift();
+    }
+    const navigation = nextNavigationState(navigationRef.current, {
+      ...currentPosition,
+      heading: typeof fix.bearing === 'number' && Number.isFinite(fix.bearing) ? fix.bearing : null,
+      speed: typeof fix.speed === 'number' && Number.isFinite(fix.speed) ? fix.speed : null,
+      timestamp: fix.timestamp,
+    });
+    navigationRef.current = navigation;
+    setPlayerLocation({ ...navigation, accuracy: fix.accuracy });
+    localStorage.setItem(LAST_MAP_CENTER_STORAGE_KEY, JSON.stringify({ ...currentPosition, timestamp: fix.timestamp }));
+  }, []);
   useEffect(() => {
     if (sessionStartedAt === null) {
       setSessionElapsedSeconds(0);
@@ -1028,6 +1104,7 @@ function App() {
     return () => window.clearInterval(timer);
   }, [sessionStartedAt]);
   useEffect(() => { loadDiscoveredSegments().then(setDiscoveries).catch(() => {}); }, []);
+  useEffect(() => { loadSessions().then(setSessions).catch(() => {}); }, []);
   useEffect(() => {
     // Capacitor exposes Android permissions through its plugin; the browser
     // Permissions API remains useful for keeping the web UI in sync.
@@ -1053,22 +1130,7 @@ function App() {
     let disposed = false;
     const handlePosition = (position: Position) => {
       if (disposed) return;
-      setGpsPermission('granted');
-      const currentPosition = { lng: position.coords.longitude, lat: position.coords.latitude };
-      setProgressLocation(previous => ({ ...previous, ...currentPosition }));
-      if (sessionActiveRef.current) {
-        if (sessionLastPositionRef.current) setSessionDistanceMeters(distance => distance + distanceMeters(sessionLastPositionRef.current!, currentPosition));
-        sessionLastPositionRef.current = currentPosition;
-      }
-      const navigation = nextNavigationState(navigationRef.current, {
-        ...currentPosition,
-        heading: typeof position.coords.heading === 'number' && Number.isFinite(position.coords.heading) ? position.coords.heading : null,
-        speed: typeof position.coords.speed === 'number' && Number.isFinite(position.coords.speed) ? position.coords.speed : null,
-        timestamp: position.timestamp,
-      });
-      navigationRef.current = navigation;
-      setPlayerLocation({ ...navigation, accuracy: position.coords.accuracy });
-      localStorage.setItem(LAST_MAP_CENTER_STORAGE_KEY, JSON.stringify({ lng: position.coords.longitude, lat: position.coords.latitude, timestamp: position.timestamp }));
+      processLocationFix({ lng: position.coords.longitude, lat: position.coords.latitude, accuracy: position.coords.accuracy, bearing: position.coords.heading, speed: position.coords.speed, timestamp: position.timestamp });
     };
     const handleError = (error: unknown) => {
       if (typeof error === 'object' && error !== null && 'code' in error && (error as { code: number }).code === 1) {
@@ -1077,7 +1139,10 @@ function App() {
         localStorage.setItem(GPS_PERMISSION_STORAGE_KEY, 'denied');
       }
     };
-    void Geolocation.watchPosition({ enableHighAccuracy: true, maximumAge: 5000, timeout: 15000, minimumUpdateInterval: 5000, interval: 5000 }, (position, error) => {
+    // During a native recording the foreground service owns GPS. Keeping this
+    // WebView watch off avoids competing subscriptions and duplicate fixes.
+    if (Capacitor.isNativePlatform() && sessionActive) return () => { disposed = true; };
+    void Geolocation.watchPosition({ enableHighAccuracy: true, maximumAge: 2000, timeout: 15000, minimumUpdateInterval: 2000, interval: 2000 }, (position, error) => {
       if (disposed) return;
       if (position) handlePosition(position);
       if (error) handleError(error);
@@ -1086,7 +1151,46 @@ function App() {
       else gpsWatchRef.current = watchId;
     }).catch(handleError);
     return () => { disposed = true; if (gpsWatchRef.current !== null) void Geolocation.clearWatch({ id: gpsWatchRef.current }); gpsWatchRef.current = null; };
-  }, [gpsEnabled]);
+  }, [gpsEnabled, processLocationFix, sessionActive]);
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    let disposed = false;
+    const restoreNativeRide = async () => {
+      try {
+        const state = await RideTracking.getState();
+        if (disposed || !state.active) return;
+        sessionActiveRef.current = true;
+        setSessionActive(true);
+        setSessionStartedAt(state.startedAt ?? Date.now());
+        setGpsEnabled(true);
+        localStorage.setItem(GPS_ENABLED_STORAGE_KEY, 'true');
+      } catch { /* The map remains usable if the optional native plugin is unavailable. */ }
+    };
+    void restoreNativeRide();
+    return () => { disposed = true; };
+  }, []);
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform() || !sessionActive) return;
+    let disposed = false;
+    let draining = false;
+    const drainNativePoints = async () => {
+      if (disposed || draining) return;
+      draining = true;
+      try {
+        const { points } = await RideTracking.drainPoints();
+        if (!disposed) points
+          .filter((point): point is RideTrackingPoint => Number.isFinite(point.lat) && Number.isFinite(point.lng) && Number.isFinite(point.timestamp))
+          .sort((a, b) => a.timestamp - b.timestamp)
+          .forEach(processLocationFix);
+      } catch { /* Keep the foreground service recording; a later drain can recover its queue. */ }
+      finally { draining = false; }
+    };
+    const onVisibilityChange = () => { if (document.visibilityState === 'visible') void drainNativePoints(); };
+    void drainNativePoints();
+    const timer = window.setInterval(() => void drainNativePoints(), 2000);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => { disposed = true; window.clearInterval(timer); document.removeEventListener('visibilitychange', onVisibilityChange); };
+  }, [processLocationFix, sessionActive]);
   const handleGpsChange = (enabled: boolean, startBackgroundRide = false) => {
     if (!enabled) {
       setGpsEnabled(false);
@@ -1114,13 +1218,16 @@ function App() {
     }
     void Geolocation.requestPermissions({ permissions: ['location'] }).then((status) => {
       if (status.location !== 'granted') throw new Error('Location permission was not granted');
+      // Start the foreground service as soon as permission is available. This
+      // closes the small gap where a rider can lock the phone while the initial
+      // one-off WebView GPS request is still waiting for its first fix.
+      if (startBackgroundRide) void RideTracking.start().catch(() => {});
       return Geolocation.getCurrentPosition({ enableHighAccuracy: true, maximumAge: 0, timeout: 15000 });
     }).then(() => {
       setGpsPermission('granted');
       setGpsEnabled(true);
       localStorage.setItem(GPS_PERMISSION_STORAGE_KEY, 'granted');
       localStorage.setItem(GPS_ENABLED_STORAGE_KEY, 'true');
-      if (startBackgroundRide) void RideTracking.start().catch(() => {});
     }).catch((error: unknown) => {
       if (typeof error === 'object' && error !== null && 'code' in error && (error as { code: number }).code === 1) {
         setGpsPermission('denied');
@@ -1134,6 +1241,7 @@ function App() {
     localStorage.setItem(DISTRICT_BOUNDARIES_STORAGE_KEY, String(visible));
   };
   const handleSessionChange = (active: boolean) => {
+    const startedAt = sessionStartedAt;
     sessionActiveRef.current = active;
     setSessionActive(active);
     setSessionStartedAt(active ? Date.now() : null);
@@ -1141,8 +1249,38 @@ function App() {
     if (active) {
       setSessionDistanceMeters(0);
       setSessionDiscoveredMeters(0);
+      sessionTrackPointsRef.current = [];
+      sessionDistanceRef.current = 0;
+      sessionDiscoveredMetersRef.current = 0;
+      setGpxExportStatus('idle');
+    } else if (startedAt !== null) {
+      const finishSession = async () => {
+        const endedAt = Date.now();
+        const nativePoints = Capacitor.isNativePlatform() ? (await RideTracking.getRecordedRoute()).points : [];
+        const points = (nativePoints.length > 0 ? nativePoints : sessionTrackPointsRef.current).slice().sort((a, b) => a.timestamp - b.timestamp);
+        const durationSeconds = Math.floor((endedAt - startedAt) / 1000);
+        if (durationSeconds < 30 || points.length < 2) return;
+        const districtNames = [...new Set(points.map(point => findStockholmDistrict([point.lng, point.lat])?.name).filter((name): name is string => Boolean(name)))].slice(0, 5);
+        const title = districtNames.length ? districtNames.join(' · ') : 'Roam ride';
+        const session: RideSession = { id: crypto.randomUUID(), title, districtNames, startedAt, endedAt, durationSeconds, distanceMeters: sessionDistanceRef.current, newDistanceMeters: sessionDiscoveredMetersRef.current, points };
+        await saveSession(session);
+        setSessions(current => [session, ...current]);
+      };
+      void finishSession().catch(() => {});
     }
     handleGpsChange(active, active);
+  };
+  const handleGpxExport = (session: RideSession) => {
+    const exportRoute = async () => {
+      try {
+        const fileName = `roam-ride-${new Date(session.startedAt).toISOString().slice(0, 10)}.gpx`;
+        const contents = gpxDocument(session.points);
+        if (Capacitor.isNativePlatform()) await RideTracking.shareGpx({ contents, fileName });
+        else downloadGpx(contents, fileName);
+        setGpxExportStatus('exported');
+      } catch { setGpxExportStatus('error'); }
+    };
+    void exportRoute();
   };
   const openProgress = (location: LocationState) => { setProgressLocation(location); setView('progress'); };
   const handleDiscoveries = (newSegments: DiscoveredSegment[]) => {
@@ -1151,9 +1289,12 @@ function App() {
       const known = new Set(current.map(segment => segment.id));
       return [...current, ...newSegments.filter(segment => !known.has(segment.id))];
     });
-    if (sessionActiveRef.current) setSessionDiscoveredMeters(distance => distance + newSegments.reduce((total, segment) => total + segment.lengthMeters, 0));
+    if (sessionActiveRef.current) {
+      sessionDiscoveredMetersRef.current += newSegments.reduce((total, segment) => total + segment.lengthMeters, 0);
+      setSessionDiscoveredMeters(sessionDiscoveredMetersRef.current);
+    }
   };
-  return <main className="app-shell"><div className="app-content">{view === 'map' && <MapView onOpenProgress={openProgress} onRequestLocation={() => handleGpsChange(true)} onLocationUpdate={setProgressLocation} sessionActive={sessionActive} onSessionChange={handleSessionChange} sessionElapsedSeconds={sessionElapsedSeconds} sessionDistanceMeters={sessionDistanceMeters} sessionDiscoveredMeters={sessionDiscoveredMeters} showDiscovered={showDiscovered} setShowDiscovered={setShowDiscovered} showDistrictBoundaries={showDistrictBoundaries} setShowDistrictBoundaries={handleDistrictBoundariesChange} is3D={is3D} setIs3D={setIs3D} showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} showDebugMenu={showDebugMenu} playerLocation={playerLocation} discoveries={discoveries} onDiscoveries={handleDiscoveries} />}{view === 'sessions' && <PlaceholderView title="Sessions" copy="A record of every route you take. Session summaries will live here." />}{view === 'progress' && <GlobalProgressView location={progressLocation} discoveries={discoveries} />}{view === 'settings' && <SettingsView showDiscovered={showDiscovered} setShowDiscovered={setShowDiscovered} showDistrictBoundaries={showDistrictBoundaries} setShowDistrictBoundaries={handleDistrictBoundariesChange} showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} showDebugMenu={showDebugMenu} setShowDebugMenu={setShowDebugMenu} gpsEnabled={gpsEnabled} gpsPermission={gpsPermission} onGpsChange={handleGpsChange} onOpenDesignSystem={() => setView('design-system')} />}{view === 'design-system' && <DesignSystemView onBack={() => setView('settings')} />}</div><PrimaryNavigation view={view} onChange={setView} /></main>;
+  return <main className="app-shell"><div className="app-content">{view === 'map' && <MapView onOpenProgress={openProgress} onRequestLocation={() => handleGpsChange(true)} onLocationUpdate={setProgressLocation} sessionActive={sessionActive} onSessionChange={handleSessionChange} sessionElapsedSeconds={sessionElapsedSeconds} sessionDistanceMeters={sessionDistanceMeters} sessionDiscoveredMeters={sessionDiscoveredMeters} showDiscovered={showDiscovered} setShowDiscovered={setShowDiscovered} showDistrictBoundaries={showDistrictBoundaries} setShowDistrictBoundaries={handleDistrictBoundariesChange} is3D={is3D} setIs3D={setIs3D} showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} showDebugMenu={showDebugMenu} playerLocation={playerLocation} discoveries={discoveries} onDiscoveries={handleDiscoveries} />}{view === 'sessions' && <SessionsView sessions={sessions} onExport={handleGpxExport} exportStatus={gpxExportStatus} />}{view === 'progress' && <GlobalProgressView location={progressLocation} discoveries={discoveries} />}{view === 'settings' && <SettingsView showDiscovered={showDiscovered} setShowDiscovered={setShowDiscovered} showDistrictBoundaries={showDistrictBoundaries} setShowDistrictBoundaries={handleDistrictBoundariesChange} showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} showDebugMenu={showDebugMenu} setShowDebugMenu={setShowDebugMenu} gpsEnabled={gpsEnabled} gpsPermission={gpsPermission} onGpsChange={handleGpsChange} onOpenDesignSystem={() => setView('design-system')} />}{view === 'design-system' && <DesignSystemView onBack={() => setView('settings')} />}</div><PrimaryNavigation view={view} onChange={setView} /></main>;
 }
 
 const rootElement = document.getElementById('root')!;
