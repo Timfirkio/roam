@@ -280,8 +280,8 @@ aside.rounded-control.border-l-2.border-accent { display: none; }
 
 @media (pointer: coarse) {
   /* Touch feedback stays visible without making the interface jump. */
-  button:active, [data-slot="tabs-trigger"]:active,
-  .nav-item:active, [data-slot="accordion-trigger"]:active,
+  button:not(.nav-item):active, [data-slot="tabs-trigger"]:not(.nav-item):active,
+  [data-slot="accordion-trigger"]:active,
   .region-accordion-trigger:active, .district-progress-card[role="button"]:active {
     background-color: var(--color-surface-interactive) !important;
     border-color: var(--color-border-strong) !important;
@@ -357,3 +357,15 @@ aside.rounded-control.border-l-2.border-accent { display: none; }
 .map-topline { top: calc(68px + var(--roam-safe-top)); right: calc(24px + var(--roam-safe-right)); }
 .map-view--has-session-dock .session-dock { right: calc(var(--spacing-map-edge) + var(--roam-safe-right)); left: calc(var(--spacing-map-edge) + var(--roam-safe-left)); }
 .placeholder-view, .progress-view, .settings-view { padding-top: calc(34px + var(--roam-safe-top)); }
+
+/* Every routed page begins below the status/cutout safe area, including
+   utility pages that use Tailwind's pt-8 or pt-10 utilities directly. */
+.app-content > section.pt-8 { padding-top: calc(2rem + var(--roam-safe-top)) !important; }
+.app-content > section.pt-10 { padding-top: calc(2.5rem + var(--roam-safe-top)) !important; }
+
+/* Primary navigation uses colour alone for selection; it has no touch press
+   feedback or underline because those are distracting in a persistent dock. */
+.bottom-nav-list { border-bottom: 0 !important; }
+.bottom-nav .nav-item::after { display: none !important; }
+.bottom-nav .nav-item[data-active] { color: var(--color-accent) !important; }
+.bottom-nav .nav-item[data-active] .nav-icon { color: currentColor; }
