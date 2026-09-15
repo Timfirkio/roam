@@ -16,6 +16,7 @@ import { Geolocation, type CallbackID, type Position } from '@capacitor/geolocat
 import { Capacitor } from '@capacitor/core';
 import { RideTracking, type RideTrackingPoint } from './ride-background-tracking';
 import { loadSessions, saveSession, type RideSession } from './session-store';
+import { reconcileSessionRoute } from './session-route-reconciliation';
 import { isDiscoverableProperties, roadTypeForProperties, stableRoadCandidateId } from './road-rules';
 import { STOCKHOLM_ROAD_NETWORK_BY_DISTRICT } from './road-network-catalog';
 import { Button as ShadcnButton } from '@/components/ui/button';
@@ -1064,8 +1065,23 @@ function App() {
   const [playerLocation, setPlayerLocation] = useState<PlayerLocation | null>(null);
   const navigationRef = useRef<NavigationState | null>(null);
   const [discoveries, setDiscoveries] = useState<DiscoveredSegment[]>([]);
+  const discoveriesRef = useRef<DiscoveredSegment[]>([]);
   const [sessions, setSessions] = useState<RideSession[]>([]);
   const gpsWatchRef = useRef<CallbackID | null>(null);
+  const lastReconciledPointTimestampRef = useRef(0);
+  const applyDiscoveredSegments = useCallback((segments: DiscoveredSegment[], countTowardSession = true) => {
+    const known = new Set(discoveriesRef.current.map(segment => segment.id));
+    const additions = segments.filter(segment => !known.has(segment.id));
+    if (!additions.length) return [];
+    discoveriesRef.current = [...discoveriesRef.current, ...additions];
+    void saveDiscoveredSegments(additions).catch(() => {});
+    setDiscoveries(discoveriesRef.current);
+    if (countTowardSession && sessionActiveRef.current) {
+      sessionDiscoveredMetersRef.current += additions.reduce((total, segment) => total + segment.lengthMeters, 0);
+      setSessionDiscoveredMeters(sessionDiscoveredMetersRef.current);
+    }
+    return additions;
+  }, []);
   const processLocationFix = useCallback((fix: { lng: number; lat: number; accuracy: number; timestamp: number; speed?: number | null; bearing?: number | null }) => {
     // Native and WebView providers can report the same underlying GPS fix.
     // Ignoring an already-consumed timestamp prevents double-counted distance.
@@ -1103,7 +1119,7 @@ function App() {
     const timer = window.setInterval(updateElapsed, 1000);
     return () => window.clearInterval(timer);
   }, [sessionStartedAt]);
-  useEffect(() => { loadDiscoveredSegments().then(setDiscoveries).catch(() => {}); }, []);
+  useEffect(() => { loadDiscoveredSegments().then(loaded => { discoveriesRef.current = loaded; setDiscoveries(loaded); }).catch(() => {}); }, []);
   useEffect(() => { loadSessions().then(setSessions).catch(() => {}); }, []);
   useEffect(() => {
     // Capacitor exposes Android permissions through its plugin; the browser
@@ -1191,6 +1207,41 @@ function App() {
     document.addEventListener('visibilitychange', onVisibilityChange);
     return () => { disposed = true; window.clearInterval(timer); document.removeEventListener('visibilitychange', onVisibilityChange); };
   }, [processLocationFix, sessionActive]);
+  useEffect(() => {
+    if (!sessionActive) return;
+    let disposed = false;
+    let reconciling = false;
+    const reconcilePendingTrack = async () => {
+      if (disposed || reconciling || document.visibilityState !== 'visible') return;
+      reconciling = true;
+      try {
+        const nativePoints = Capacitor.isNativePlatform() ? (await RideTracking.getRecordedRoute()).points : [];
+        const route = (nativePoints.length > 0 ? nativePoints : sessionTrackPointsRef.current)
+          .filter((point): point is RideTrackingPoint => Number.isFinite(point.lat) && Number.isFinite(point.lng) && Number.isFinite(point.timestamp))
+          .slice()
+          .sort((a, b) => a.timestamp - b.timestamp);
+        const firstNewIndex = route.findIndex(point => point.timestamp > lastReconciledPointTimestampRef.current);
+        if (firstNewIndex < 0) return;
+        // Retain one prior fix so the corridor joins cleanly to the last batch.
+        const pending = route.slice(Math.max(0, firstNewIndex - 1));
+        if (pending.length < 2) return;
+        const additions = await reconcileSessionRoute(pending, new Set(discoveriesRef.current.map(segment => segment.id)));
+        if (!disposed) {
+          applyDiscoveredSegments(additions);
+          lastReconciledPointTimestampRef.current = pending.at(-1)!.timestamp;
+        }
+      } catch {
+        // Retain the cursor: a later foreground pass or the final pass retries it.
+      } finally {
+        reconciling = false;
+      }
+    };
+    const onVisibilityChange = () => { if (document.visibilityState === 'visible') void reconcilePendingTrack(); };
+    void reconcilePendingTrack();
+    const timer = window.setInterval(() => void reconcilePendingTrack(), 30_000);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => { disposed = true; window.clearInterval(timer); document.removeEventListener('visibilitychange', onVisibilityChange); };
+  }, [applyDiscoveredSegments, sessionActive]);
   const handleGpsChange = (enabled: boolean, startBackgroundRide = false) => {
     if (!enabled) {
       setGpsEnabled(false);
@@ -1252,6 +1303,7 @@ function App() {
       sessionTrackPointsRef.current = [];
       sessionDistanceRef.current = 0;
       sessionDiscoveredMetersRef.current = 0;
+      lastReconciledPointTimestampRef.current = 0;
       setGpxExportStatus('idle');
     } else if (startedAt !== null) {
       const finishSession = async () => {
@@ -1262,7 +1314,12 @@ function App() {
         if (durationSeconds < 30 || points.length < 2) return;
         const districtNames = [...new Set(points.map(point => findStockholmDistrict([point.lng, point.lat])?.name).filter((name): name is string => Boolean(name)))].slice(0, 5);
         const title = districtNames.length ? districtNames.join(' · ') : 'Roam ride';
-        const session: RideSession = { id: crypto.randomUUID(), title, districtNames, startedAt, endedAt, durationSeconds, distanceMeters: sessionDistanceRef.current, newDistanceMeters: sessionDiscoveredMetersRef.current, points };
+        // Reconcile the complete native track after the ride. While the app is
+        // backgrounded the WebView cannot query MapLibre tiles for every GPS
+        // fix, so this fills the short gaps from the same detailed road map.
+        const reconciled = await reconcileSessionRoute(points, new Set(discoveriesRef.current.map(segment => segment.id))).catch(() => []);
+        const reconciledMeters = applyDiscoveredSegments(reconciled, false).reduce((total, segment) => total + segment.lengthMeters, 0);
+        const session: RideSession = { id: crypto.randomUUID(), title, districtNames, startedAt, endedAt, durationSeconds, distanceMeters: sessionDistanceRef.current, newDistanceMeters: sessionDiscoveredMetersRef.current + reconciledMeters, points };
         await saveSession(session);
         setSessions(current => [session, ...current]);
       };
@@ -1284,15 +1341,7 @@ function App() {
   };
   const openProgress = (location: LocationState) => { setProgressLocation(location); setView('progress'); };
   const handleDiscoveries = (newSegments: DiscoveredSegment[]) => {
-    void saveDiscoveredSegments(newSegments).catch(() => {});
-    setDiscoveries(current => {
-      const known = new Set(current.map(segment => segment.id));
-      return [...current, ...newSegments.filter(segment => !known.has(segment.id))];
-    });
-    if (sessionActiveRef.current) {
-      sessionDiscoveredMetersRef.current += newSegments.reduce((total, segment) => total + segment.lengthMeters, 0);
-      setSessionDiscoveredMeters(sessionDiscoveredMetersRef.current);
-    }
+    applyDiscoveredSegments(newSegments);
   };
   return <main className="app-shell"><div className="app-content">{view === 'map' && <MapView onOpenProgress={openProgress} onRequestLocation={() => handleGpsChange(true)} onLocationUpdate={setProgressLocation} sessionActive={sessionActive} onSessionChange={handleSessionChange} sessionElapsedSeconds={sessionElapsedSeconds} sessionDistanceMeters={sessionDistanceMeters} sessionDiscoveredMeters={sessionDiscoveredMeters} showDiscovered={showDiscovered} setShowDiscovered={setShowDiscovered} showDistrictBoundaries={showDistrictBoundaries} setShowDistrictBoundaries={handleDistrictBoundariesChange} is3D={is3D} setIs3D={setIs3D} showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} showDebugMenu={showDebugMenu} playerLocation={playerLocation} discoveries={discoveries} onDiscoveries={handleDiscoveries} />}{view === 'sessions' && <SessionsView sessions={sessions} onExport={handleGpxExport} exportStatus={gpxExportStatus} />}{view === 'progress' && <GlobalProgressView location={progressLocation} discoveries={discoveries} />}{view === 'settings' && <SettingsView showDiscovered={showDiscovered} setShowDiscovered={setShowDiscovered} showDistrictBoundaries={showDistrictBoundaries} setShowDistrictBoundaries={handleDistrictBoundariesChange} showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} showDebugMenu={showDebugMenu} setShowDebugMenu={setShowDebugMenu} gpsEnabled={gpsEnabled} gpsPermission={gpsPermission} onGpsChange={handleGpsChange} onOpenDesignSystem={() => setView('design-system')} />}{view === 'design-system' && <DesignSystemView onBack={() => setView('settings')} />}</div><PrimaryNavigation view={view} onChange={setView} /></main>;
 }

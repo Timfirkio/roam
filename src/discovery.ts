@@ -53,3 +53,58 @@ export function discoverSegments(sample: GpsSample, candidates: RoadCandidate[],
   }
   return found;
 }
+
+/**
+ * Turns a recorded route into a sequence of closely spaced samples. Background
+ * GPS can legitimately skip a few fixes while Android wakes the WebView; the
+ * interpolated corridor fills those short gaps without joining unrelated legs.
+ */
+export function routeDiscoverySamples(points: GpsSample[]): GpsSample[] {
+  const usable = points.filter(isUsableGpsSample).sort((a, b) => a.timestamp - b.timestamp);
+  const samples: GpsSample[] = [];
+  for (let index = 0; index < usable.length; index++) {
+    const current = usable[index];
+    samples.push(current);
+    const next = usable[index + 1];
+    if (!next) continue;
+    const latitudeMeters = (next.lat - current.lat) * 111_320;
+    const longitudeMeters = (next.lng - current.lng) * 111_320 * Math.cos(((current.lat + next.lat) / 2) * Math.PI / 180);
+    const distanceMeters = Math.hypot(latitudeMeters, longitudeMeters);
+    const elapsedMilliseconds = next.timestamp - current.timestamp;
+    // Do not invent a route across a genuinely long tracking outage.
+    if (distanceMeters < 20 || distanceMeters > 180 || elapsedMilliseconds > 15_000) continue;
+    const steps = Math.ceil(distanceMeters / 14);
+    for (let step = 1; step < steps; step++) {
+      const fraction = step / steps;
+      samples.push({
+        lng: current.lng + (next.lng - current.lng) * fraction,
+        lat: current.lat + (next.lat - current.lat) * fraction,
+        accuracy: Math.max(current.accuracy, next.accuracy),
+        timestamp: Math.round(current.timestamp + elapsedMilliseconds * fraction),
+      });
+    }
+  }
+  return samples;
+}
+
+export function discoverRouteSegments(points: GpsSample[], candidates: RoadCandidate[], knownIds: ReadonlySet<string>): DiscoveredSegment[] {
+  const found: DiscoveredSegment[] = [];
+  const known = new Set(knownIds);
+  for (const sample of routeDiscoverySamples(points)) {
+    const latitudePadding = DISCOVERY_RADIUS_METERS / 111_320;
+    const longitudePadding = DISCOVERY_RADIUS_METERS / (111_320 * Math.cos(sample.lat * Math.PI / 180));
+    const nearby = candidates.filter(candidate => {
+      const longitudes = candidate.geometry.coordinates.map(([lng]) => lng);
+      const latitudes = candidate.geometry.coordinates.map(([, lat]) => lat);
+      return Math.max(...longitudes) >= sample.lng - longitudePadding
+        && Math.min(...longitudes) <= sample.lng + longitudePadding
+        && Math.max(...latitudes) >= sample.lat - latitudePadding
+        && Math.min(...latitudes) <= sample.lat + latitudePadding;
+    });
+    for (const segment of discoverSegments(sample, nearby, known)) {
+      known.add(segment.id);
+      found.push(segment);
+    }
+  }
+  return found;
+}
