@@ -8,12 +8,21 @@ const ROOT = path.resolve(import.meta.dirname, '..');
 const ZOOM = 14;
 const CHUNK_METERS = 12;
 const SOURCE_CATALOG = 'openfreemap-planet';
-const CATALOG_VERSION = 'road-network-stockholm-2026-09-10-v2';
+const CATALOG_VERSION = 'road-network-stockholm-2026-09-15-v4';
 const UNPAVED_SURFACES = ['gravel', 'fine_gravel', 'dirt', 'earth', 'ground', 'unpaved', 'mud', 'sand', 'grass', 'woodchips', 'pebblestone', 'compacted'];
 const PATH_CLASSES = ['cycleway', 'path', 'pedestrian', 'footway', 'track', 'bridleway'];
 const LOCAL_STREET_CLASSES = ['minor', 'tertiary', 'secondary', 'residential', 'living_street', 'unclassified'];
 
 function roadType(properties) {
+  const roadClass = String(properties.class ?? '');
+  const subclass = String(properties.subclass ?? '');
+  const surface = String(properties.surface ?? '');
+  if (UNPAVED_SURFACES.includes(surface) && (PATH_CLASSES.includes(roadClass) || subclass === 'cycleway')) return 'unpaved-path';
+  if (roadClass === 'cycleway' || subclass === 'cycleway') return 'cycleway';
+  if (PATH_CLASSES.includes(roadClass)) return 'cycleway';
+  return 'paved-road';
+}
+function legacyRoadType(properties) {
   const roadClass = String(properties.class ?? '');
   const subclass = String(properties.subclass ?? '');
   const surface = String(properties.surface ?? '');
@@ -88,7 +97,7 @@ for (const [key, [x, y]] of tiles) {
     for (const coordinates of lines) {
       if (coordinates.length < 2) continue;
       const type = roadType(properties);
-      const id = stableId(coordinates, type);
+      const id = stableId(coordinates, legacyRoadType(properties));
       roads.set(`${id}:${geometryKey(coordinates)}`, { id, type, coordinates });
     }
   }
@@ -109,7 +118,7 @@ const districtEntries = districts.map(district => {
   const boundary = districtBoundaries.find(candidate => candidate.id === district.id).feature;
   const boundaryBounds = bbox(district.geometry);
   const included = indexedSegments.filter(segment => boundsOverlap(bbox(segment.geometry), boundaryBounds) && booleanIntersects(feature(segment.geometry), boundary));
-  const byType = Object.fromEntries(['paved-road', 'cycleway', 'unpaved-path', 'footpath'].map(type => {
+  const byType = Object.fromEntries(['paved-road', 'cycleway', 'unpaved-path'].map(type => {
     const typed = included.filter(segment => segment.roadType === type);
     return [type, { segments: typed.length, lengthMeters: typed.reduce((sum, segment) => sum + segment.lengthMeters, 0) }];
   }));

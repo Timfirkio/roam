@@ -8,7 +8,8 @@ export const DISCOVERY_RADIUS_METERS = 18;
 export const MAX_GPS_ACCURACY_METERS = 25;
 const DISCOVERY_CHUNK_METERS = 12;
 
-export type RoadType = 'paved-road' | 'cycleway' | 'unpaved-path' | 'footpath';
+/** The three player-facing progress categories. */
+export type RoadType = 'paved-road' | 'cycleway' | 'unpaved-path';
 export type GpsSample = { lng: number; lat: number; accuracy: number; timestamp: number };
 export type RoadCandidate = { id: string; geometry: LineString; roadType: RoadType };
 export type DiscoveredSegment = {

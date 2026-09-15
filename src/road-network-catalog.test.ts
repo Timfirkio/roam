@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { STOCKHOLM_ROAD_NETWORK } from './road-network-catalog';
 
 describe('offline road network catalog', () => {
-  it('contains the versioned five-district release', () => {
-    expect(STOCKHOLM_ROAD_NETWORK.version).toBe('road-network-stockholm-2026-09-10-v2');
+  it('contains the versioned three-category release', () => {
+    expect(STOCKHOLM_ROAD_NETWORK.version).toBe('road-network-stockholm-2026-09-15-v4');
     expect(STOCKHOLM_ROAD_NETWORK.coverage.districtCount).toBe(117);
     expect(STOCKHOLM_ROAD_NETWORK.source.zoom).toBe(14);
     expect(STOCKHOLM_ROAD_NETWORK.source.tileCount).toBeGreaterThan(0);

@@ -4,13 +4,31 @@ export const UNPAVED_SURFACES = ['gravel', 'fine_gravel', 'dirt', 'earth', 'grou
 export const PATH_CLASSES = ['cycleway', 'path', 'pedestrian', 'footway', 'track', 'bridleway'];
 export const LOCAL_STREET_CLASSES = ['minor', 'tertiary', 'secondary', 'residential', 'living_street', 'unclassified'];
 
-export function roadTypeForProperties(properties: Record<string, unknown>): RoadType {
+/**
+ * Keeps segment IDs stable across presentation-category changes. It mirrors
+ * the category names used before the three-category progress update.
+ */
+export function legacyRoadTypeForProperties(properties: Record<string, unknown>) {
   const roadClass = String(properties.class ?? '');
   const subclass = String(properties.subclass ?? '');
   const surface = String(properties.surface ?? '');
   if (roadClass === 'cycleway' || subclass === 'cycleway') return 'cycleway';
   if (roadClass === 'footway' || roadClass === 'pedestrian') return 'footpath';
   if (PATH_CLASSES.includes(roadClass)) return UNPAVED_SURFACES.includes(surface) ? 'unpaved-path' : 'footpath';
+  return 'paved-road';
+}
+
+export function roadTypeForProperties(properties: Record<string, unknown>): RoadType {
+  const roadClass = String(properties.class ?? '');
+  const subclass = String(properties.subclass ?? '');
+  const surface = String(properties.surface ?? '');
+  // Surface takes precedence for paths: an unpaved cycleway belongs with the
+  // orange paths rather than the teal paved-cycleway category.
+  if (UNPAVED_SURFACES.includes(surface) && (PATH_CLASSES.includes(roadClass) || subclass === 'cycleway')) return 'unpaved-path';
+  if (roadClass === 'cycleway' || subclass === 'cycleway') return 'cycleway';
+  // Paved or untagged bike-friendly paths are represented as cycleways: they
+  // are separated from motor traffic even when OpenStreetMap calls them paths.
+  if (PATH_CLASSES.includes(roadClass)) return 'cycleway';
   return 'paved-road';
 }
 
@@ -25,10 +43,10 @@ export function isDiscoverableProperties(properties: Record<string, unknown>) {
   return LOCAL_STREET_CLASSES.includes(roadClass);
 }
 
-export function stableRoadCandidateId(coordinates: [number, number][], roadType: RoadType) {
+export function stableRoadCandidateId(coordinates: [number, number][], roadType: RoadType, identityType: string = roadType) {
   const forward = coordinates.map(([lng, lat]) => `${lng.toFixed(6)},${lat.toFixed(6)}`).join(';');
   const reverse = [...coordinates].reverse().map(([lng, lat]) => `${lng.toFixed(6)},${lat.toFixed(6)}`).join(';');
-  const value = `${roadType}|${forward < reverse ? forward : reverse}`;
+  const value = `${identityType}|${forward < reverse ? forward : reverse}`;
   let hash = 2166136261;
   for (let index = 0; index < value.length; index++) {
     hash ^= value.charCodeAt(index);

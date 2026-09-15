@@ -19,7 +19,7 @@ import { deleteSession, loadSessions, saveSession, type RideSession } from './se
 import { reconcileSessionRoute } from './session-route-reconciliation';
 import { generateSessionThumbnail } from './session-thumbnail';
 import { applyRoamBaseStyle } from './roam-map-style';
-import { isDiscoverableProperties, roadTypeForProperties, stableRoadCandidateId } from './road-rules';
+import { isDiscoverableProperties, legacyRoadTypeForProperties, roadTypeForProperties, stableRoadCandidateId } from './road-rules';
 import { STOCKHOLM_ROAD_NETWORK_BY_DISTRICT } from './road-network-catalog';
 import { Button as ShadcnButton } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
@@ -89,26 +89,25 @@ type ProgressStats = {
   pavedBikeableRoads: number;
   pavedCycleways: number;
   unpavedPaths: number;
-  footpaths: number;
 };
 
-const CURRENT_PROGRESS: ProgressStats = { discovered: 0, pavedBikeableRoads: 0, pavedCycleways: 0, unpavedPaths: 0, footpaths: 0 };
+const CURRENT_PROGRESS: ProgressStats = { discovered: 0, pavedBikeableRoads: 0, pavedCycleways: 0, unpavedPaths: 0 };
 
 function formatDistance(meters: number) {
   if (meters < 1000) return `${Math.round(meters)} m`;
   return `${(meters / 1000).toFixed(1)} km`;
 }
 
-function bikeableLengthMeters(denominator: { byRoadType: Record<string, { lengthMeters: number }> }) {
-  return ['paved-road', 'cycleway', 'unpaved-path'].reduce((total, type) => total + (denominator.byRoadType[type]?.lengthMeters ?? 0), 0);
+function bikeableLengthMeters(denominator: { lengthMeters: number }) {
+  return denominator.lengthMeters;
 }
 
 function bikeableDiscoveredMeters(discoveries: DiscoveredSegment[]) {
-  return discoveries.filter(segment => segment.roadType !== 'footpath').reduce((total, segment) => total + segment.lengthMeters, 0);
+  return discoveries.reduce((total, segment) => total + segment.lengthMeters, 0);
 }
 
 function ProgressBar({ stats, className = '' }: { stats: ProgressStats; className?: string }) {
-  return <div className={`progress-bar ${className}`}><i className="progress-bar__discovered" style={{ width: `${stats.discovered}%` }}><em className="progress-bar__paved-roads" style={{ width: `${stats.pavedBikeableRoads}%` }} /><em className="progress-bar__paved-cycleways" style={{ width: `${stats.pavedCycleways}%` }} /><em className="progress-bar__unpaved" style={{ width: `${stats.unpavedPaths}%` }} /><em className="progress-bar__footpaths" style={{ width: `${stats.footpaths}%` }} /></i></div>;
+  return <div className={`progress-bar ${className}`}><i className="progress-bar__discovered"><em className="progress-bar__paved-roads" style={{ width: `${stats.pavedBikeableRoads}%` }} /><em className="progress-bar__paved-cycleways" style={{ width: `${stats.pavedCycleways}%` }} /><em className="progress-bar__unpaved" style={{ width: `${stats.unpavedPaths}%` }} /></i></div>;
 }
 
 function DistrictProgressContent({ title, distance, percentage, stats }: { title: ReactNode; distance: string; percentage: string; stats: ProgressStats }) {
@@ -285,7 +284,7 @@ function styleRoamMap(map: Map, showDiscovered: boolean, showDistrictBoundaries:
       maxzoom: ROAD_MAX_ZOOM,
       source: DISCOVERED_SOURCE,
       paint: {
-        'line-color': ['match', ['get', 'roadType'], 'cycleway', '#2bb8b0', 'unpaved-path', '#d59c67', 'footpath', '#f0eee7', '#f0eee7'],
+        'line-color': ['match', ['get', 'roadType'], 'cycleway', '#2bb8b0', 'unpaved-path', '#d59c67', 'footpath', '#2bb8b0', '#f0eee7'],
         'line-opacity': 0.98,
         'line-width': ['interpolate', ['linear'], ['zoom'], 6, 1, 10, 1.2, 15, 1.8, 18, 3],
       },
@@ -414,20 +413,25 @@ function roadTypeForFeature(properties: Record<string, unknown>) {
   return roadTypeForProperties(properties);
 }
 
-type NetworkDenominators = { segments: number; byRoadType: Record<string, { segments: number; lengthMeters: number }> };
+type NetworkDenominators = { segments: number; lengthMeters: number; byRoadType: Record<string, { segments: number; lengthMeters: number }> };
 
 function progressStatsForDenominator(denominator: NetworkDenominators, discoveries: DiscoveredSegment[]): ProgressStats {
   const discovered = new globalThis.Map<string, DiscoveredSegment>(discoveries.map(segment => [segment.id, segment]));
-  const discoveredIds = new Set(discovered.keys());
-  const counts = { 'paved-road': 0, cycleway: 0, 'unpaved-path': 0, footpath: 0 };
+  const meters = { 'paved-road': 0, cycleway: 0, 'unpaved-path': 0 };
   for (const segment of discovered.values()) {
-    if (segment.roadType === 'paved-road') counts['paved-road']++;
-    else if (segment.roadType === 'cycleway') counts.cycleway++;
-    else if (segment.roadType === 'unpaved-path') counts['unpaved-path']++;
-    else if (segment.roadType === 'footpath') counts.footpath++;
+    // Records stored before the three-category update can contain footpath.
+    // Preserve that progress by folding it into the teal cycleway network.
+    const roadType = segment.roadType === 'unpaved-path'
+      ? 'unpaved-path'
+      : segment.roadType === 'cycleway' || (segment.roadType as string) === 'footpath'
+        ? 'cycleway'
+        : 'paved-road';
+    meters[roadType] += segment.lengthMeters;
   }
-  const percentage = (value: number, total: number) => total ? Math.min(100, value / total * 100) : 0;
-  return { discovered: percentage(discoveredIds.size, denominator.segments), pavedBikeableRoads: percentage(counts['paved-road'], denominator.byRoadType['paved-road']?.segments ?? 0), pavedCycleways: percentage(counts.cycleway, denominator.byRoadType.cycleway?.segments ?? 0), unpavedPaths: percentage(counts['unpaved-path'], denominator.byRoadType['unpaved-path']?.segments ?? 0), footpaths: percentage(counts.footpath, denominator.byRoadType.footpath?.segments ?? 0) };
+  const totalDiscoveredMeters = Object.values(meters).reduce((total, value) => total + value, 0);
+  const scale = Math.max(denominator.lengthMeters, totalDiscoveredMeters);
+  const percentage = (value: number) => scale ? value / scale * 100 : 0;
+  return { discovered: percentage(totalDiscoveredMeters), pavedBikeableRoads: percentage(meters['paved-road']), pavedCycleways: percentage(meters.cycleway), unpavedPaths: percentage(meters['unpaved-path']) };
 }
 
 function progressStatsForDistrict(districtId: string, discoveries: DiscoveredSegment[]) {
@@ -436,11 +440,12 @@ function progressStatsForDistrict(districtId: string, discoveries: DiscoveredSeg
 }
 
 function aggregateDenominators(districtIds: string[]): NetworkDenominators {
-  const denominator = { segments: 0, byRoadType: {} as Record<string, { segments: number; lengthMeters: number }> };
+  const denominator = { segments: 0, lengthMeters: 0, byRoadType: {} as Record<string, { segments: number; lengthMeters: number }> };
   for (const districtId of districtIds) {
     const district = STOCKHOLM_ROAD_NETWORK_BY_DISTRICT.get(districtId)?.denominators;
     if (!district) continue;
     denominator.segments += district.segments;
+    denominator.lengthMeters += district.lengthMeters;
     for (const [roadType, values] of Object.entries(district.byRoadType)) {
       const current = denominator.byRoadType[roadType] ?? { segments: 0, lengthMeters: 0 };
       denominator.byRoadType[roadType] = { segments: current.segments + values.segments, lengthMeters: current.lengthMeters + values.lengthMeters };
@@ -468,7 +473,7 @@ function candidatesFromMap(map: Map, location: PlayerLocation): RoadCandidate[] 
         const lats = coordinates.map(([, lat]) => lat);
         if (Math.max(...lngs) < location.lng - longitudePadding || Math.min(...lngs) > location.lng + longitudePadding || Math.max(...lats) < location.lat - latitudePadding || Math.min(...lats) > location.lat + latitudePadding) return;
         const roadType = roadTypeForFeature(properties);
-        candidates.push({ id: stableRoadCandidateId(coordinates, roadType), geometry: { type: 'LineString', coordinates }, roadType });
+        candidates.push({ id: stableRoadCandidateId(coordinates, roadType, legacyRoadTypeForProperties(properties)), geometry: { type: 'LineString', coordinates }, roadType });
       });
     });
     return candidates;
