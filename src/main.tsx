@@ -18,6 +18,7 @@ import { RideTracking, type RideTrackingPoint } from './ride-background-tracking
 import { deleteSession, loadSessions, saveSession, type RideSession } from './session-store';
 import { reconcileSessionRoute } from './session-route-reconciliation';
 import { generateSessionThumbnail } from './session-thumbnail';
+import { applyRoamBaseStyle } from './roam-map-style';
 import { isDiscoverableProperties, roadTypeForProperties, stableRoadCandidateId } from './road-rules';
 import { STOCKHOLM_ROAD_NETWORK_BY_DISTRICT } from './road-network-catalog';
 import { Button as ShadcnButton } from '@/components/ui/button';
@@ -71,7 +72,7 @@ const DISTRICT_BOUNDARIES_LINE = 'roam-district-boundaries-line';
 const PLAYER_DISCOVERY_SOURCE = 'roam-player-discovery-radius';
 const PLAYER_DISCOVERY_FILL = 'roam-player-discovery-radius-fill';
 const PLAYER_DISCOVERY_LINE = 'roam-player-discovery-radius-line';
-const SESSION_THUMBNAIL_STYLE_VERSION = 2;
+const SESSION_THUMBNAIL_STYLE_VERSION = 3;
 
 const surfaceColor = (pavedColor: string, unpavedColor: string) =>
   ['match', ['get', 'surface'], UNPAVED_SURFACES, unpavedColor, pavedColor] as any;
@@ -116,9 +117,10 @@ function DistrictProgressContent({ title, distance, percentage, stats }: { title
 }
 
 function formatSessionTime(totalSeconds: number) {
-  const minutes = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
-  const seconds = Math.floor(totalSeconds % 60).toString().padStart(2, '0');
-  return `${minutes}:${seconds}`;
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor(totalSeconds % 3600 / 60);
+  const seconds = Math.floor(totalSeconds % 60);
+  return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m ${seconds}s`;
 }
 
 function formatSessionTitle(title: string) {
@@ -160,6 +162,7 @@ function AccordionSummary({ title, percentage }: { title: ReactNode; percentage:
 }
 
 function styleRoamMap(map: Map, showDiscovered: boolean, showDistrictBoundaries: boolean, activeDistrictName: string | null, is3D: boolean, showBuildings3D: boolean, showTerrain3D: boolean) {
+  applyRoamBaseStyle(map);
   const layers = map.getStyle().layers ?? [];
   const firstRoadLayer = layers.find((layer: any) => layer.type === 'line' && ('source-layer' in layer ? layer['source-layer'] === 'transportation' : false))?.id;
   const showBuildingExtrusions = is3D && showBuildings3D && !showTerrain3D;
