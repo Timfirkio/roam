@@ -17,6 +17,8 @@ export type RideSession = {
   distanceMeters: number;
   newDistanceMeters: number;
   points: SessionPoint[];
+  thumbnail?: Blob;
+  thumbnailStyleVersion?: number;
 };
 
 const DATABASE_NAME = 'roam-sessions';
