@@ -12,6 +12,8 @@ const nonBikeableRoadFeature = ['all', ['!', ['match', ['get', 'class'], PATH_CL
 const surfaceColor = (pavedColor: string, unpavedColor: string) => ['match', ['get', 'surface'], UNPAVED_SURFACES, unpavedColor, pavedColor] as any;
 const cyclewayFeature = ['any', ['match', ['get', 'class'], ['cycleway'], true, false], ['match', ['get', 'subclass'], ['cycleway'], true, false]] as any;
 const pathAccessFeature = ['any', cyclewayFeature, ['match', ['get', 'bicycle'], ['yes', 'designated', 'permissive'], true, false], ['match', ['get', 'foot'], ['yes', 'designated', 'permissive'], true, false]] as any;
+const bikeablePathFeature = ['all', ['match', ['get', 'class'], PATH_CLASSES, true, false], pathAccessFeature] as any;
+const unpavedBikeablePathFeature = ['all', bikeablePathFeature, ['match', ['get', 'surface'], UNPAVED_SURFACES, true, false]] as any;
 const bikeablePathFilter = ['all', ['!', nonBikeableRoadFeature], ['!=', ['get', 'class'], 'parking_aisle'], ['!=', ['get', 'class'], 'service'], ['match', ['get', 'class'], PATH_CLASSES, true, false], pathAccessFeature] as any;
 
 /** The shared flat visual treatment for both the interactive map and thumbnails. */
@@ -43,12 +45,12 @@ export function applyRoamBaseStyle(map: Map) {
       map.setLayerZoomRange(layer.id, ROAD_MIN_ZOOM, ROAD_MAX_ZOOM);
       const existingFilter = 'filter' in layer ? layer.filter : undefined;
       map.setFilter(layer.id, ['all', ...(existingFilter ? [existingFilter] : []), ['!=', ['get', 'class'], 'parking_aisle'], ['!=', ['get', 'class'], 'service'], ...(isPath ? [pathAccessFeature] : [])] as any);
-      map.setPaintProperty(layer.id, 'line-color', ['case', nonBikeableRoadFeature, '#3b1d23', isHighway, '#46504d', cyclewayFeature, ['match', ['get', 'surface'], UNPAVED_SURFACES, '#d59c67', '#2bb8b0'], surfaceColor('#55615c', '#72563d')]);
+      map.setPaintProperty(layer.id, 'line-color', ['case', nonBikeableRoadFeature, '#3b1d23', isHighway, '#46504d', unpavedBikeablePathFeature, '#d59c67', cyclewayFeature, '#2bb8b0', bikeablePathFeature, '#21837d', surfaceColor('#55615c', '#72563d')]);
       map.setPaintProperty(layer.id, 'line-opacity', isPedestrianFootpath ? 0 : ['case', nonBikeableRoadFeature, .62, isHighway, .68, isPath, .34, .46]);
       map.setPaintProperty(layer.id, 'line-width', isMajor ? ['interpolate', ['linear'], ['zoom'], 6, .9, 10, 1.1, 14, 4.5, 18, 7] : isPath ? ['interpolate', ['linear'], ['zoom'], 6, 1, 10, 1.2, 14, 2.4, 18, 3] : ['interpolate', ['linear'], ['zoom'], 6, .75, 10, .95, 14, 3, 18, 4]);
       map.setLayoutProperty(layer.id, 'line-cap', 'round'); map.setLayoutProperty(layer.id, 'line-join', 'round');
       if (isPedestrianFootpath) map.setPaintProperty(layer.id, 'line-dasharray', [1, 2.5]); else if (isCycleway || isGravelPath || isHighway) map.setPaintProperty(layer.id, 'line-dasharray', null);
     }
   }
-  if (map.getSource('openmaptiles') && !map.getLayer('roam-bikeable-paths')) map.addLayer({ id: 'roam-bikeable-paths', type: 'line', minzoom: ROAD_MIN_ZOOM, maxzoom: ROAD_MAX_ZOOM, source: 'openmaptiles', 'source-layer': 'transportation', filter: bikeablePathFilter, paint: { 'line-color': ['case', cyclewayFeature, ['match', ['get', 'surface'], UNPAVED_SURFACES, '#d59c67', '#2bb8b0'], surfaceColor('#55615c', '#72563d')], 'line-opacity': .34, 'line-width': ['interpolate', ['linear'], ['zoom'], 6, 1, 10, 1.2, 14, 2.4, 18, 3] } } as any);
+  if (map.getSource('openmaptiles') && !map.getLayer('roam-bikeable-paths')) map.addLayer({ id: 'roam-bikeable-paths', type: 'line', minzoom: ROAD_MIN_ZOOM, maxzoom: ROAD_MAX_ZOOM, source: 'openmaptiles', 'source-layer': 'transportation', filter: bikeablePathFilter, paint: { 'line-color': ['case', unpavedBikeablePathFeature, '#d59c67', cyclewayFeature, '#2bb8b0', bikeablePathFeature, '#21837d', surfaceColor('#55615c', '#72563d')], 'line-opacity': .34, 'line-width': ['interpolate', ['linear'], ['zoom'], 6, 1, 10, 1.2, 14, 2.4, 18, 3] } } as any);
 }

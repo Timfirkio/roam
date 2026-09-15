@@ -2,7 +2,7 @@ import { VectorTile } from '@mapbox/vector-tile';
 import { PbfReader } from 'pbf';
 import { discoverRouteSegments, type DiscoveredSegment, type GpsSample, type RoadCandidate } from './discovery';
 import { STOCKHOLM_ROAD_NETWORK } from './road-network-catalog';
-import { isDiscoverableProperties, roadTypeForProperties, stableRoadCandidateId } from './road-rules';
+import { isDiscoverableProperties, legacyRoadTypeForProperties, roadTypeForProperties, stableRoadCandidateId } from './road-rules';
 
 const DETAIL_ZOOM = STOCKHOLM_ROAD_NETWORK.source.zoom;
 const TILE_NEIGHBORHOOD = [-1, 0, 1];
@@ -37,7 +37,7 @@ async function candidatesForTile(x: number, y: number): Promise<RoadCandidate[]>
     const lines = geometry.type === 'LineString' ? [geometry.coordinates] : geometry.type === 'MultiLineString' ? geometry.coordinates : [];
     const roadType = roadTypeForProperties(properties);
     for (const coordinates of lines as [number, number][][]) {
-      if (coordinates.length > 1) candidates.push({ id: stableRoadCandidateId(coordinates, roadType), roadType, geometry: { type: 'LineString', coordinates } });
+      if (coordinates.length > 1) candidates.push({ id: stableRoadCandidateId(coordinates, roadType, legacyRoadTypeForProperties(properties)), roadType, geometry: { type: 'LineString', coordinates } });
     }
   }
   tileCache.set(key, candidates);
@@ -63,4 +63,28 @@ export async function reconcileSessionRoute(points: GpsSample[], knownIds: Reado
   const unique = new Map<string, RoadCandidate>();
   for (const candidate of candidates) unique.set(candidateKey(candidate), candidate);
   return discoverRouteSegments(points, [...unique.values()], knownIds);
+}
+
+/** Reclassifies previously saved discoveries against the current network tags. */
+export async function synchronizeDiscoveredSegmentRoadTypes(discoveries: DiscoveredSegment[]): Promise<DiscoveredSegment[]> {
+  const tiles = new Map<string, [number, number]>();
+  for (const segment of discoveries) {
+    for (const [lng, lat] of segment.geometry.coordinates) {
+      if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
+      const [x, y] = tileFor(lng, lat);
+      tiles.set(`${x}/${y}`, [x, y]);
+    }
+  }
+  const candidates: RoadCandidate[] = [];
+  const requestedTiles = [...tiles.values()];
+  for (let index = 0; index < requestedTiles.length; index += 6) {
+    const batch = requestedTiles.slice(index, index + 6);
+    candidates.push(...(await Promise.all(batch.map(([x, y]) => candidatesForTile(x, y)))).flat());
+  }
+  const roadTypeByCandidateId = new Map(candidates.map(candidate => [candidate.id, candidate.roadType]));
+  return discoveries.map(segment => {
+    const separator = segment.id.lastIndexOf(':');
+    const roadType = separator > 0 ? roadTypeByCandidateId.get(segment.id.slice(0, separator)) : undefined;
+    return roadType && roadType !== segment.roadType ? { ...segment, roadType } : segment;
+  });
 }

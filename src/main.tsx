@@ -16,7 +16,7 @@ import { Geolocation, type CallbackID, type Position } from '@capacitor/geolocat
 import { Capacitor } from '@capacitor/core';
 import { RideTracking, type RideTrackingPoint } from './ride-background-tracking';
 import { deleteSession, loadSessions, saveSession, type RideSession } from './session-store';
-import { reconcileSessionRoute } from './session-route-reconciliation';
+import { reconcileSessionRoute, synchronizeDiscoveredSegmentRoadTypes } from './session-route-reconciliation';
 import { generateSessionThumbnail } from './session-thumbnail';
 import { applyRoamBaseStyle } from './roam-map-style';
 import { isDiscoverableProperties, legacyRoadTypeForProperties, roadTypeForProperties, stableRoadCandidateId } from './road-rules';
@@ -65,6 +65,7 @@ const GPS_ENABLED_STORAGE_KEY = 'roam.gps.enabled';
 const GPS_PERMISSION_STORAGE_KEY = 'roam.gps.permission';
 const DISTRICT_BOUNDARIES_STORAGE_KEY = 'roam.district-boundaries.visible';
 const LAST_MAP_CENTER_STORAGE_KEY = 'roam.map.last-center';
+const DISCOVERY_ROAD_TYPE_MIGRATION_KEY = 'roam.discovery.road-types.v4';
 const DISCOVERED_SOURCE = 'roam-discovered-network';
 const DISTRICT_BOUNDARIES_SOURCE = 'roam-district-boundaries';
 const DISTRICT_BOUNDARIES_FILL = 'roam-district-boundaries-fill';
@@ -81,6 +82,7 @@ const cyclewayFeature = ['any', ['match', ['get', 'class'], ['cycleway'], true, 
 const pathAccessFeature = ['any', cyclewayFeature, ['match', ['get', 'bicycle'], ['yes', 'designated', 'permissive'], true, false], ['match', ['get', 'foot'], ['yes', 'designated', 'permissive'], true, false]] as any;
 const networkExclusionFilter = ['all', ['!', nonBikeableRoadFeature], ['!=', ['get', 'class'], 'parking_aisle'], ['!=', ['get', 'class'], 'service']] as any;
 const bikeablePathEligibilityFilter = ['all', ['match', ['get', 'class'], PATH_CLASSES, true, false], pathAccessFeature] as any;
+const unpavedBikeablePathFeature = ['all', bikeablePathEligibilityFilter, ['match', ['get', 'surface'], UNPAVED_SURFACES, true, false]] as any;
 const localRoadEligibilityFilter = ['all', ['match', ['get', 'class'], LOCAL_STREET_CLASSES, true, false], ['!=', ['get', 'bicycle'], 'no']] as any;
 const bikeablePathFilter = ['all', networkExclusionFilter, bikeablePathEligibilityFilter] as any;
 
@@ -214,7 +216,7 @@ function styleRoamMap(map: Map, showDiscovered: boolean, showDistrictBoundaries:
       const serviceRoadFilter = ['!=', ['get', 'class'], 'service'];
       map.setFilter(layer.id, ['all', ...(existingFilter ? [existingFilter] : []), parkingAisleFilter, serviceRoadFilter, ...(isPath ? [pathAccessFeature] : [])] as any);
       const isContextRoad = isHighway;
-      map.setPaintProperty(layer.id, 'line-color', ['case', nonBikeableRoadFeature, '#3b1d23', isContextRoad, '#46504d', cyclewayFeature, ['match', ['get', 'surface'], UNPAVED_SURFACES, '#d59c67', '#2bb8b0'], surfaceColor('#55615c', '#72563d')]);
+      map.setPaintProperty(layer.id, 'line-color', ['case', nonBikeableRoadFeature, '#3b1d23', isContextRoad, '#46504d', unpavedBikeablePathFeature, '#d59c67', cyclewayFeature, '#2bb8b0', bikeablePathEligibilityFilter, '#21837d', surfaceColor('#55615c', '#72563d')]);
       // Pedestrian-only source layers use a dotted treatment. Keep them hidden
       // in the base map; the discovered GeoJSON overlay will reveal only the
       // pieces the player has actually uncovered.
@@ -236,7 +238,7 @@ function styleRoamMap(map: Map, showDiscovered: boolean, showDistrictBoundaries:
       'source-layer': 'transportation',
       filter: bikeablePathFilter,
       paint: {
-        'line-color': ['case', ['any', ['match', ['get', 'class'], ['cycleway'], true, false], ['match', ['get', 'subclass'], ['cycleway'], true, false]], ['match', ['get', 'surface'], UNPAVED_SURFACES, '#d59c67', '#2bb8b0'], surfaceColor('#55615c', '#72563d')],
+        'line-color': ['case', unpavedBikeablePathFeature, '#d59c67', cyclewayFeature, '#2bb8b0', bikeablePathEligibilityFilter, '#21837d', surfaceColor('#55615c', '#72563d')],
         'line-opacity': 0.34,
         'line-width': ['interpolate', ['linear'], ['zoom'], 6, 1, 10, 1.2, 14, 2.4, 18, 3],
       },
@@ -1178,7 +1180,18 @@ function App() {
     const timer = window.setInterval(updateElapsed, 1000);
     return () => window.clearInterval(timer);
   }, [sessionStartedAt]);
-  useEffect(() => { loadDiscoveredSegments().then(loaded => { discoveriesRef.current = loaded; setDiscoveries(loaded); }).catch(() => {}); }, []);
+  useEffect(() => {
+    loadDiscoveredSegments().then(async loaded => {
+      let synchronized = loaded;
+      if (!localStorage.getItem(DISCOVERY_ROAD_TYPE_MIGRATION_KEY)) {
+        synchronized = await synchronizeDiscoveredSegmentRoadTypes(loaded);
+        await saveDiscoveredSegments(synchronized);
+        localStorage.setItem(DISCOVERY_ROAD_TYPE_MIGRATION_KEY, 'done');
+      }
+      discoveriesRef.current = synchronized;
+      setDiscoveries(synchronized);
+    }).catch(() => {});
+  }, []);
   useEffect(() => { loadSessions().then(setSessions).catch(() => {}); }, []);
   useEffect(() => { sessionsRef.current = sessions; }, [sessions]);
   useEffect(() => { viewRef.current = view; }, [view]);
