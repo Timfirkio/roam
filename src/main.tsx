@@ -216,11 +216,11 @@ function styleRoamMap(map: Map, showDiscovered: boolean, showDistrictBoundaries:
       const serviceRoadFilter = ['!=', ['get', 'class'], 'service'];
       map.setFilter(layer.id, ['all', ...(existingFilter ? [existingFilter] : []), parkingAisleFilter, serviceRoadFilter, ...(isPath ? [pathAccessFeature] : [])] as any);
       const isContextRoad = isHighway;
-      map.setPaintProperty(layer.id, 'line-color', ['case', nonBikeableRoadFeature, '#3b1d23', isContextRoad, '#46504d', unpavedBikeablePathFeature, '#d59c67', cyclewayFeature, '#2bb8b0', bikeablePathEligibilityFilter, '#21837d', surfaceColor('#55615c', '#72563d')]);
+      map.setPaintProperty(layer.id, 'line-color', ['case', nonBikeableRoadFeature, '#28161a', isContextRoad, '#333a38', unpavedBikeablePathFeature, '#4f3c2b', cyclewayFeature, '#154644', bikeablePathEligibilityFilter, '#154644', surfaceColor('#2d3331', '#3a2e23')]);
       // Pedestrian-only source layers use a dotted treatment. Keep them hidden
       // in the base map; the discovered GeoJSON overlay will reveal only the
       // pieces the player has actually uncovered.
-      map.setPaintProperty(layer.id, 'line-opacity', isPedestrianFootpath ? 0 : ['case', nonBikeableRoadFeature, 0.62, isContextRoad, 0.68, isPath, 0.34, 0.46]);
+      map.setPaintProperty(layer.id, 'line-opacity', isPedestrianFootpath ? 0 : 1);
       map.setPaintProperty(layer.id, 'line-width', isMajor ? ['interpolate', ['linear'], ['zoom'], 6, 0.9, 10, 1.1, 14, 4.5, 18, 7] : isPath ? ['interpolate', ['linear'], ['zoom'], 6, 1, 10, 1.2, 14, 2.4, 18, 3] : ['interpolate', ['linear'], ['zoom'], 6, 0.75, 10, 0.95, 14, 3, 18, 4]);
       map.setLayoutProperty(layer.id, 'line-cap', 'round');
       map.setLayoutProperty(layer.id, 'line-join', 'round');
@@ -238,8 +238,8 @@ function styleRoamMap(map: Map, showDiscovered: boolean, showDistrictBoundaries:
       'source-layer': 'transportation',
       filter: bikeablePathFilter,
       paint: {
-        'line-color': ['case', unpavedBikeablePathFeature, '#d59c67', cyclewayFeature, '#2bb8b0', bikeablePathEligibilityFilter, '#21837d', surfaceColor('#55615c', '#72563d')],
-        'line-opacity': 0.34,
+        'line-color': ['case', unpavedBikeablePathFeature, '#4f3c2b', cyclewayFeature, '#154644', bikeablePathEligibilityFilter, '#154644', surfaceColor('#2d3331', '#3a2e23')],
+        'line-opacity': 1,
         'line-width': ['interpolate', ['linear'], ['zoom'], 6, 1, 10, 1.2, 14, 2.4, 18, 3],
       },
     });
@@ -266,7 +266,7 @@ function styleRoamMap(map: Map, showDiscovered: boolean, showDistrictBoundaries:
       id: DISTRICT_BOUNDARIES_LINE,
       type: 'line',
       source: DISTRICT_BOUNDARIES_SOURCE,
-      paint: { 'line-color': '#9bbab1', 'line-opacity': 0.72, 'line-width': ['interpolate', ['linear'], ['zoom'], 9, 1.2, 14, 2.5, 18, 3] },
+      paint: { 'line-color': '#5f7772', 'line-opacity': 0.45, 'line-width': ['interpolate', ['linear'], ['zoom'], 9, 0.8, 14, 1.2, 18, 1.6] },
     } as any);
   }
   if (map.getLayer(DISTRICT_BOUNDARIES_FILL)) {
@@ -287,7 +287,7 @@ function styleRoamMap(map: Map, showDiscovered: boolean, showDistrictBoundaries:
       source: DISCOVERED_SOURCE,
       paint: {
         'line-color': ['match', ['get', 'roadType'], 'cycleway', '#2bb8b0', 'unpaved-path', '#d59c67', 'footpath', '#2bb8b0', '#f0eee7'],
-        'line-opacity': 0.98,
+        'line-opacity': 1,
         'line-width': ['interpolate', ['linear'], ['zoom'], 6, 1, 10, 1.2, 15, 1.8, 18, 3],
       },
       layout: { visibility: showDiscovered ? 'visible' : 'none' },
@@ -409,6 +409,10 @@ function styleRoamMap(map: Map, showDiscovered: boolean, showDistrictBoundaries:
       }
     }
   }
+  // Keep the active-area wash above every road treatment, including the
+  // discovered network, while retaining a light boundary outline above it.
+  if (map.getLayer(DISTRICT_BOUNDARIES_FILL)) map.moveLayer(DISTRICT_BOUNDARIES_FILL);
+  if (map.getLayer(DISTRICT_BOUNDARIES_LINE)) map.moveLayer(DISTRICT_BOUNDARIES_LINE);
 }
 
 function roadTypeForFeature(properties: Record<string, unknown>) {
@@ -714,7 +718,12 @@ function MapView({ onOpenProgress, onRequestLocation, onLocationUpdate, sessionA
     return () => observer.disconnect();
   }, []);
   useEffect(() => { if (!playerLocation) { setFollowPlayer(false); setActiveRotationFollow(false); } }, [playerLocation]);
-  const handleLocationChange = (lng: number, lat: number, locality?: { city?: string; region?: string }) => { const nextLocation = { ...location, lng, lat, city: locality?.city?.toUpperCase() || location.city, region: locality?.region?.toUpperCase() || location.region }; setLocation(nextLocation); onLocationUpdate(nextLocation); };
+  const handleLocationChange = (lng: number, lat: number, locality?: { city?: string; region?: string }) => {
+    const district = findStockholmDistrict([lng, lat]);
+    const nextLocation = { ...location, lng, lat, city: locality?.city?.toUpperCase() || location.city, region: district?.name.toUpperCase() ?? '' };
+    setLocation(nextLocation);
+    onLocationUpdate(nextLocation);
+  };
   const handleBearingChange = (nextBearing: number) => setBearing((previousBearing) => {
     let adjustedBearing = nextBearing;
     while (adjustedBearing - previousBearing > 180) adjustedBearing -= 360;
@@ -752,7 +761,7 @@ function MapView({ onOpenProgress, onRequestLocation, onLocationUpdate, sessionA
   const locationControlClass = activeRotationFollow ? 'map-ui-surface location-control location-control--following location-control--active' : isFollowingPlayer ? 'map-ui-surface location-control location-control--following' : 'map-ui-surface location-control';
   const locationControlLabel = activeRotationFollow ? 'Active heading follow' : isFollowingPlayer ? 'Following your location' : 'Follow your location';
   return <section className="map-view map-view--has-session-dock"><MapCanvas mapRef={mapRef} showDiscovered={showDiscovered} showDistrictBoundaries={showDistrictBoundaries} is3D={is3D} showBuildings3D={showBuildings3D} showTerrain3D={showTerrain3D} playerLocation={playerLocation} followPlayer={followPlayer} activeRotationFollow={activeRotationFollow} discoveries={discoveries} onDiscoveries={onDiscoveries} onLocationChange={handleLocationChange} onBearingChange={handleBearingChange} onZoomChange={setZoom} onPitchChange={setPitch} onFollowPlayerChange={handleFollowChange} />{!isFollowingPlayer && <div className="map-center-crosshair" aria-hidden="true"><span /></div>}
-    <header className="map-header"><span className="map-header-spacer" aria-hidden="true" /><ShadcnButton variant="secondary" className="location-summary map-ui-surface" onClick={() => onOpenProgress(location)}><DistrictProgressContent title={<><span className="district-progress-title-context">{formatItemText(location.city)} / </span><span className="district-progress-title-active">{formatItemText(currentDistrict?.name ?? location.region)}</span></>} distance={currentDistrictDenominator ? `${formatDistance(discoveredBikeableMeters)} / ${formatDistance(bikeableLengthMeters(currentDistrictDenominator))}` : discoveredMeters > 0 ? `${formatDistance(discoveredMeters)} discovered` : 'Catalog ready'} percentage={currentDistrictDenominator ? `${currentDistrictStats.discovered.toFixed(1)}%` : '—'} stats={currentDistrictStats} /></ShadcnButton></header>
+    <header className="map-header"><span className="map-header-spacer" aria-hidden="true" /><ShadcnButton variant="secondary" className="location-summary map-ui-surface" onClick={() => onOpenProgress(location)}><DistrictProgressContent title={<><span className="district-progress-title-context">{formatItemText(location.city)} / </span><span className="district-progress-title-active">{currentDistrict ? formatItemText(currentDistrict.name) : 'No district'}</span></>} distance={currentDistrictDenominator ? `${formatDistance(discoveredBikeableMeters)} / ${formatDistance(bikeableLengthMeters(currentDistrictDenominator))}` : 'No district selected'} percentage={currentDistrictDenominator ? `${currentDistrictStats.discovered.toFixed(1)}%` : '—'} stats={currentDistrictStats} /></ShadcnButton></header>
     <div className="map-controls" style={{ bottom: sessionDockOffset }} aria-label="Map controls"><div className="map-compass"><ShadcnButton variant="secondary" size="icon" className="map-ui-surface" aria-label="Reset compass north" onClick={resetCompass}><span className="compass-rotor" style={{ transform: `rotate(${-bearing}deg)` }}><i className="compass-needle"><b className="compass-north">▲</b><b className="compass-south">▼</b></i></span></ShadcnButton></div><ShadcnButton variant="secondary" size="icon" className={locationControlClass} aria-label={locationControlLabel} aria-pressed={isFollowingPlayer} onClick={centerOnPlayer}><CrosshairSimple weight="regular" aria-hidden="true" /></ShadcnButton><ShadcnButton variant="secondary" size="sm" className="map-ui-surface map-mode-toggle" aria-label={`Switch to ${is3D ? '2D' : '3D'} view`} onClick={() => setIs3D(!is3D)}>{is3D ? '3D' : '2D'}</ShadcnButton><ButtonGroup orientation="vertical" className="zoom-group map-ui-surface"><ShadcnButton variant="ghost" size="icon" aria-label="Zoom in" onClick={() => mapRef.current?.zoomIn()}><Plus weight="regular" aria-hidden="true" /></ShadcnButton><ShadcnButton variant="ghost" size="icon" aria-label="Zoom out" onClick={() => mapRef.current?.zoomOut()}><Minus weight="regular" aria-hidden="true" /></ShadcnButton></ButtonGroup></div><div ref={sessionDockRef} className="session-dock map-ui-surface"><div className="min-w-0"><span className="dock-label font-sans text-body-lg font-semibold tracking-normal text-text">{sessionActive ? 'Session active' : 'Ready to roam'}</span>{sessionActive ? <div className="session-dock-stats font-mono text-label"><span>{formatSessionTime(sessionElapsedSeconds)} • {formatDistance(sessionDistanceMeters)} ({formatDistance(sessionDiscoveredMeters)} new)</span></div> : <strong className="block font-mono text-label font-normal tracking-normal text-text-subtle">Start a recording</strong>}</div><ShadcnButton variant={sessionActive ? 'destructive' : 'primary'} onClick={() => onSessionChange(!sessionActive)}>{sessionActive ? 'Stop' : 'Record'}</ShadcnButton></div>
     {showDebugMenu && <div className="map-debug" style={{ bottom: sessionDockOffset }}><ShadcnButton variant="secondary" size="icon" className="map-ui-surface debug-icon" aria-label="Open debug settings" aria-expanded={debugOpen} onClick={() => setDebugOpen(!debugOpen)}><Bug weight="regular" aria-hidden="true" /></ShadcnButton>{debugOpen && <div className="debug-menu map-ui-surface"><p>DEBUG SETTINGS</p><label><span>DISCOVERED LAYER</span><Switch checked={showDiscovered} onCheckedChange={setShowDiscovered} aria-label="Discovered layer" /></label><label><span>DISTRICT BOUNDARIES</span><Switch checked={showDistrictBoundaries} onCheckedChange={setShowDistrictBoundaries} aria-label="District boundaries" /></label><label><span>BUILDINGS 3D</span><Switch checked={showBuildings3D} onCheckedChange={setShowBuildings3D} aria-label="Buildings 3D" /></label><label><span>TERRAIN 3D</span><Switch checked={showTerrain3D} onCheckedChange={setShowTerrain3D} aria-label="Terrain 3D" /></label><div><span>ZOOM LEVEL</span><b className="debug-value">{zoom.toFixed(1)}</b></div><div><span>CAMERA PITCH</span><b className="debug-value">{pitch.toFixed(0)}°</b></div></div>}</div>}
   </section>;
