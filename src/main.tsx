@@ -1,4 +1,4 @@
-import { StrictMode, useCallback, useEffect, useRef, useState, type ComponentPropsWithoutRef, type ReactNode } from 'react';
+import { StrictMode, useCallback, useEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import maplibregl, { type Map } from 'maplibre-gl';
 import { circle } from '@turf/turf';
@@ -15,7 +15,7 @@ import { distanceMeters, nextNavigationState, type NavigationState } from './pla
 import { Geolocation, type CallbackID, type Position } from '@capacitor/geolocation';
 import { Capacitor } from '@capacitor/core';
 import { RideTracking, type RideTrackingPoint } from './ride-background-tracking';
-import { loadSessions, saveSession, type RideSession } from './session-store';
+import { deleteSession, loadSessions, saveSession, type RideSession } from './session-store';
 import { reconcileSessionRoute } from './session-route-reconciliation';
 import { isDiscoverableProperties, roadTypeForProperties, stableRoadCandidateId } from './road-rules';
 import { STOCKHOLM_ROAD_NETWORK_BY_DISTRICT } from './road-network-catalog';
@@ -29,8 +29,11 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/
 import { SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs as ShadcnTabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Item, ItemActions, ItemContent, ItemDescription, ItemTitle } from '@/components/ui/item';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
+import { AlertDialog, AlertDialogContent, AlertDialogDescription, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { useScreenWakeLock } from './use-screen-wake-lock';
-import { Bug, ChartBar, CrosshairSimple, Gear, MapTrifold, Minus, Plus, RoadHorizon } from '@phosphor-icons/react';
+import { Bug, ChartBar, CrosshairSimple, DotsThreeVertical, DownloadSimple, Gear, MapTrifold, Minus, PencilSimple, Plus, RoadHorizon, Trash } from '@phosphor-icons/react';
 
 type View = 'map' | 'sessions' | 'progress' | 'settings' | 'design-system';
 type LocationState = { city: string; region: string; lng: number; lat: number };
@@ -114,6 +117,21 @@ function formatSessionTime(totalSeconds: number) {
   const minutes = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
   const seconds = Math.floor(totalSeconds % 60).toString().padStart(2, '0');
   return `${minutes}:${seconds}`;
+}
+
+function formatSessionTitle(title: string) {
+  if (title !== title.toLocaleUpperCase('sv-SE')) return title;
+  return title.toLocaleLowerCase('sv-SE').replace(/(^|[\s·-])([\p{L}])/gu, (_, prefix: string, character: string) => `${prefix}${character.toLocaleUpperCase('sv-SE')}`);
+}
+
+function formatSessionDateTime(timestamp: number) {
+  const date = new Date(timestamp);
+  const today = new Date();
+  const dayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  const sessionDayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const dayDifference = Math.round((dayStart - sessionDayStart) / 86_400_000);
+  const label = dayDifference === 0 ? 'Today' : dayDifference === 1 ? 'Yesterday' : date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  return `${label} · ${date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`;
 }
 
 function gpxDocument(points: RideTrackingPoint[]) {
@@ -894,27 +912,35 @@ function SettingsView({ showDiscovered, setShowDiscovered, showDistrictBoundarie
 
 function PlaceholderView({ title, copy }: { title: string; copy: string }) { return <section className="min-h-[calc(100svh-76px)] overflow-auto bg-surface px-6 pb-32 pt-10 text-text sm:px-8"><div className="mx-auto max-w-2xl"><h1 className="font-sans text-title font-semibold tracking-display">{title}</h1><p className="mt-4 max-w-xl text-body-lg text-text-muted">{copy}</p><Item variant="outline" className="mt-10"><ItemContent><ItemTitle>Module ready</ItemTitle><ItemDescription>The next Sessions build slice will add route history and saved rides.</ItemDescription></ItemContent><ItemActions><span className="font-mono text-label text-accent">NEXT</span></ItemActions></Item></div></section>; }
 
-function SessionRoutePreview({ points }: { points: RideSession['points'] }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!containerRef.current || points.length < 2) return;
-    const coordinates = points.map(point => [point.lng, point.lat] as [number, number]);
-    const map = new maplibregl.Map({ container: containerRef.current, style: MAP_STYLE, center: coordinates[0], zoom: 13, attributionControl: false, interactive: false });
-    map.on('load', () => {
-      styleRoamMap(map, false, false, null, false, false, false);
-      map.addSource('session-route', { type: 'geojson', data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates } } });
-      map.addLayer({ id: 'session-route-line', type: 'line', source: 'session-route', paint: { 'line-color': '#2bb8b0', 'line-width': 4, 'line-opacity': .9 } });
-      const bounds = coordinates.reduce((result, coordinate) => result.extend(coordinate), new maplibregl.LngLatBounds(coordinates[0], coordinates[0]));
-      map.fitBounds(bounds, { padding: 28, duration: 0, maxZoom: 15 });
-    });
-    return () => map.remove();
-  }, [points]);
-  return <div ref={containerRef} className="mt-4 h-40 overflow-hidden rounded-control border border-border-muted" aria-label="Session route preview" />;
+function SessionRouteFallback({ coordinates }: { coordinates: [number, number][] }) {
+  const usableCoordinates = coordinates.filter(([lng, lat]) => Number.isFinite(lng) && Number.isFinite(lat) && Math.abs(lng) <= 180 && Math.abs(lat) <= 90);
+  if (usableCoordinates.length < 2) return <div className="session-route-fallback flex items-center justify-center text-label text-text-subtle">Route preview unavailable</div>;
+  const longitudeCenter = (Math.min(...usableCoordinates.map(([lng]) => lng)) + Math.max(...usableCoordinates.map(([lng]) => lng))) / 2;
+  const latitudeCenter = (Math.min(...usableCoordinates.map(([, lat]) => lat)) + Math.max(...usableCoordinates.map(([, lat]) => lat))) / 2;
+  const longitudeScale = Math.cos(latitudeCenter * Math.PI / 180);
+  const horizontalSpread = Math.max(...usableCoordinates.map(([lng]) => Math.abs((lng - longitudeCenter) * longitudeScale)), 0.00001);
+  const verticalSpread = Math.max(...usableCoordinates.map(([, lat]) => Math.abs(lat - latitudeCenter)), 0.00001);
+  const scale = Math.min(42 / horizontalSpread, 22 / verticalSpread);
+  const project = ([lng, lat]: [number, number]) => [50 + (lng - longitudeCenter) * longitudeScale * scale, 28 - (lat - latitudeCenter) * scale] as const;
+  const path = usableCoordinates.map((coordinate, index) => `${index === 0 ? 'M' : 'L'} ${project(coordinate).join(' ')}`).join(' ');
+  const start = project(usableCoordinates[0]);
+  const end = project(usableCoordinates[usableCoordinates.length - 1]);
+  return <div className="session-route-fallback" aria-hidden="true"><svg viewBox="0 0 100 56" preserveAspectRatio="none"><path className="session-route-fallback-grid" d="M0 14H100M0 28H100M0 42H100M25 0V56M50 0V56M75 0V56" /><path className="session-route-fallback-line" d={path} /><circle className="session-route-fallback-start" cx={start[0]} cy={start[1]} r="2" /><circle className="session-route-fallback-end" cx={end[0]} cy={end[1]} r="2" /></svg></div>;
 }
 
-function SessionsView({ sessions, onExport, exportStatus }: { sessions: RideSession[]; onExport: (session: RideSession) => void; exportStatus: 'idle' | 'exported' | 'error' }) {
+function SessionRoutePreview({ points }: { points: RideSession['points'] }) {
+  const coordinates = useMemo(() => points.map(point => [point.lng, point.lat] as [number, number]).filter(([lng, lat]) => Number.isFinite(lng) && Number.isFinite(lat) && Math.abs(lng) <= 180 && Math.abs(lat) <= 90), [points]);
+  return <div className="session-route-preview mt-4 h-40 overflow-hidden rounded-control border border-border-muted" aria-label="Session route preview"><SessionRouteFallback coordinates={coordinates} /></div>;
+}
+
+function SessionsView({ sessions, onExport, onRename, onDelete, exportStatus }: { sessions: RideSession[]; onExport: (session: RideSession) => void; onRename: (session: RideSession, title: string) => void; onDelete: (session: RideSession) => void; exportStatus: 'idle' | 'exported' | 'error' }) {
   const status = exportStatus === 'exported' ? 'GPX ready to save or share.' : exportStatus === 'error' ? 'Could not create the GPX file. Try again.' : null;
-  return <section className="min-h-[calc(100svh-76px)] overflow-auto bg-surface px-6 pb-32 pt-10 text-text sm:px-8"><div className="mx-auto max-w-2xl"><h1 className="font-sans text-title font-semibold tracking-display">Sessions</h1><p className="mt-4 max-w-xl text-body-lg text-text-muted">Your recorded rides stay on this device until account sync is available.</p>{sessions.length === 0 ? <Item variant="outline" className="mt-10"><ItemContent><ItemTitle>No saved rides yet</ItemTitle><ItemDescription>Rides shorter than 30 seconds are discarded.</ItemDescription></ItemContent></Item> : <div className="mt-10 space-y-4">{sessions.map(session => <Item key={session.id} variant="outline" className="block p-4"><div className="flex items-start justify-between gap-4"><ItemContent><ItemTitle>{session.title}</ItemTitle><ItemDescription>{new Date(session.startedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</ItemDescription></ItemContent><ShadcnButton variant="secondary" size="sm" onClick={() => onExport(session)}>Export GPX</ShadcnButton></div><div className="mt-3 font-mono text-label text-text-muted">{formatSessionTime(session.durationSeconds)} • {formatDistance(session.distanceMeters)} ({formatDistance(session.newDistanceMeters)} new)</div>{session.points.length > 1 && <SessionRoutePreview points={session.points} />}</Item>)}</div>}{status && <p className="mt-4 font-mono text-label text-accent">{status}</p>}</div></section>;
+  const [editingSession, setEditingSession] = useState<RideSession | null>(null);
+  const [editedTitle, setEditedTitle] = useState('');
+  const [deletingSession, setDeletingSession] = useState<RideSession | null>(null);
+  const startEditing = (session: RideSession) => { setEditingSession(session); setEditedTitle(formatSessionTitle(session.title)); };
+  const saveTitle = () => { if (editingSession && editedTitle.trim()) onRename(editingSession, editedTitle.trim()); setEditingSession(null); };
+  return <section className="min-h-[calc(100svh-76px)] overflow-auto bg-surface px-6 pb-32 pt-10 text-text sm:px-8"><div className="mx-auto max-w-2xl"><h1 className="font-sans text-title font-semibold tracking-display">Sessions</h1><p className="mt-4 max-w-xl text-body-lg text-text-muted">Your recorded rides stay on this device until account sync is available.</p>{sessions.length === 0 ? <Item variant="outline" className="mt-10"><ItemContent><ItemTitle>No saved rides yet</ItemTitle><ItemDescription>Rides shorter than 30 seconds are discarded.</ItemDescription></ItemContent></Item> : <div className="mt-10 space-y-4">{sessions.map(session => <Item key={session.id} variant="outline" className="block p-4"><div className="flex items-start justify-between gap-4"><ItemContent><ItemTitle>{formatSessionTitle(session.title)}</ItemTitle><ItemDescription>{formatSessionDateTime(session.startedAt)}</ItemDescription></ItemContent><DropdownMenu><DropdownMenuTrigger aria-label={`Actions for ${formatSessionTitle(session.title)}`} className="flex size-control items-center justify-center rounded-control border border-border bg-surface-raised text-text-muted outline-none hover:border-border-strong hover:bg-surface-interactive hover:text-text focus-visible:ring-3 focus-visible:ring-focus"><DotsThreeVertical weight="bold" aria-hidden="true" /></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onClick={() => onExport(session)}><DownloadSimple aria-hidden="true" />Export GPX</DropdownMenuItem><DropdownMenuItem onClick={() => startEditing(session)}><PencilSimple aria-hidden="true" />Edit session title</DropdownMenuItem><DropdownMenuItem className="text-danger-400 data-[highlighted]:text-danger-300" onClick={() => setDeletingSession(session)}><Trash aria-hidden="true" />Delete session</DropdownMenuItem></DropdownMenuContent></DropdownMenu></div><div className="mt-3 font-mono text-label text-text-muted">{formatSessionTime(session.durationSeconds)} • {formatDistance(session.distanceMeters)} ({formatDistance(session.newDistanceMeters)} new)</div>{session.points.length > 1 && <SessionRoutePreview points={session.points} />}</Item>)}</div>}{status && <p className="mt-4 font-mono text-label text-accent">{status}</p>}</div><Dialog open={Boolean(editingSession)} onOpenChange={open => { if (!open) setEditingSession(null); }}><DialogContent><DialogTitle>Edit session title</DialogTitle><DialogDescription>Give this ride a name you will recognize later.</DialogDescription><form className="mt-5" onSubmit={event => { event.preventDefault(); saveTitle(); }}><label className="block text-label text-text-subtle" htmlFor="session-title">Title</label><input id="session-title" className="mt-2 min-h-control w-full rounded-control border border-border bg-surface px-3 text-body text-text outline-none focus-visible:border-accent focus-visible:ring-3 focus-visible:ring-focus" value={editedTitle} onChange={event => setEditedTitle(event.target.value)} autoFocus /><div className="mt-5 flex justify-end gap-3"><ShadcnButton type="button" variant="ghost" onClick={() => setEditingSession(null)}>Cancel</ShadcnButton><ShadcnButton type="submit">Save title</ShadcnButton></div></form></DialogContent></Dialog><AlertDialog open={Boolean(deletingSession)} onOpenChange={open => { if (!open) setDeletingSession(null); }}><AlertDialogContent><AlertDialogTitle>Delete this session?</AlertDialogTitle><AlertDialogDescription>This deletes the saved session and its GPX data from this device. It will not remove any roads from your map or change your exploration progress.</AlertDialogDescription><div className="mt-5 flex justify-end gap-3"><ShadcnButton variant="ghost" onClick={() => setDeletingSession(null)}>Cancel</ShadcnButton><ShadcnButton variant="destructive" onClick={() => { if (deletingSession) onDelete(deletingSession); setDeletingSession(null); }}>Delete session</ShadcnButton></div></AlertDialogContent></AlertDialog></section>;
 }
 
 function LegacyProgressView({ location, discoveries }: { location: LocationState; discoveries: DiscoveredSegment[] }) {
@@ -1313,7 +1339,7 @@ function App() {
         const durationSeconds = Math.floor((endedAt - startedAt) / 1000);
         if (durationSeconds < 30 || points.length < 2) return;
         const districtNames = [...new Set(points.map(point => findStockholmDistrict([point.lng, point.lat])?.name).filter((name): name is string => Boolean(name)))].slice(0, 5);
-        const title = districtNames.length ? districtNames.join(' · ') : 'Roam ride';
+        const title = districtNames.length ? districtNames.map(formatSessionTitle).join(' · ') : 'Roam ride';
         // Reconcile the complete native track after the ride. While the app is
         // backgrounded the WebView cannot query MapLibre tiles for every GPS
         // fix, so this fills the short gaps from the same detailed road map.
@@ -1339,11 +1365,18 @@ function App() {
     };
     void exportRoute();
   };
+  const handleSessionRename = (session: RideSession, title: string) => {
+    const updated = { ...session, title };
+    void saveSession(updated).then(() => setSessions(current => current.map(candidate => candidate.id === updated.id ? updated : candidate))).catch(() => {});
+  };
+  const handleSessionDelete = (session: RideSession) => {
+    void deleteSession(session.id).then(() => setSessions(current => current.filter(candidate => candidate.id !== session.id))).catch(() => {});
+  };
   const openProgress = (location: LocationState) => { setProgressLocation(location); setView('progress'); };
   const handleDiscoveries = (newSegments: DiscoveredSegment[]) => {
     applyDiscoveredSegments(newSegments);
   };
-  return <main className="app-shell"><div className="app-content">{view === 'map' && <MapView onOpenProgress={openProgress} onRequestLocation={() => handleGpsChange(true)} onLocationUpdate={setProgressLocation} sessionActive={sessionActive} onSessionChange={handleSessionChange} sessionElapsedSeconds={sessionElapsedSeconds} sessionDistanceMeters={sessionDistanceMeters} sessionDiscoveredMeters={sessionDiscoveredMeters} showDiscovered={showDiscovered} setShowDiscovered={setShowDiscovered} showDistrictBoundaries={showDistrictBoundaries} setShowDistrictBoundaries={handleDistrictBoundariesChange} is3D={is3D} setIs3D={setIs3D} showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} showDebugMenu={showDebugMenu} playerLocation={playerLocation} discoveries={discoveries} onDiscoveries={handleDiscoveries} />}{view === 'sessions' && <SessionsView sessions={sessions} onExport={handleGpxExport} exportStatus={gpxExportStatus} />}{view === 'progress' && <GlobalProgressView location={progressLocation} discoveries={discoveries} />}{view === 'settings' && <SettingsView showDiscovered={showDiscovered} setShowDiscovered={setShowDiscovered} showDistrictBoundaries={showDistrictBoundaries} setShowDistrictBoundaries={handleDistrictBoundariesChange} showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} showDebugMenu={showDebugMenu} setShowDebugMenu={setShowDebugMenu} gpsEnabled={gpsEnabled} gpsPermission={gpsPermission} onGpsChange={handleGpsChange} onOpenDesignSystem={() => setView('design-system')} />}{view === 'design-system' && <DesignSystemView onBack={() => setView('settings')} />}</div><PrimaryNavigation view={view} onChange={setView} /></main>;
+  return <main className="app-shell"><div className="app-content">{view === 'map' && <MapView onOpenProgress={openProgress} onRequestLocation={() => handleGpsChange(true)} onLocationUpdate={setProgressLocation} sessionActive={sessionActive} onSessionChange={handleSessionChange} sessionElapsedSeconds={sessionElapsedSeconds} sessionDistanceMeters={sessionDistanceMeters} sessionDiscoveredMeters={sessionDiscoveredMeters} showDiscovered={showDiscovered} setShowDiscovered={setShowDiscovered} showDistrictBoundaries={showDistrictBoundaries} setShowDistrictBoundaries={handleDistrictBoundariesChange} is3D={is3D} setIs3D={setIs3D} showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} showDebugMenu={showDebugMenu} playerLocation={playerLocation} discoveries={discoveries} onDiscoveries={handleDiscoveries} />}{view === 'sessions' && <SessionsView sessions={sessions} onExport={handleGpxExport} onRename={handleSessionRename} onDelete={handleSessionDelete} exportStatus={gpxExportStatus} />}{view === 'progress' && <GlobalProgressView location={progressLocation} discoveries={discoveries} />}{view === 'settings' && <SettingsView showDiscovered={showDiscovered} setShowDiscovered={setShowDiscovered} showDistrictBoundaries={showDistrictBoundaries} setShowDistrictBoundaries={handleDistrictBoundariesChange} showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} showDebugMenu={showDebugMenu} setShowDebugMenu={setShowDebugMenu} gpsEnabled={gpsEnabled} gpsPermission={gpsPermission} onGpsChange={handleGpsChange} onOpenDesignSystem={() => setView('design-system')} />}{view === 'design-system' && <DesignSystemView onBack={() => setView('settings')} />}</div><PrimaryNavigation view={view} onChange={setView} /></main>;
 }
 
 const rootElement = document.getElementById('root')!;
