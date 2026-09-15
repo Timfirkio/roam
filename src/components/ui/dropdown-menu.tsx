@@ -18,4 +18,8 @@ function DropdownMenuItem({ className, ...props }: Menu.Item.Props) {
   return <Menu.Item data-slot="dropdown-menu-item" className={cn("flex min-h-control-compact cursor-pointer items-center gap-2 rounded-control px-3 text-body text-text outline-none select-none data-[highlighted]:bg-surface-interactive data-[highlighted]:text-paper-50", className)} {...props} />
 }
 
-export { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger }
+function DropdownMenuSeparator({ className, ...props }: Menu.Separator.Props) {
+  return <Menu.Separator data-slot="dropdown-menu-separator" className={cn("-mx-1 my-1 h-px bg-border-muted", className)} {...props} />
+}
+
+export { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger }
