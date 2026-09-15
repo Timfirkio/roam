@@ -71,7 +71,7 @@ const DISTRICT_BOUNDARIES_LINE = 'roam-district-boundaries-line';
 const PLAYER_DISCOVERY_SOURCE = 'roam-player-discovery-radius';
 const PLAYER_DISCOVERY_FILL = 'roam-player-discovery-radius-fill';
 const PLAYER_DISCOVERY_LINE = 'roam-player-discovery-radius-line';
-const SESSION_THUMBNAIL_STYLE_VERSION = 1;
+const SESSION_THUMBNAIL_STYLE_VERSION = 2;
 
 const surfaceColor = (pavedColor: string, unpavedColor: string) =>
   ['match', ['get', 'surface'], UNPAVED_SURFACES, unpavedColor, pavedColor] as any;
@@ -133,7 +133,7 @@ function formatSessionDateTime(timestamp: number) {
   const sessionDayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
   const dayDifference = Math.round((dayStart - sessionDayStart) / 86_400_000);
   const label = dayDifference === 0 ? 'Today' : dayDifference === 1 ? 'Yesterday' : date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
-  return `${label} · ${date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`;
+  return `${label} · ${date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
 }
 
 function gpxDocument(points: RideTrackingPoint[]) {
