@@ -37,3 +37,16 @@ export async function saveDiscoveredSegments(segments: DiscoveredSegment[]) {
     transaction.onabort = () => { database.close(); reject(transaction.error); };
   });
 }
+
+export async function replaceDiscoveredSegments(segments: DiscoveredSegment[]) {
+  if (!('indexedDB' in window)) return;
+  const database = await openDatabase();
+  await new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction(STORE_NAME, 'readwrite');
+    const store = transaction.objectStore(STORE_NAME);
+    store.clear();
+    segments.forEach(segment => store.put(segment));
+    transaction.oncomplete = () => { database.close(); resolve(); };
+    transaction.onerror = () => { database.close(); reject(transaction.error); };
+  });
+}

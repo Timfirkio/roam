@@ -67,3 +67,16 @@ export async function deleteSession(id: string) {
     transaction.onabort = () => { database.close(); reject(transaction.error); };
   });
 }
+
+export async function replaceSessions(sessions: RideSession[]) {
+  if (!('indexedDB' in window)) return;
+  const database = await openDatabase();
+  await new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction(STORE_NAME, 'readwrite');
+    const store = transaction.objectStore(STORE_NAME);
+    store.clear();
+    sessions.forEach(session => store.put(session));
+    transaction.oncomplete = () => { database.close(); resolve(); };
+    transaction.onerror = () => { database.close(); reject(transaction.error); };
+  });
+}
