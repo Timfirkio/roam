@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { EnvelopeSimple, GoogleLogo } from '@phosphor-icons/react';
 import { Button } from '@/components/ui/button';
@@ -12,6 +12,8 @@ import { App as CapacitorApp } from '@capacitor/app';
 import { Browser } from '@capacitor/browser';
 import { Spinner } from '@/components/ui/spinner';
 
+const LAST_ACCOUNT_SYNC_STORAGE_KEY = 'roam:last-account-sync-at';
+
 export function AccountSettings() {
   const client = supabase;
   const [user, setUser] = useState<User | null>(null);
@@ -22,17 +24,19 @@ export function AccountSettings() {
   const [syncProgress, setSyncProgress] = useState<string | null>(null);
   const [localReady, setLocalReady] = useState(false);
   const [emailDialogOpen, setEmailDialogOpen] = useState(false);
-  const automaticallySyncedUserId = useRef<string | null>(null);
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(() => localStorage.getItem(LAST_ACCOUNT_SYNC_STORAGE_KEY));
   const native = Capacitor.isNativePlatform();
 
   const sync = async (account: User) => {
-    automaticallySyncedUserId.current = account.id;
     setBusy(true);
     setMessage('');
     setSyncProgress('Preparing local progress…');
     try {
       const result = await syncAccountProgress(account.id, progress => setSyncProgress(progress.label));
       window.dispatchEvent(new CustomEvent('roam:account-sync-complete', { detail: result }));
+      const completedAt = new Date().toISOString();
+      localStorage.setItem(LAST_ACCOUNT_SYNC_STORAGE_KEY, completedAt);
+      setLastSyncedAt(completedAt);
       setMessage(`Synced ${result.discoveries.length} discoveries and ${result.sessions.length} rides.`);
     } catch (error) {
       const supabaseError = error && typeof error === 'object' ? error as { message?: unknown; details?: unknown } : null;
@@ -50,16 +54,9 @@ export function AccountSettings() {
   useEffect(() => {
     if (!client) return;
     void client.auth.getUser().then(({ data }) => setUser(data.user));
-    const { data: { subscription } } = client.auth.onAuthStateChange((_event, session) => {
-      if (!session?.user) automaticallySyncedUserId.current = null;
-      setUser(session?.user ?? null);
-    });
+    const { data: { subscription } } = client.auth.onAuthStateChange((_event, session) => setUser(session?.user ?? null));
     return () => subscription.unsubscribe();
   }, [client]);
-  useEffect(() => {
-    if (!user || !localReady || busy || automaticallySyncedUserId.current === user.id) return;
-    void sync(user);
-  }, [user, localReady]);
   useEffect(() => {
     if (!client || !native) return;
     const handleCallback = async (url: string) => {
@@ -128,6 +125,7 @@ export function AccountSettings() {
       <p className="roam-overline -mx-4 border-b border-border-muted px-4 py-3 text-accent">Account</p>
       {user ? <div className="space-y-2 py-4">
         <p className="text-body text-text-muted">Signed in as {user.email}</p>
+        {lastSyncedAt && <p className="text-body text-text-muted">Last synced {new Date(lastSyncedAt).toLocaleString()}</p>}
         <Button className="w-full" variant="secondary" disabled={busy || !localReady} onClick={() => void sync(user)}>{busy ? <><Spinner />{syncProgress ?? 'Syncing progress…'}</> : 'Sync now'}</Button>
         <Button className="w-full" variant="ghost" disabled={busy} onClick={() => void client.auth.signOut()}>Sign out</Button>
       </div> : <div className="space-y-2 py-4">
