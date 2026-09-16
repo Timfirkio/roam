@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { EnvelopeSimple, GoogleLogo } from '@phosphor-icons/react';
 import { Button } from '@/components/ui/button';
@@ -22,9 +22,11 @@ export function AccountSettings() {
   const [syncProgress, setSyncProgress] = useState<string | null>(null);
   const [localReady, setLocalReady] = useState(false);
   const [emailDialogOpen, setEmailDialogOpen] = useState(false);
+  const automaticallySyncedUserId = useRef<string | null>(null);
   const native = Capacitor.isNativePlatform();
 
   const sync = async (account: User) => {
+    automaticallySyncedUserId.current = account.id;
     setBusy(true);
     setMessage('');
     setSyncProgress('Preparing local progress…');
@@ -48,9 +50,16 @@ export function AccountSettings() {
   useEffect(() => {
     if (!client) return;
     void client.auth.getUser().then(({ data }) => setUser(data.user));
-    const { data: { subscription } } = client.auth.onAuthStateChange((_event, session) => setUser(session?.user ?? null));
+    const { data: { subscription } } = client.auth.onAuthStateChange((_event, session) => {
+      if (!session?.user) automaticallySyncedUserId.current = null;
+      setUser(session?.user ?? null);
+    });
     return () => subscription.unsubscribe();
   }, [client]);
+  useEffect(() => {
+    if (!user || !localReady || busy || automaticallySyncedUserId.current === user.id) return;
+    void sync(user);
+  }, [user, localReady]);
   useEffect(() => {
     if (!client || !native) return;
     const handleCallback = async (url: string) => {
