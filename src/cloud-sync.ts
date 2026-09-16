@@ -4,6 +4,18 @@ import { loadSessions, replaceSessions, type RideSession, type SessionPoint } fr
 import { requireSupabase } from './supabase';
 
 const POINT_BATCH_SIZE = 250;
+const DISCOVERY_BATCH_SIZE = 250;
+
+function syncError(stage: string, error: unknown): Error {
+  if (error instanceof Error) return new Error(`${stage}: ${error.message}`);
+  if (error && typeof error === 'object') {
+    const details = error as { message?: unknown; code?: unknown; details?: unknown; hint?: unknown };
+    const message = [details.message, details.details, details.hint].filter((value): value is string => typeof value === 'string' && value.length > 0).join(' ');
+    const code = typeof details.code === 'string' ? ` (${details.code})` : '';
+    if (message) return new Error(`${stage}: ${message}${code}`);
+  }
+  return new Error(`${stage}: ${String(error)}`);
+}
 
 function toSession(row: any): RideSession {
   return {
@@ -19,12 +31,12 @@ function toSession(row: any): RideSession {
 export async function syncAccountProgress(userId: string) {
   const client = requireSupabase();
   const [discoveries, sessions] = await Promise.all([loadDiscoveredSegments(), loadSessions()]);
-  if (discoveries.length) {
-    const { error } = await client.from('discoveries').upsert(discoveries.map(segment => ({
+  for (let index = 0; index < discoveries.length; index += DISCOVERY_BATCH_SIZE) {
+    const { error } = await client.from('discoveries').upsert(discoveries.slice(index, index + DISCOVERY_BATCH_SIZE).map(segment => ({
       user_id: userId, segment_id: segment.id, region_id: segment.regionId ?? null, region_name: segment.regionName ?? null,
       road_type: segment.roadType, geometry: segment.geometry, length_meters: segment.lengthMeters, discovered_at: new Date(segment.discoveredAt).toISOString(),
     })), { onConflict: 'user_id,segment_id', ignoreDuplicates: true });
-    if (error) throw error;
+    if (error) throw syncError(`Could not upload discoveries batch ${index / DISCOVERY_BATCH_SIZE + 1}`, error);
   }
   for (const session of sessions) {
     const { error } = await client.from('ride_sessions').upsert({
@@ -32,25 +44,25 @@ export async function syncAccountProgress(userId: string) {
       started_at: new Date(session.startedAt).toISOString(), ended_at: new Date(session.endedAt).toISOString(),
       duration_seconds: session.durationSeconds, distance_meters: session.distanceMeters, new_distance_meters: session.newDistanceMeters,
     }, { onConflict: 'id' });
-    if (error) throw error;
+    if (error) throw syncError(`Could not upload ride “${session.title}”`, error);
     if (!session.points.length) continue;
     const { error: removedPointsError } = await client.from('ride_session_points').delete().eq('session_id', session.id);
-    if (removedPointsError) throw removedPointsError;
+    if (removedPointsError) throw syncError(`Could not replace GPS points for “${session.title}”`, removedPointsError);
     for (let index = 0; index < session.points.length; index += POINT_BATCH_SIZE) {
       const points = session.points.slice(index, index + POINT_BATCH_SIZE).map((point, offset) => ({
         session_id: session.id, user_id: userId, sequence: index + offset, lat: point.lat, lng: point.lng, accuracy: point.accuracy,
         recorded_at: new Date(point.timestamp).toISOString(), speed: point.speed ?? null, bearing: point.bearing ?? null,
       }));
       const { error: pointsError } = await client.from('ride_session_points').insert(points);
-      if (pointsError) throw pointsError;
+      if (pointsError) throw syncError(`Could not upload GPS points for “${session.title}”`, pointsError);
     }
   }
   const [{ data: cloudDiscoveries, error: discoveriesError }, { data: cloudSessions, error: sessionsError }] = await Promise.all([
     client.from('discoveries').select('*').order('discovered_at'),
     client.from('ride_sessions').select('*, ride_session_points(*)').is('deleted_at', null).order('started_at', { ascending: false }),
   ]);
-  if (discoveriesError) throw discoveriesError;
-  if (sessionsError) throw sessionsError;
+  if (discoveriesError) throw syncError('Could not load cloud discoveries', discoveriesError);
+  if (sessionsError) throw syncError('Could not load cloud rides', sessionsError);
   const mergedDiscoveries = new Map<string, DiscoveredSegment>(discoveries.map(item => [item.id, item]));
   cloudDiscoveries.forEach((row: any) => mergedDiscoveries.set(row.segment_id, {
     id: row.segment_id, regionId: row.region_id ?? undefined, regionName: row.region_name ?? undefined, roadType: row.road_type,

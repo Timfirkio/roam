@@ -28,7 +28,11 @@ export function AccountSettings() {
       const result = await syncAccountProgress(account.id);
       setMessage(`Synced ${result.discoveries.length} discoveries and ${result.sessions.length} rides.`);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Sync failed; device progress is safe.');
+      const supabaseError = error && typeof error === 'object' ? error as { message?: unknown; details?: unknown } : null;
+      const message = error instanceof Error
+        ? error.message
+        : [supabaseError?.message, supabaseError?.details].filter((value): value is string => typeof value === 'string').join(' ');
+      setMessage(message || 'Sync failed; device progress is safe.');
     } finally {
       setBusy(false);
     }
