@@ -133,7 +133,17 @@ export async function syncAccountProgress(userId: string, onProgress?: (progress
     geometry: row.geometry, lengthMeters: row.length_meters, discoveredAt: new Date(row.discovered_at).valueOf(),
   }));
   const mergedSessions = new Map<string, RideSession>(sessions.map(item => [item.id, item]));
-  cloudSessions.forEach((row: any) => mergedSessions.set(row.id, toSession(row)));
+  cloudSessions.forEach((row: any) => {
+    const cloudSession = toSession(row);
+    const localSession = mergedSessions.get(row.id);
+    // Thumbnails are a local rendering cache, not account data. Retain a valid
+    // local one when the synced route has not changed.
+    if (localSession && samePoints(localSession.points, cloudSession.points)) {
+      cloudSession.thumbnail = localSession.thumbnail;
+      cloudSession.thumbnailStyleVersion = localSession.thumbnailStyleVersion;
+    }
+    mergedSessions.set(row.id, cloudSession);
+  });
   const syncedDiscoveries = [...mergedDiscoveries.values()];
   const syncedSessions = [...mergedSessions.values()];
   onProgress?.({ label: 'Updating this device…' });
