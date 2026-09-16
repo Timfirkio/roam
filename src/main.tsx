@@ -886,6 +886,7 @@ function LegacyDesignSystemViewCurrent({ onBack }: { onBack: () => void }) {
 function LegacyDesignSystemViewActive({ onBack }: { onBack: () => void }) {
   const [activeTab, setActiveTab] = useState<'foundations' | 'components'>('foundations');
   const [previewToggle, setPreviewToggle] = useState(true);
+  const [buttonSize, setButtonSize] = useState<'large' | 'medium' | 'small'>('large');
   const variants = [
     ['Primary', 'primary'],
     ['Secondary', 'secondary'],
@@ -895,13 +896,14 @@ function LegacyDesignSystemViewActive({ onBack }: { onBack: () => void }) {
   ] as const;
 
   const buttonCell = (variant: 'primary' | 'secondary' | 'ghost' | 'destructive', disabled: boolean, content: ReactNode) => (
-    <ShadcnButton variant={variant} disabled={disabled} className="w-full">{content}</ShadcnButton>
+    <ShadcnButton variant={variant} size={buttonSize} disabled={disabled} className="w-full">{content}</ShadcnButton>
   );
 
-  return <section className="min-h-[calc(100svh-76px)] overflow-auto bg-ink-950 px-6 pb-32 pt-8 text-text sm:px-8"><div className="mx-auto max-w-5xl">
+  return <section className={`design-button-preview design-button-preview--${buttonSize} min-h-[calc(100svh-76px)] overflow-auto bg-ink-950 px-6 pb-32 pt-8 text-text sm:px-8`}><div className="mx-auto max-w-5xl">
     <header className="mb-8"><Button variant="quiet" size="compact" onClick={onBack}>← Settings</Button><h1 className="mt-6 text-title font-semibold tracking-display">Design system</h1><p className="mt-4 max-w-xl text-body text-text-muted">A Swiss-inspired outdoor map instrument: high contrast, deliberately quiet, and built for reliable use on the move.</p></header>
     <ShadcnTabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'foundations' | 'components')}>
       <TabsList variant="line" aria-label="Design system sections"><TabsTrigger value="foundations">Foundations</TabsTrigger><TabsTrigger value="components">Components</TabsTrigger></TabsList>
+      <div className="mt-4 flex items-center gap-3"><span className="font-mono text-label text-text-subtle">Button preview size</span><Select value={buttonSize} onValueChange={value => setButtonSize(value as 'large' | 'medium' | 'small')}><SelectTrigger className="w-36"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="large">Large · 16pt</SelectItem><SelectItem value="medium">Medium · 14pt</SelectItem><SelectItem value="small">Small · 12pt</SelectItem></SelectContent></Select></div>
       <TabsContent value="foundations" className="tab-panel mt-8 space-y-8">
         <div className="grid items-start gap-8 lg:grid-cols-2"><div className="space-y-8"><div><p className="mb-3 font-mono text-label font-semibold tracking-[0.14em] text-text-subtle">TYPE SCALE / GEIST</p><Surface className="divide-y divide-border-muted"><div className="p-4"><p className="text-subheading font-medium tracking-subheading">Outdoor map instrument</p><code className="mt-2 block font-mono text-label text-text-subtle">text-subheading · 28px · lh 1.05</code></div><div className="p-4"><p className="text-heading font-medium tracking-heading">Section heading</p><code className="mt-2 block font-mono text-label text-text-subtle">text-heading · 22px · lh 1.15</code></div><div className="p-4"><p className="text-body-lg">Larger supporting copy for a key message or longer orientation statement.</p><code className="mt-2 block font-mono text-label text-text-subtle">text-body-lg · 16px · lh 1.5</code></div><div className="p-4"><p className="text-body">Legible descriptions are built for planning before a ride and checking a route at a glance.</p><code className="mt-2 block font-mono text-label text-text-subtle">text-body · 14px · lh 1.55</code></div></Surface></div><div><p className="mb-3 font-mono text-label font-semibold tracking-[0.14em] text-text-subtle">MONOSPACE / GEIST MONO</p><Surface className="divide-y divide-border-muted"><div className="p-4"><p className="font-mono text-mono-display font-semibold tracking-mono-display">47.2%</p><code className="mt-2 block font-mono text-label text-text-subtle">text-mono-display · 28–40px · lh 1.05</code></div><div className="p-4"><p className="font-mono text-mono-heading font-semibold tracking-mono-heading">Norrmalm / ready</p><code className="mt-2 block font-mono text-label text-text-subtle">text-mono-heading · 20px · lh 1.2</code></div><div className="p-4"><p className="font-mono text-data font-semibold tracking-[0.08em]">Norrmalm / 47.2% discovered</p><code className="mt-2 block font-mono text-label text-text-subtle">text-data · 14px · lh 1.35</code></div><div className="p-4"><p className="font-mono text-label font-semibold tracking-[0.14em]">Map display</p><code className="mt-2 block font-mono text-label text-text-subtle">text-label · 12px · lh 1.25</code></div><div className="p-4"><p className="font-mono text-overline font-semibold uppercase tracking-[0.16em]">Roam / Settings / System</p><code className="mt-2 block font-mono text-label text-text-subtle">text-overline · 12px · lh 1.2 · all caps</code></div></Surface></div></div><div className="space-y-8"><div><p className="mb-3 font-mono text-label font-semibold tracking-[0.14em] text-text-subtle">SEMANTIC COLOURS</p><Surface className="p-4"><div className="grid grid-cols-2 gap-3 sm:grid-cols-3">{TOKEN_COLORS.map(([name, color]) => <div key={name} className="min-w-0"><div className={`h-12 rounded-control border border-white/10 ${color}`} /><p className="mt-2 truncate font-mono text-label text-text-muted">{name}</p></div>)}</div></Surface></div><div><p className="mb-3 font-mono text-label font-semibold tracking-[0.14em] text-text-subtle">SPACING & SHAPE</p><Surface className="space-y-4 p-4">{[['space-1', '4px', 16], ['space-2', '8px', 32], ['space-3', '12px', 48], ['space-4', '16px', 64], ['space-6', '24px', 96], ['space-8', '32px', 128]].map(([name, value, width]) => <div key={name}><div className="mb-2 flex justify-between font-mono text-label text-text-subtle"><span>{name}</span><span>{value}</span></div><div className="h-2 rounded-pill bg-accent" style={{ width: `${width}px` }} /></div>)}<div className="grid grid-cols-5 gap-2 border-t border-border-muted pt-4">{[['rounded-none', '0px'], ['rounded-tight', '4px'], ['rounded-control', '8px'], ['rounded-panel', '12px'], ['rounded-pill', 'pill']].map(([radius, label]) => <div key={radius}><div className={`h-10 bg-surface-interactive ${radius}`} /><p className="mt-2 font-mono text-overline text-text-subtle">{label}</p></div>)}</div></Surface></div></div></div>
         <div className="grid gap-8 lg:grid-cols-2"><div><p className="mb-3 font-mono text-label font-semibold tracking-[0.14em] text-text-subtle">ACCESSIBILITY BASELINE</p><Surface className="space-y-3 p-4 text-body text-text-muted"><p><span className="font-mono text-data font-semibold text-location-200">44px</span> minimum interactive target.</p><p><span className="font-mono text-data font-semibold text-location-200">3px</span> visible focus ring with offset.</p><p><span className="font-mono text-data font-semibold text-location-200">Geist</span> for UI reading; mono reserved for compact data.</p></Surface></div><div><p className="mb-3 font-mono text-label font-semibold tracking-[0.14em] text-text-subtle">MOTION</p><Surface className="p-4"><p className="font-mono text-data font-semibold tracking-[0.08em]">ease-outdoor</p><p className="mt-2 text-body text-text-muted">cubic-bezier(0.16, 1, 0.3, 1) · 150ms default</p><div className="mt-4 h-2 w-full rounded-pill bg-surface-interactive"><div className="h-2 w-2/3 rounded-pill bg-location-500 transition-all duration-150 ease-outdoor hover:w-full" /></div></Surface></div></div>
@@ -981,8 +983,45 @@ function SessionRouteFallback({ coordinates }: { coordinates: [number, number][]
   return <div className="session-route-fallback" aria-hidden="true"><svg viewBox="0 0 100 56" preserveAspectRatio="xMidYMid meet"><path className="session-route-fallback-grid" d="M0 14H100M0 28H100M0 42H100M25 0V56M50 0V56M75 0V56" /><path className="session-route-fallback-line" d={routePath} /><circle className="session-route-fallback-start" cx={start[0]} cy={start[1]} r="2" /><g className="session-route-fallback-finish" transform={`translate(${end[0]} ${end[1]})`}><circle r="3.6" /><path className="session-route-fallback-flag" d="M-1.25 1.8V-2.1H1.7V1.1H-1.25" /><path className="session-route-fallback-checkers" d="M-1.25-2.1H.25V-.5H-1.25M.25-.5H1.7V1.1H.25" /></g></svg></div>;
 }
 
-function SettingsView(props: Parameters<typeof SettingsViewBase>[0]) {
-  return <><AccountSettings /><SettingsViewBase {...props} /></>;
+function SettingsView({ showDiscovered, setShowDiscovered, showDistrictBoundaries, setShowDistrictBoundaries, showBuildings3D, setShowBuildings3D, showTerrain3D, setShowTerrain3D, showDebugMenu, setShowDebugMenu, gpsEnabled, gpsPermission, onGpsChange, onOpenDesignSystem }: Parameters<typeof SettingsViewBase>[0]) {
+  const gpsDescription = gpsPermission === 'denied'
+    ? 'Location access was denied. Enable it in browser settings to retry.'
+    : 'Show your live position on the map.';
+
+  return <section className="min-h-[calc(100svh-76px)] overflow-auto bg-surface px-4 pb-32 pt-10 text-text sm:px-4">
+    <div className="mx-auto max-w-2xl">
+      <header className="mb-4">
+        <h1 className="font-sans text-title font-semibold tracking-display">Settings</h1>
+        <p className="mt-4 max-w-xl text-body-lg text-text-muted">Shape the map to match how you explore. Changes apply immediately.</p>
+      </header>
+      <div className="space-y-4">
+        <AccountSettings />
+        <section className="rounded-panel border border-border bg-surface-raised px-4">
+          <p className="roam-overline -mx-4 border-b border-border-muted px-4 py-3 text-accent">MAP DISPLAY</p>
+          <SettingToggle label="BUILDINGS 3D" description="Show building massing above the map." value={showBuildings3D} onChange={setShowBuildings3D} />
+          <SettingToggle label="TERRAIN 3D" description="Show elevation and terrain shading." value={showTerrain3D} onChange={setShowTerrain3D} />
+          <SettingToggle label="DISTRICT BOUNDARIES" description="Show Stockholm district boundaries on the map." value={showDistrictBoundaries} onChange={setShowDistrictBoundaries} />
+          <SettingToggle label="DISCOVERED NETWORK" description="Highlight roads and paths you have uncovered." value={showDiscovered} onChange={setShowDiscovered} />
+        </section>
+        <section className="rounded-panel border border-border bg-surface-raised px-4">
+          <p className="roam-overline -mx-4 border-b border-border-muted px-4 py-3 text-accent">PLAYER</p>
+          <SettingToggle label="GPS LOCATION" description={gpsDescription} value={gpsEnabled} onChange={onGpsChange} />
+        </section>
+        <section className="rounded-panel border border-border bg-surface-raised px-4">
+          <p className="roam-overline -mx-4 border-b border-border-muted px-4 py-3 text-accent">DEVELOPER TOOLS</p>
+          <SettingToggle label="DEBUG MENU" description="Show the debug controls on the map." value={showDebugMenu} onChange={setShowDebugMenu} />
+          <ShadcnButton variant="ghost" className="flex min-h-control w-full justify-between rounded-none border-0 bg-transparent px-0 text-left text-text hover:border-transparent hover:bg-surface-interactive hover:text-paper-50" type="button" onClick={onOpenDesignSystem}>
+            <span className="flex min-w-0 flex-col items-start gap-1"><strong className="font-mono text-data font-semibold tracking-[0.06em]">DESIGN SYSTEM</strong><small className="text-body text-text-subtle">Preview tokens and reusable interface components.</small></span>
+            <b aria-hidden="true" className="font-mono text-data text-accent">→</b>
+          </ShadcnButton>
+        </section>
+        <aside className="rounded-control border-l-2 border-accent bg-accent-muted px-4 py-3">
+          <strong className="block font-mono text-label font-semibold tracking-[0.12em] text-accent">3D VIEW</strong>
+          <span className="mt-1 block text-body text-text-muted">Use the 3D button on the map to switch between flat and tilted views.</span>
+        </aside>
+      </div>
+    </div>
+  </section>;
 }
 
 function SessionRoutePreview({ session }: { session: RideSession }) {
