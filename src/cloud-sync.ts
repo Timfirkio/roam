@@ -1,4 +1,4 @@
-import type { DiscoveredSegment } from './discovery';
+import type { DiscoveredSegment, RoadType } from './discovery';
 import { loadDiscoveredSegments, replaceDiscoveredSegments } from './discovery-store';
 import { loadSessions, replaceSessions, type RideSession, type SessionPoint } from './session-store';
 import { requireSupabase } from './supabase';
@@ -15,6 +15,13 @@ function syncError(stage: string, error: unknown): Error {
     if (message) return new Error(`${stage}: ${message}${code}`);
   }
   return new Error(`${stage}: ${String(error)}`);
+}
+
+/** Maps device records written before footpaths became part of the cycleway category. */
+function normalizeRoadType(value: unknown): RoadType {
+  if (value === 'paved-road' || value === 'cycleway' || value === 'unpaved-path') return value;
+  if (value === 'footpath') return 'cycleway';
+  throw new Error(`Could not sync a discovery with unsupported road type “${String(value)}”.`);
 }
 
 function toSession(row: any): RideSession {
@@ -34,7 +41,7 @@ export async function syncAccountProgress(userId: string) {
   for (let index = 0; index < discoveries.length; index += DISCOVERY_BATCH_SIZE) {
     const { error } = await client.from('discoveries').upsert(discoveries.slice(index, index + DISCOVERY_BATCH_SIZE).map(segment => ({
       user_id: userId, segment_id: segment.id, region_id: segment.regionId ?? null, region_name: segment.regionName ?? null,
-      road_type: segment.roadType, geometry: segment.geometry, length_meters: segment.lengthMeters, discovered_at: new Date(segment.discoveredAt).toISOString(),
+      road_type: normalizeRoadType(segment.roadType), geometry: segment.geometry, length_meters: segment.lengthMeters, discovered_at: new Date(segment.discoveredAt).toISOString(),
     })), { onConflict: 'user_id,segment_id', ignoreDuplicates: true });
     if (error) throw syncError(`Could not upload discoveries batch ${index / DISCOVERY_BATCH_SIZE + 1}`, error);
   }
