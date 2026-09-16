@@ -6,6 +6,10 @@ import { requireSupabase } from './supabase';
 const POINT_BATCH_SIZE = 250;
 const DISCOVERY_BATCH_SIZE = 250;
 
+export type SyncProgress = {
+  label: string;
+};
+
 function syncError(stage: string, error: unknown): Error {
   if (error instanceof Error) return new Error(`${stage}: ${error.message}`);
   if (error && typeof error === 'object') {
@@ -34,25 +38,73 @@ function toSession(row: any): RideSession {
   };
 }
 
+function samePoints(left: SessionPoint[], right: SessionPoint[]) {
+  return left.length === right.length && left.every((point, index) => {
+    const other = right[index];
+    return point.lat === other.lat
+      && point.lng === other.lng
+      && point.accuracy === other.accuracy
+      && point.timestamp === other.timestamp
+      && (point.speed ?? null) === (other.speed ?? null)
+      && (point.bearing ?? null) === (other.bearing ?? null);
+  });
+}
+
+function sameSessionDetails(left: RideSession, right: RideSession) {
+  return left.title === right.title
+    && JSON.stringify(left.districtNames) === JSON.stringify(right.districtNames)
+    && left.startedAt === right.startedAt
+    && left.endedAt === right.endedAt
+    && left.durationSeconds === right.durationSeconds
+    && left.distanceMeters === right.distanceMeters
+    && left.newDistanceMeters === right.newDistanceMeters;
+}
+
 /** Upload local progress, then replace the local cache with the account-wide union. */
-export async function syncAccountProgress(userId: string) {
+export async function syncAccountProgress(userId: string, onProgress?: (progress: SyncProgress) => void) {
   const client = requireSupabase();
+  onProgress?.({ label: 'Preparing local progress…' });
   const [discoveries, sessions] = await Promise.all([loadDiscoveredSegments(), loadSessions()]);
-  for (let index = 0; index < discoveries.length; index += DISCOVERY_BATCH_SIZE) {
-    const { error } = await client.from('discoveries').upsert(discoveries.slice(index, index + DISCOVERY_BATCH_SIZE).map(segment => ({
+  onProgress?.({ label: 'Checking your account progress…' });
+  const initialCloudResult = await Promise.all([
+    client.from('discoveries').select('*').eq('user_id', userId).order('discovered_at'),
+    client.from('ride_sessions').select('*, ride_session_points(*)').eq('user_id', userId).is('deleted_at', null).order('started_at', { ascending: false }),
+  ]);
+  if (initialCloudResult[0].error) throw syncError('Could not load cloud discoveries', initialCloudResult[0].error);
+  if (initialCloudResult[1].error) throw syncError('Could not load cloud rides', initialCloudResult[1].error);
+  let cloudDiscoveries = initialCloudResult[0].data ?? [];
+  let cloudSessions = initialCloudResult[1].data ?? [];
+
+  const cloudDiscoveryIds = new Set(cloudDiscoveries.map((row: any) => row.segment_id));
+  const discoveriesToUpload = discoveries.filter(segment => !cloudDiscoveryIds.has(segment.id));
+  const cloudSessionsById = new Map<string, RideSession>(cloudSessions.map((row: any) => [row.id, toSession(row)]));
+  const sessionsToUpload = sessions.filter(session => {
+    const cloudSession = cloudSessionsById.get(session.id);
+    return !cloudSession || !sameSessionDetails(session, cloudSession) || !samePoints(session.points, cloudSession.points);
+  });
+
+  const discoveryBatchCount = Math.ceil(discoveriesToUpload.length / DISCOVERY_BATCH_SIZE);
+  let changedCloudData = false;
+  for (let index = 0; index < discoveriesToUpload.length; index += DISCOVERY_BATCH_SIZE) {
+    onProgress?.({ label: `Syncing discoveries ${index / DISCOVERY_BATCH_SIZE + 1} of ${discoveryBatchCount}…` });
+    const { error } = await client.from('discoveries').upsert(discoveriesToUpload.slice(index, index + DISCOVERY_BATCH_SIZE).map(segment => ({
       user_id: userId, segment_id: segment.id, region_id: segment.regionId ?? null, region_name: segment.regionName ?? null,
       road_type: normalizeRoadType(segment.roadType), geometry: segment.geometry, length_meters: segment.lengthMeters, discovered_at: new Date(segment.discoveredAt).toISOString(),
     })), { onConflict: 'user_id,segment_id', ignoreDuplicates: true });
     if (error) throw syncError(`Could not upload discoveries batch ${index / DISCOVERY_BATCH_SIZE + 1}`, error);
+    changedCloudData = true;
   }
-  for (const session of sessions) {
+  for (const [sessionIndex, session] of sessionsToUpload.entries()) {
+    onProgress?.({ label: `Syncing rides ${sessionIndex + 1} of ${sessionsToUpload.length}…` });
+    const cloudSession = cloudSessionsById.get(session.id);
     const { error } = await client.from('ride_sessions').upsert({
       id: session.id, user_id: userId, title: session.title, district_names: session.districtNames,
       started_at: new Date(session.startedAt).toISOString(), ended_at: new Date(session.endedAt).toISOString(),
       duration_seconds: session.durationSeconds, distance_meters: session.distanceMeters, new_distance_meters: session.newDistanceMeters,
     }, { onConflict: 'id' });
     if (error) throw syncError(`Could not upload ride “${session.title}”`, error);
-    if (!session.points.length) continue;
+    changedCloudData = true;
+    if (cloudSession && samePoints(session.points, cloudSession.points)) continue;
     const { error: removedPointsError } = await client.from('ride_session_points').delete().eq('session_id', session.id);
     if (removedPointsError) throw syncError(`Could not replace GPS points for “${session.title}”`, removedPointsError);
     for (let index = 0; index < session.points.length; index += POINT_BATCH_SIZE) {
@@ -64,12 +116,17 @@ export async function syncAccountProgress(userId: string) {
       if (pointsError) throw syncError(`Could not upload GPS points for “${session.title}”`, pointsError);
     }
   }
-  const [{ data: cloudDiscoveries, error: discoveriesError }, { data: cloudSessions, error: sessionsError }] = await Promise.all([
-    client.from('discoveries').select('*').order('discovered_at'),
-    client.from('ride_sessions').select('*, ride_session_points(*)').is('deleted_at', null).order('started_at', { ascending: false }),
-  ]);
-  if (discoveriesError) throw syncError('Could not load cloud discoveries', discoveriesError);
-  if (sessionsError) throw syncError('Could not load cloud rides', sessionsError);
+  if (changedCloudData) {
+    onProgress?.({ label: 'Loading your account progress…' });
+    const result = await Promise.all([
+      client.from('discoveries').select('*').eq('user_id', userId).order('discovered_at'),
+      client.from('ride_sessions').select('*, ride_session_points(*)').eq('user_id', userId).is('deleted_at', null).order('started_at', { ascending: false }),
+    ]);
+    if (result[0].error) throw syncError('Could not reload cloud discoveries', result[0].error);
+    if (result[1].error) throw syncError('Could not reload cloud rides', result[1].error);
+    cloudDiscoveries = result[0].data ?? [];
+    cloudSessions = result[1].data ?? [];
+  }
   const mergedDiscoveries = new Map<string, DiscoveredSegment>(discoveries.map(item => [item.id, item]));
   cloudDiscoveries.forEach((row: any) => mergedDiscoveries.set(row.segment_id, {
     id: row.segment_id, regionId: row.region_id ?? undefined, regionName: row.region_name ?? undefined, roadType: row.road_type,
@@ -77,6 +134,9 @@ export async function syncAccountProgress(userId: string) {
   }));
   const mergedSessions = new Map<string, RideSession>(sessions.map(item => [item.id, item]));
   cloudSessions.forEach((row: any) => mergedSessions.set(row.id, toSession(row)));
-  await Promise.all([replaceDiscoveredSegments([...mergedDiscoveries.values()]), replaceSessions([...mergedSessions.values()])]);
-  return { discoveries: [...mergedDiscoveries.values()], sessions: [...mergedSessions.values()] };
+  const syncedDiscoveries = [...mergedDiscoveries.values()];
+  const syncedSessions = [...mergedSessions.values()];
+  onProgress?.({ label: 'Updating this device…' });
+  await Promise.all([replaceDiscoveredSegments(syncedDiscoveries), replaceSessions(syncedSessions)]);
+  return { discoveries: syncedDiscoveries, sessions: syncedSessions };
 }

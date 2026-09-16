@@ -10,6 +10,7 @@ import { loadSessions } from './session-store';
 import { Capacitor } from '@capacitor/core';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Browser } from '@capacitor/browser';
+import { Spinner } from '@/components/ui/spinner';
 
 export function AccountSettings() {
   const client = supabase;
@@ -18,14 +19,18 @@ export function AccountSettings() {
   const [password, setPassword] = useState('');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
+  const [syncProgress, setSyncProgress] = useState<string | null>(null);
   const [localReady, setLocalReady] = useState(false);
   const [emailDialogOpen, setEmailDialogOpen] = useState(false);
   const native = Capacitor.isNativePlatform();
 
   const sync = async (account: User) => {
     setBusy(true);
+    setMessage('');
+    setSyncProgress('Preparing local progress…');
     try {
-      const result = await syncAccountProgress(account.id);
+      const result = await syncAccountProgress(account.id, progress => setSyncProgress(progress.label));
+      window.dispatchEvent(new CustomEvent('roam:account-sync-complete', { detail: result }));
       setMessage(`Synced ${result.discoveries.length} discoveries and ${result.sessions.length} rides.`);
     } catch (error) {
       const supabaseError = error && typeof error === 'object' ? error as { message?: unknown; details?: unknown } : null;
@@ -34,6 +39,7 @@ export function AccountSettings() {
         : [supabaseError?.message, supabaseError?.details].filter((value): value is string => typeof value === 'string').join(' ');
       setMessage(message || 'Sync failed; device progress is safe.');
     } finally {
+      setSyncProgress(null);
       setBusy(false);
     }
   };
@@ -113,13 +119,14 @@ export function AccountSettings() {
       <p className="roam-overline -mx-4 border-b border-border-muted px-4 py-3 text-accent">Account</p>
       {user ? <div className="space-y-2 py-4">
         <p className="text-body text-text-muted">Signed in as {user.email}</p>
-        <Button className="w-full" variant="secondary" disabled={busy || !localReady} onClick={() => void sync(user)}>Sync now</Button>
+        <Button className="w-full" variant="secondary" disabled={busy || !localReady} onClick={() => void sync(user)}>{busy ? <><Spinner />{syncProgress ?? 'Syncing progress…'}</> : 'Sync now'}</Button>
         <Button className="w-full" variant="ghost" disabled={busy} onClick={() => void client.auth.signOut()}>Sign out</Button>
       </div> : <div className="space-y-2 py-4">
         <Button className="w-full" size="medium" variant="secondary" disabled={busy || !localReady} onClick={() => void google()}><GoogleLogo aria-hidden="true" weight="bold" />Continue with Google</Button>
         <Button className="w-full" size="medium" variant="secondary" disabled={busy || !localReady} onClick={() => setEmailDialogOpen(true)}><EnvelopeSimple aria-hidden="true" weight="bold" />Continue with email</Button>
       </div>}
       {!localReady && <p className="pb-4 text-body text-text-muted">Loading local progress…</p>}
+      {busy && syncProgress && <p className="pb-4 text-body text-text-muted" role="status">{syncProgress}</p>}
       {message && <p className="pb-4 text-body text-text-muted">{message}</p>}
     </section>
     <Dialog open={emailDialogOpen} onOpenChange={setEmailDialogOpen}>

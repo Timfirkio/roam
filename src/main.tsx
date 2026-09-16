@@ -36,6 +36,8 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/compone
 import { AlertDialog, AlertDialogContent, AlertDialogDescription, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { useScreenWakeLock } from './use-screen-wake-lock';
 import { AccountSettings } from './account-settings';
+import { syncAccountProgress } from './cloud-sync';
+import { supabase } from './supabase';
 import { ArrowsClockwise, Bug, ChartBar, CrosshairSimple, DotsThreeVertical, DownloadSimple, Gear, MapTrifold, Minus, PencilSimple, Plus, RoadHorizon, Trash, UploadSimple } from '@phosphor-icons/react';
 
 type View = 'map' | 'sessions' | 'progress' | 'settings' | 'design-system';
@@ -1209,6 +1211,7 @@ function App() {
   const discoveriesRef = useRef<DiscoveredSegment[]>([]);
   const [sessions, setSessions] = useState<RideSession[]>([]);
   const sessionsRef = useRef<RideSession[]>([]);
+  const accountSyncAppliedRef = useRef(false);
   const thumbnailWorkerRef = useRef(false);
   const thumbnailAttemptsRef = useRef(new Set<string>());
   const viewRef = useRef(view);
@@ -1267,6 +1270,7 @@ function App() {
   }, [sessionStartedAt]);
   useEffect(() => {
     loadDiscoveredSegments().then(async loaded => {
+      if (accountSyncAppliedRef.current) return;
       let synchronized = loaded;
       if (!localStorage.getItem(DISCOVERY_ROAD_TYPE_MIGRATION_KEY)) {
         synchronized = await synchronizeDiscoveredSegmentRoadTypes(loaded);
@@ -1277,8 +1281,48 @@ function App() {
       setDiscoveries(synchronized);
     }).catch(() => {});
   }, []);
-  useEffect(() => { loadSessions().then(setSessions).catch(() => {}); }, []);
+  useEffect(() => {
+    loadSessions().then(loaded => {
+      if (accountSyncAppliedRef.current) return;
+      sessionsRef.current = loaded;
+      setSessions(loaded);
+    }).catch(() => {});
+  }, []);
   useEffect(() => { sessionsRef.current = sessions; }, [sessions]);
+  useEffect(() => {
+    if (!supabase) return;
+    let disposed = false;
+    void (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user || disposed) return;
+      try {
+        const result = await syncAccountProgress(user.id);
+        if (disposed) return;
+        accountSyncAppliedRef.current = true;
+        discoveriesRef.current = result.discoveries;
+        sessionsRef.current = result.sessions;
+        setDiscoveries(result.discoveries);
+        setSessions(result.sessions);
+        window.dispatchEvent(new CustomEvent('roam:account-sync-complete', { detail: result }));
+      } catch {
+        // The account card exposes manual retry and detailed errors when settings is opened.
+      }
+    })();
+    return () => { disposed = true; };
+  }, []);
+  useEffect(() => {
+    const applyAccountSync = (event: Event) => {
+      const result = (event as CustomEvent<{ discoveries: DiscoveredSegment[]; sessions: RideSession[] }>).detail;
+      if (!result) return;
+      accountSyncAppliedRef.current = true;
+      discoveriesRef.current = result.discoveries;
+      sessionsRef.current = result.sessions;
+      setDiscoveries(result.discoveries);
+      setSessions(result.sessions);
+    };
+    window.addEventListener('roam:account-sync-complete', applyAccountSync);
+    return () => window.removeEventListener('roam:account-sync-complete', applyAccountSync);
+  }, []);
   useEffect(() => { viewRef.current = view; }, [view]);
   useEffect(() => {
     const onVisible = () => { if (document.visibilityState === 'visible') setThumbnailWake(value => value + 1); };
