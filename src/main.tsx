@@ -1292,12 +1292,15 @@ function App() {
   useEffect(() => {
     if (!supabase) return;
     let disposed = false;
-    void (async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user || disposed) return;
+    let syncingUserId: string | null = null;
+    let syncedUserId: string | null = null;
+    const syncSignedInUser = async (user: { id: string }) => {
+      if (disposed || syncingUserId === user.id || syncedUserId === user.id) return;
+      syncingUserId = user.id;
       try {
         const result = await syncAccountProgress(user.id);
         if (disposed) return;
+        syncedUserId = user.id;
         accountSyncAppliedRef.current = true;
         discoveriesRef.current = result.discoveries;
         sessionsRef.current = result.sessions;
@@ -1306,9 +1309,25 @@ function App() {
         window.dispatchEvent(new CustomEvent('roam:account-sync-complete', { detail: result }));
       } catch {
         // The account card exposes manual retry and detailed errors when settings is opened.
+      } finally {
+        if (syncingUserId === user.id) syncingUserId = null;
       }
-    })();
-    return () => { disposed = true; };
+    };
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT') {
+        syncingUserId = null;
+        syncedUserId = null;
+        return;
+      }
+      if ((event === 'INITIAL_SESSION' || event === 'SIGNED_IN') && session?.user) void syncSignedInUser(session.user);
+    });
+    void supabase.auth.getUser().then(({ data }) => {
+      if (data.user) void syncSignedInUser(data.user);
+    });
+    return () => {
+      disposed = true;
+      subscription.unsubscribe();
+    };
   }, []);
   useEffect(() => {
     const applyAccountSync = (event: Event) => {
