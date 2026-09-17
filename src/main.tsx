@@ -34,11 +34,12 @@ import { Item, ItemActions, ItemContent, ItemDescription, ItemTitle } from '@/co
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogContent, AlertDialogDescription, AlertDialogTitle } from '@/components/ui/alert-dialog';
+import { Toaster, toastManager } from '@/components/ui/toast';
 import { useScreenWakeLock } from './use-screen-wake-lock';
 import { AccountSettings } from './account-settings';
 import { syncAccountProgress } from './cloud-sync';
 import { supabase } from './supabase';
-import { ArrowsClockwise, Bug, ChartBar, CrosshairSimple, DotsThreeVertical, DownloadSimple, Gear, MapTrifold, Minus, PencilSimple, Plus, RoadHorizon, Trash, UploadSimple } from '@phosphor-icons/react';
+import { ArrowsClockwise, Bug, ChartBar, CheckCircle, CrosshairSimple, DotsThreeVertical, DownloadSimple, Gear, MapTrifold, Minus, PencilSimple, Plus, RoadHorizon, Trash, UploadSimple } from '@phosphor-icons/react';
 
 type View = 'map' | 'sessions' | 'progress' | 'settings' | 'design-system';
 type LocationState = { city: string; region: string; lng: number; lat: number };
@@ -161,9 +162,12 @@ function downloadGpx(contents: string, fileName: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
-function pointsFromGpx(contents: string): RideTrackingPoint[] {
+function pointsFromGpx(contents: string): { points: RideTrackingPoint[]; title: string | null } {
   const document = new DOMParser().parseFromString(contents, 'application/xml');
   if (document.querySelector('parsererror')) throw new Error('The GPX file could not be read.');
+  const title = [...document.querySelectorAll('metadata > name, trk > name, rte > name')]
+    .map(element => element.textContent?.trim() ?? '')
+    .find(Boolean) || null;
   const fallbackTimestamp = Date.now();
   const points = [...document.querySelectorAll('trkpt, rtept')].map((element, index) => {
     const lat = Number(element.getAttribute('lat'));
@@ -179,7 +183,17 @@ function pointsFromGpx(contents: string): RideTrackingPoint[] {
     } satisfies RideTrackingPoint;
   }).filter(point => Number.isFinite(point.lat) && Number.isFinite(point.lng) && Math.abs(point.lat) <= 90 && Math.abs(point.lng) <= 180);
   if (points.length < 2) throw new Error('The GPX file needs at least two route points.');
-  return points.sort((a, b) => a.timestamp - b.timestamp);
+  return { points: points.sort((a, b) => a.timestamp - b.timestamp), title };
+}
+
+function assignDiscoveryRegions(segments: DiscoveredSegment[]) {
+  return segments.map(segment => {
+    if (segment.regionId) return segment;
+    const coordinates = segment.geometry.coordinates;
+    const coordinate = coordinates[Math.floor(coordinates.length / 2)] ?? coordinates[0];
+    const district = coordinate && findStockholmDistrict(coordinate);
+    return district ? { ...segment, regionId: district.id, regionName: district.name } : segment;
+  });
 }
 
 function AccordionSummary({ title, percentage }: { title: ReactNode; percentage: string }) {
@@ -943,6 +957,11 @@ function DesignSystemReusableComponents() {
             <AccordionItem value="two"><AccordionTrigger>Section two</AccordionTrigger><AccordionContent>All primitives remain source-owned in the design system.</AccordionContent></AccordionItem>
           </Accordion>
         </div>
+        <div className="space-y-3">
+          <p className="text-body font-medium">Toast</p>
+          <p className="text-body text-text-muted">A transient, screen-reader announced status for an upload, export, or sync. It stays visible while work is in progress, then can be dismissed after success or failure.</p>
+          <div className="flex items-start gap-3 rounded-panel border border-border-strong bg-surface p-4 shadow-xl"><CheckCircle className="mt-0.5 size-5 shrink-0 text-accent" aria-hidden="true" /><div><p className="font-sans text-body font-semibold">Ride uploaded</p><p className="mt-1 text-body text-text-muted">The route was added to your sessions and exploration progress.</p></div></div>
+        </div>
       </Surface>
     </div>
   </TabsContent>;
@@ -1039,25 +1058,24 @@ function SessionRoutePreview({ session }: { session: RideSession }) {
   return <div className="session-route-preview mt-4 h-40 overflow-hidden rounded-control border border-border-muted" aria-label="Session route preview">{thumbnailUrl ? <img className="session-route-thumbnail" src={thumbnailUrl} alt="" /> : <SessionRouteFallback coordinates={coordinates} />}</div>;
 }
 
-function SessionsView({ sessions, onExport, onRename, onDelete, onImportGpx, onSyncRides, exportStatus }: { sessions: RideSession[]; onExport: (session: RideSession) => void; onRename: (session: RideSession, title: string) => void; onDelete: (session: RideSession) => void; onImportGpx: (file: File) => Promise<string>; onSyncRides: () => Promise<string>; exportStatus: 'idle' | 'exported' | 'error' }) {
-  const status = exportStatus === 'exported' ? 'GPX ready to save or share.' : exportStatus === 'error' ? 'Could not create the GPX file. Try again.' : null;
+function SessionsView({ sessions, onExport, onRename, onDelete, onImportGpx, onSyncRides }: { sessions: RideSession[]; onExport: (session: RideSession) => void; onRename: (session: RideSession, title: string) => void; onDelete: (session: RideSession) => void; onImportGpx: (file: File) => Promise<string>; onSyncRides: () => Promise<string> }) {
   const [editingSession, setEditingSession] = useState<RideSession | null>(null);
   const [editedTitle, setEditedTitle] = useState('');
   const [deletingSession, setDeletingSession] = useState<RideSession | null>(null);
-  const [pageActionStatus, setPageActionStatus] = useState<string | null>(null);
   const [isPageActionPending, setIsPageActionPending] = useState(false);
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const startEditing = (session: RideSession) => { setEditingSession(session); setEditedTitle(formatSessionTitle(session.title)); };
   const saveTitle = () => { if (editingSession && editedTitle.trim()) onRename(editingSession, editedTitle.trim()); setEditingSession(null); };
-  const runPageAction = async (action: () => Promise<string>) => {
+  const runPageAction = async (action: () => Promise<string>, pendingTitle: string, successTitle: string, pendingDescription: string) => {
     if (isPageActionPending) return;
     setIsPageActionPending(true);
-    setPageActionStatus(null);
-    try { setPageActionStatus(await action()); }
-    catch (error) { setPageActionStatus(error instanceof Error ? error.message : 'Could not update your sessions. Try again.'); }
+    const id = crypto.randomUUID();
+    toastManager.add({ id, title: pendingTitle, description: pendingDescription, timeout: 0, data: { kind: 'loading' } });
+    try { toastManager.update(id, { title: successTitle, description: await action(), timeout: 5_000, data: { kind: 'success' } }); }
+    catch (error) { toastManager.update(id, { title: 'Upload failed', description: error instanceof Error ? error.message : 'Could not update your sessions. Try again.', timeout: 7_000, priority: 'high', data: { kind: 'error' } }); }
     finally { setIsPageActionPending(false); }
   };
-  return <section className="min-h-[calc(100svh-76px)] overflow-auto bg-surface px-6 pb-32 pt-10 text-text sm:px-8"><div className="mx-auto max-w-2xl"><div className="flex items-start justify-between gap-4"><h1 className="font-sans text-title font-semibold tracking-display">Sessions</h1><DropdownMenu><DropdownMenuTrigger aria-label="Session actions" className="flex size-control items-center justify-center rounded-control border border-border bg-surface-raised text-text-muted outline-none hover:border-border-strong hover:bg-surface-interactive hover:text-text focus-visible:ring-3 focus-visible:ring-focus"><DotsThreeVertical weight="bold" aria-hidden="true" /></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem disabled={isPageActionPending} onClick={() => uploadInputRef.current?.click()}><UploadSimple aria-hidden="true" />Upload GPX</DropdownMenuItem><DropdownMenuItem disabled={isPageActionPending} onClick={() => { void runPageAction(onSyncRides); }}><ArrowsClockwise aria-hidden="true" />Sync rides to map</DropdownMenuItem></DropdownMenuContent></DropdownMenu></div><input ref={uploadInputRef} className="sr-only" type="file" accept=".gpx,application/gpx+xml,application/xml,text/xml" onChange={event => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ''; if (file) void runPageAction(() => onImportGpx(file)); }} /><p className="mt-4 max-w-xl text-body-lg text-text-muted">Your recorded rides stay on this device until account sync is available.</p>{sessions.length === 0 ? <Item variant="outline" className="mt-10"><ItemContent><ItemTitle>No saved rides yet</ItemTitle><ItemDescription>Rides shorter than 30 seconds are discarded.</ItemDescription></ItemContent></Item> : <div className="mt-10 space-y-4">{sessions.map(session => <Item key={session.id} variant="outline" className="block p-4"><div className="flex items-start justify-between gap-4"><ItemContent><ItemTitle>{formatSessionTitle(session.title)}</ItemTitle><ItemDescription>{formatSessionDateTime(session.startedAt)}</ItemDescription></ItemContent><DropdownMenu><DropdownMenuTrigger aria-label={`Actions for ${formatSessionTitle(session.title)}`} className="flex size-control items-center justify-center rounded-control border border-border bg-surface-raised text-text-muted outline-none hover:border-border-strong hover:bg-surface-interactive hover:text-text focus-visible:ring-3 focus-visible:ring-focus"><DotsThreeVertical weight="bold" aria-hidden="true" /></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onClick={() => onExport(session)}><DownloadSimple aria-hidden="true" />Export GPX</DropdownMenuItem><DropdownMenuItem onClick={() => startEditing(session)}><PencilSimple aria-hidden="true" />Edit session title</DropdownMenuItem><DropdownMenuSeparator /><DropdownMenuItem className="text-danger-500 data-[highlighted]:bg-danger-button data-[highlighted]:text-paper-50" onClick={() => setDeletingSession(session)}><Trash aria-hidden="true" />Delete session</DropdownMenuItem></DropdownMenuContent></DropdownMenu></div><div className="mt-3 font-mono text-label text-text-muted">{formatSessionTime(session.durationSeconds)} • {formatDistance(session.distanceMeters)} ({formatDistance(session.newDistanceMeters)} new)</div>{session.points.length > 1 && <SessionRoutePreview session={session} />}</Item>)}</div>}{(pageActionStatus ?? status) && <p className={`mt-4 font-mono text-label ${pageActionStatus?.startsWith('Could not') ? 'text-danger-500' : 'text-accent'}`}>{pageActionStatus ?? status}</p>}</div><Dialog open={Boolean(editingSession)} onOpenChange={open => { if (!open) setEditingSession(null); }}><DialogContent><DialogTitle>Edit session title</DialogTitle><DialogDescription>Give this ride a name you will recognize later.</DialogDescription><form className="mt-5" onSubmit={event => { event.preventDefault(); saveTitle(); }}><label className="block text-label text-text-subtle" htmlFor="session-title">Title</label><input id="session-title" className="mt-2 min-h-control w-full rounded-control border border-border bg-surface px-3 text-body text-text outline-none focus-visible:border-accent focus-visible:ring-3 focus-visible:ring-focus" value={editedTitle} onChange={event => setEditedTitle(event.target.value)} autoFocus /><div className="mt-5 flex justify-end gap-3"><ShadcnButton type="button" variant="ghost" onClick={() => setEditingSession(null)}>Cancel</ShadcnButton><ShadcnButton type="submit">Save title</ShadcnButton></div></form></DialogContent></Dialog><AlertDialog open={Boolean(deletingSession)} onOpenChange={open => { if (!open) setDeletingSession(null); }}><AlertDialogContent><AlertDialogTitle>Delete this session?</AlertDialogTitle><AlertDialogDescription>This deletes the saved session and its GPX data from this device. It will not remove any roads from your map or change your exploration progress.</AlertDialogDescription><div className="mt-5 flex justify-end gap-3"><ShadcnButton variant="ghost" onClick={() => setDeletingSession(null)}>Cancel</ShadcnButton><ShadcnButton variant="destructive" onClick={() => { if (deletingSession) onDelete(deletingSession); setDeletingSession(null); }}>Delete session</ShadcnButton></div></AlertDialogContent></AlertDialog></section>;
+  return <section className="min-h-[calc(100svh-76px)] overflow-auto bg-surface px-6 pb-32 pt-10 text-text sm:px-8"><div className="mx-auto max-w-2xl"><div className="flex items-start justify-between gap-4"><h1 className="font-sans text-title font-semibold tracking-display">Sessions</h1><DropdownMenu><DropdownMenuTrigger aria-label="Session actions" className="flex size-control items-center justify-center rounded-control border border-border bg-surface-raised text-text-muted outline-none hover:border-border-strong hover:bg-surface-interactive hover:text-text focus-visible:ring-3 focus-visible:ring-focus"><DotsThreeVertical weight="bold" aria-hidden="true" /></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem disabled={isPageActionPending} onClick={() => uploadInputRef.current?.click()}><UploadSimple aria-hidden="true" />Upload GPX</DropdownMenuItem><DropdownMenuItem disabled={isPageActionPending} onClick={() => { void runPageAction(onSyncRides, 'Syncing rides', 'Rides synced', 'Checking saved routes against the road network.'); }}><ArrowsClockwise aria-hidden="true" />Sync rides to map</DropdownMenuItem></DropdownMenuContent></DropdownMenu></div><input ref={uploadInputRef} className="sr-only" type="file" accept=".gpx,application/gpx+xml,application/xml,text/xml" onChange={event => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ''; if (file) void runPageAction(() => onImportGpx(file), 'Uploading GPX', 'Ride uploaded', `Reading ${file.name}`); }} /><p className="mt-4 max-w-xl text-body-lg text-text-muted">Your recorded rides stay on this device until account sync is available.</p>{sessions.length === 0 ? <Item variant="outline" className="mt-10"><ItemContent><ItemTitle>No saved rides yet</ItemTitle><ItemDescription>Rides shorter than 30 seconds are discarded.</ItemDescription></ItemContent></Item> : <div className="mt-10 space-y-4">{sessions.map(session => <Item key={session.id} variant="outline" className="block p-4"><div className="flex items-start justify-between gap-4"><ItemContent><ItemTitle>{formatSessionTitle(session.title)}</ItemTitle><ItemDescription>{formatSessionDateTime(session.startedAt)}</ItemDescription></ItemContent><DropdownMenu><DropdownMenuTrigger aria-label={`Actions for ${formatSessionTitle(session.title)}`} className="flex size-control items-center justify-center rounded-control border border-border bg-surface-raised text-text-muted outline-none hover:border-border-strong hover:bg-surface-interactive hover:text-text focus-visible:ring-3 focus-visible:ring-focus"><DotsThreeVertical weight="bold" aria-hidden="true" /></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onClick={() => onExport(session)}><DownloadSimple aria-hidden="true" />Export GPX</DropdownMenuItem><DropdownMenuItem onClick={() => startEditing(session)}><PencilSimple aria-hidden="true" />Edit session title</DropdownMenuItem><DropdownMenuSeparator /><DropdownMenuItem className="text-danger-500 data-[highlighted]:bg-danger-button data-[highlighted]:text-paper-50" onClick={() => setDeletingSession(session)}><Trash aria-hidden="true" />Delete session</DropdownMenuItem></DropdownMenuContent></DropdownMenu></div><div className="mt-3 font-mono text-label text-text-muted">{formatSessionTime(session.durationSeconds)} • {formatDistance(session.distanceMeters)} ({formatDistance(session.newDistanceMeters)} new)</div>{session.points.length > 1 && <SessionRoutePreview session={session} />}</Item>)}</div>}</div><Dialog open={Boolean(editingSession)} onOpenChange={open => { if (!open) setEditingSession(null); }}><DialogContent><DialogTitle>Edit session title</DialogTitle><DialogDescription>Give this ride a name you will recognize later.</DialogDescription><form className="mt-5" onSubmit={event => { event.preventDefault(); saveTitle(); }}><label className="block text-label text-text-subtle" htmlFor="session-title">Title</label><input id="session-title" className="mt-2 min-h-control w-full rounded-control border border-border bg-surface px-3 text-body text-text outline-none focus-visible:border-accent focus-visible:ring-3 focus-visible:ring-focus" value={editedTitle} onChange={event => setEditedTitle(event.target.value)} autoFocus /><div className="mt-5 flex justify-end gap-3"><ShadcnButton type="button" variant="ghost" onClick={() => setEditingSession(null)}>Cancel</ShadcnButton><ShadcnButton type="submit">Save title</ShadcnButton></div></form></DialogContent></Dialog><AlertDialog open={Boolean(deletingSession)} onOpenChange={open => { if (!open) setDeletingSession(null); }}><AlertDialogContent><AlertDialogTitle>Delete this session?</AlertDialogTitle><AlertDialogDescription>This deletes the saved session and its GPX data from this device. It will not remove any roads from your map or change your exploration progress.</AlertDialogDescription><div className="mt-5 flex justify-end gap-3"><ShadcnButton variant="ghost" onClick={() => setDeletingSession(null)}>Cancel</ShadcnButton><ShadcnButton variant="destructive" onClick={() => { if (deletingSession) onDelete(deletingSession); setDeletingSession(null); }}>Delete session</ShadcnButton></div></AlertDialogContent></AlertDialog></section>;
 }
 
 function LegacyProgressView({ location, discoveries }: { location: LocationState; discoveries: DiscoveredSegment[] }) {
@@ -1202,7 +1220,6 @@ function App() {
   const sessionDiscoveredMetersRef = useRef(0);
   const [sessionDistanceMeters, setSessionDistanceMeters] = useState(0);
   const [sessionDiscoveredMeters, setSessionDiscoveredMeters] = useState(0);
-  const [gpxExportStatus, setGpxExportStatus] = useState<'idle' | 'exported' | 'error'>('idle');
   const [sessionStartedAt, setSessionStartedAt] = useState<number | null>(null);
   const [sessionElapsedSeconds, setSessionElapsedSeconds] = useState(0);
   const [playerLocation, setPlayerLocation] = useState<PlayerLocation | null>(null);
@@ -1271,12 +1288,12 @@ function App() {
   useEffect(() => {
     loadDiscoveredSegments().then(async loaded => {
       if (accountSyncAppliedRef.current) return;
-      let synchronized = loaded;
+      let synchronized = assignDiscoveryRegions(loaded);
       if (!localStorage.getItem(DISCOVERY_ROAD_TYPE_MIGRATION_KEY)) {
-        synchronized = await synchronizeDiscoveredSegmentRoadTypes(loaded);
-        await saveDiscoveredSegments(synchronized);
+        synchronized = assignDiscoveryRegions(await synchronizeDiscoveredSegmentRoadTypes(synchronized));
         localStorage.setItem(DISCOVERY_ROAD_TYPE_MIGRATION_KEY, 'done');
       }
+      await saveDiscoveredSegments(synchronized);
       discoveriesRef.current = synchronized;
       setDiscoveries(synchronized);
     }).catch(() => {});
@@ -1552,7 +1569,6 @@ function App() {
       sessionDistanceRef.current = 0;
       sessionDiscoveredMetersRef.current = 0;
       lastReconciledPointTimestampRef.current = 0;
-      setGpxExportStatus('idle');
     } else if (startedAt !== null) {
       const finishSession = async () => {
         const endedAt = Date.now();
@@ -1582,8 +1598,8 @@ function App() {
         const contents = gpxDocument(session.points);
         if (Capacitor.isNativePlatform()) await RideTracking.shareGpx({ contents, fileName });
         else downloadGpx(contents, fileName);
-        setGpxExportStatus('exported');
-      } catch { setGpxExportStatus('error'); }
+        toastManager.add({ title: 'GPX ready', description: 'Your ride is ready to save or share.', data: { kind: 'success' } });
+      } catch { toastManager.add({ title: 'GPX export failed', description: 'Could not create the GPX file. Try again.', priority: 'high', data: { kind: 'error' } }); }
     };
     void exportRoute();
   };
@@ -1595,16 +1611,16 @@ function App() {
     void deleteSession(session.id).then(() => setSessions(current => current.filter(candidate => candidate.id !== session.id))).catch(() => {});
   };
   const handleGpxImport = async (file: File) => {
-    const points = pointsFromGpx(await file.text());
+    const { points, title: gpxTitle } = pointsFromGpx(await file.text());
     const startedAt = points[0]!.timestamp;
     const endedAt = Math.max(startedAt, points.at(-1)!.timestamp);
     const districtNames = [...new Set(points.map(point => findStockholmDistrict([point.lng, point.lat])?.name).filter((name): name is string => Boolean(name)))].slice(0, 5);
-    const title = districtNames.length ? districtNames.map(formatSessionTitle).join(' · ') : file.name.replace(/\.gpx$/i, '').trim() || 'Imported ride';
+    const title = gpxTitle ?? (districtNames.length ? districtNames.map(formatSessionTitle).join(' · ') : file.name.replace(/\.gpx$/i, '').trim() || 'Imported ride');
     let reconciled: DiscoveredSegment[] = [];
     let mapSyncFailed = false;
     try { reconciled = await reconcileSessionRoute(points, new Set(discoveriesRef.current.map(segment => segment.id))); }
     catch { mapSyncFailed = true; }
-    const additions = applyDiscoveredSegments(reconciled, false);
+    const additions = applyDiscoveredSegments(assignDiscoveryRegions(reconciled), false);
     const distanceMetersTotal = points.slice(1).reduce((total, point, index) => total + distanceMeters(points[index]!, point), 0);
     const session: RideSession = {
       id: crypto.randomUUID(),
@@ -1642,7 +1658,7 @@ function App() {
   const handleDiscoveries = (newSegments: DiscoveredSegment[]) => {
     applyDiscoveredSegments(newSegments);
   };
-  return <main className="app-shell"><div className="app-content">{view === 'map' && <MapView onOpenProgress={openProgress} onRequestLocation={() => handleGpsChange(true)} onLocationUpdate={setProgressLocation} sessionActive={sessionActive} onSessionChange={handleSessionChange} sessionElapsedSeconds={sessionElapsedSeconds} sessionDistanceMeters={sessionDistanceMeters} sessionDiscoveredMeters={sessionDiscoveredMeters} showDiscovered={showDiscovered} setShowDiscovered={setShowDiscovered} showDistrictBoundaries={showDistrictBoundaries} setShowDistrictBoundaries={handleDistrictBoundariesChange} is3D={is3D} setIs3D={setIs3D} showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} showDebugMenu={showDebugMenu} playerLocation={playerLocation} discoveries={discoveries} onDiscoveries={handleDiscoveries} />}{view === 'sessions' && <SessionsView sessions={sessions} onExport={handleGpxExport} onRename={handleSessionRename} onDelete={handleSessionDelete} onImportGpx={handleGpxImport} onSyncRides={handleSyncRidesToMap} exportStatus={gpxExportStatus} />}{view === 'progress' && <GlobalProgressView location={progressLocation} discoveries={discoveries} />}{view === 'settings' && <SettingsView showDiscovered={showDiscovered} setShowDiscovered={setShowDiscovered} showDistrictBoundaries={showDistrictBoundaries} setShowDistrictBoundaries={handleDistrictBoundariesChange} showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} showDebugMenu={showDebugMenu} setShowDebugMenu={setShowDebugMenu} gpsEnabled={gpsEnabled} gpsPermission={gpsPermission} onGpsChange={handleGpsChange} onOpenDesignSystem={() => setView('design-system')} />}{view === 'design-system' && <DesignSystemView onBack={() => setView('settings')} />}</div><PrimaryNavigation view={view} onChange={setView} /></main>;
+  return <main className="app-shell"><div className="app-content">{view === 'map' && <MapView onOpenProgress={openProgress} onRequestLocation={() => handleGpsChange(true)} onLocationUpdate={setProgressLocation} sessionActive={sessionActive} onSessionChange={handleSessionChange} sessionElapsedSeconds={sessionElapsedSeconds} sessionDistanceMeters={sessionDistanceMeters} sessionDiscoveredMeters={sessionDiscoveredMeters} showDiscovered={showDiscovered} setShowDiscovered={setShowDiscovered} showDistrictBoundaries={showDistrictBoundaries} setShowDistrictBoundaries={handleDistrictBoundariesChange} is3D={is3D} setIs3D={setIs3D} showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} showDebugMenu={showDebugMenu} playerLocation={playerLocation} discoveries={discoveries} onDiscoveries={handleDiscoveries} />}{view === 'sessions' && <SessionsView sessions={sessions} onExport={handleGpxExport} onRename={handleSessionRename} onDelete={handleSessionDelete} onImportGpx={handleGpxImport} onSyncRides={handleSyncRidesToMap} />}{view === 'progress' && <GlobalProgressView location={progressLocation} discoveries={discoveries} />}{view === 'settings' && <SettingsView showDiscovered={showDiscovered} setShowDiscovered={setShowDiscovered} showDistrictBoundaries={showDistrictBoundaries} setShowDistrictBoundaries={handleDistrictBoundariesChange} showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} showDebugMenu={showDebugMenu} setShowDebugMenu={setShowDebugMenu} gpsEnabled={gpsEnabled} gpsPermission={gpsPermission} onGpsChange={handleGpsChange} onOpenDesignSystem={() => setView('design-system')} />}{view === 'design-system' && <DesignSystemView onBack={() => setView('settings')} />}</div><PrimaryNavigation view={view} onChange={setView} /><Toaster /></main>;
 }
 
 const rootElement = document.getElementById('root')!;
