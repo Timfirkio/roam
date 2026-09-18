@@ -1235,9 +1235,18 @@ function App() {
   const [thumbnailWake, setThumbnailWake] = useState(0);
   const gpsWatchRef = useRef<CallbackID | null>(null);
   const lastReconciledPointTimestampRef = useRef(0);
+  const backfillDiscoveryRegions = useCallback(() => {
+    const enriched = assignDiscoveryRegions(discoveriesRef.current);
+    const updates = enriched.filter((segment, index) => segment !== discoveriesRef.current[index]);
+    if (!updates.length) return 0;
+    discoveriesRef.current = enriched;
+    void saveDiscoveredSegments(updates).catch(() => {});
+    setDiscoveries(enriched);
+    return updates.length;
+  }, []);
   const applyDiscoveredSegments = useCallback((segments: DiscoveredSegment[], countTowardSession = true) => {
     const known = new Set(discoveriesRef.current.map(segment => segment.id));
-    const additions = segments.filter(segment => !known.has(segment.id));
+    const additions = assignDiscoveryRegions(segments).filter(segment => !known.has(segment.id));
     if (!additions.length) return [];
     discoveriesRef.current = [...discoveriesRef.current, ...additions];
     void saveDiscoveredSegments(additions).catch(() => {});
@@ -1638,6 +1647,7 @@ function App() {
     return mapSyncFailed ? `Imported ${formatSessionTitle(title)}. Its map sync can be retried from this menu.` : `Imported ${formatSessionTitle(title)} and synced its route to the map.`;
   };
   const handleSyncRidesToMap = async () => {
+    const backfilledSegments = backfillDiscoveryRegions();
     const savedSessions = sessionsRef.current.filter(session => session.points.length > 1);
     let reconciledRides = 0;
     let failedRides = 0;
@@ -1651,8 +1661,9 @@ function App() {
         failedRides += 1;
       }
     }
-    if (failedRides > 0) return `Synced ${reconciledRides} ride${reconciledRides === 1 ? '' : 's'}; ${failedRides} could not be checked and can be retried.`;
-    return addedSegments > 0 ? `Synced ${reconciledRides} ride${reconciledRides === 1 ? '' : 's'} and added ${addedSegments} missed map segments.` : `All ${reconciledRides} saved ride${reconciledRides === 1 ? '' : 's'} are already synced to the map.`;
+    const restoredProgress = backfilledSegments > 0 ? ` Restored district progress for ${backfilledSegments} previously saved segment${backfilledSegments === 1 ? '' : 's'}.` : '';
+    if (failedRides > 0) return `Synced ${reconciledRides} ride${reconciledRides === 1 ? '' : 's'}; ${failedRides} could not be checked and can be retried.${restoredProgress}`;
+    return addedSegments > 0 ? `Synced ${reconciledRides} ride${reconciledRides === 1 ? '' : 's'} and added ${addedSegments} missed map segments.${restoredProgress}` : `All ${reconciledRides} saved ride${reconciledRides === 1 ? '' : 's'} are already synced to the map.${restoredProgress}`;
   };
   const openProgress = (location: LocationState) => { setProgressLocation(location); setView('progress'); };
   const handleDiscoveries = (newSegments: DiscoveredSegment[]) => {
