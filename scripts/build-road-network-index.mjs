@@ -33,12 +33,15 @@ function legacyRoadType(properties) {
 }
 function eligible(properties) {
   const roadClass = String(properties.class ?? '');
+  const subclass = String(properties.subclass ?? '');
   const bicycle = String(properties.bicycle ?? '');
   const access = String(properties.access ?? '');
   const vehicle = String(properties.vehicle ?? '');
   const motorVehicle = String(properties.motor_vehicle ?? '');
   if (roadClass === 'parking_aisle' || roadClass === 'service' || bicycle === 'no' || access === 'no' || access === 'private' || vehicle === 'no' || motorVehicle === 'no') return false;
-  if (PATH_CLASSES.includes(roadClass)) return ['yes', 'designated', 'permissive'].includes(bicycle) || ['yes', 'designated', 'permissive'].includes(String(properties.foot)) || roadClass === 'cycleway';
+  // OpenFreeMap represents OSM highway=cycleway as class=path and
+  // subclass=cycleway. Keep this in sync with src/road-rules.ts.
+  if (PATH_CLASSES.includes(roadClass)) return ['yes', 'designated', 'permissive'].includes(bicycle) || ['yes', 'designated', 'permissive'].includes(String(properties.foot)) || roadClass === 'cycleway' || subclass === 'cycleway';
   return LOCAL_STREET_CLASSES.includes(roadClass);
 }
 function stableId(coordinates, type) {
