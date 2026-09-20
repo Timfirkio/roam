@@ -83,7 +83,8 @@ const surfaceColor = (pavedColor: string, unpavedColor: string) =>
   ['match', ['get', 'surface'], UNPAVED_SURFACES, unpavedColor, pavedColor] as any;
 
 const cyclewayFeature = ['any', ['match', ['get', 'class'], ['cycleway'], true, false], ['match', ['get', 'subclass'], ['cycleway'], true, false]] as any;
-const pathAccessFeature = ['any', cyclewayFeature, ['match', ['get', 'bicycle'], ['yes', 'designated', 'permissive'], true, false], ['match', ['get', 'foot'], ['yes', 'designated', 'permissive'], true, false]] as any;
+const discoveryAccessDeniedFeature = ['any', ['match', ['get', 'bicycle'], ['no'], true, false], ['match', ['get', 'access'], ['no', 'private'], true, false], ['match', ['get', 'vehicle'], ['no'], true, false], ['match', ['get', 'motor_vehicle'], ['no'], true, false]] as any;
+const pathAccessFeature = ['all', ['!', discoveryAccessDeniedFeature], ['any', cyclewayFeature, ['match', ['get', 'bicycle'], ['yes', 'designated', 'permissive'], true, false], ['match', ['get', 'foot'], ['yes', 'designated', 'permissive'], true, false]]] as any;
 const networkExclusionFilter = ['all', ['!', nonBikeableRoadFeature], ['!=', ['get', 'class'], 'parking_aisle'], ['!=', ['get', 'class'], 'service']] as any;
 const bikeablePathEligibilityFilter = ['all', ['match', ['get', 'class'], PATH_CLASSES, true, false], pathAccessFeature] as any;
 const unpavedBikeablePathFeature = ['all', bikeablePathEligibilityFilter, ['match', ['get', 'surface'], UNPAVED_SURFACES, true, false]] as any;
@@ -252,7 +253,7 @@ function styleRoamMap(map: Map, showDiscovered: boolean, showDistrictBoundaries:
       const existingFilter = 'filter' in layer ? layer.filter : undefined;
       const parkingAisleFilter = ['!=', ['get', 'class'], 'parking_aisle'];
       const serviceRoadFilter = ['!=', ['get', 'class'], 'service'];
-      map.setFilter(layer.id, ['all', ...(existingFilter ? [existingFilter] : []), parkingAisleFilter, serviceRoadFilter, ...(isPath ? [pathAccessFeature] : [])] as any);
+      map.setFilter(layer.id, ['all', ...(existingFilter ? [existingFilter] : []), parkingAisleFilter, serviceRoadFilter, ...(isPath ? [bikeablePathEligibilityFilter] : [])] as any);
       const isContextRoad = isHighway;
       map.setPaintProperty(layer.id, 'line-color', ['case', nonBikeableRoadFeature, '#28161a', isContextRoad, '#333a38', unpavedBikeablePathFeature, '#4f3c2b', cyclewayFeature, '#154644', bikeablePathEligibilityFilter, '#154644', surfaceColor('#2d3331', '#3a2e23')]);
       // Pedestrian-only source layers use a dotted treatment. Keep them hidden

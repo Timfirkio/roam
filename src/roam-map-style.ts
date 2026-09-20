@@ -11,7 +11,8 @@ const explicitBikeAccessFeature = ['match', ['get', 'bicycle'], ['yes', 'designa
 const nonBikeableRoadFeature = ['all', ['!', ['match', ['get', 'class'], PATH_CLASSES, true, false]], ['!', explicitBikeAccessFeature], ['any', ['match', ['get', 'class'], NON_BIKEABLE_ROAD_CLASSES, true, false], ['match', ['get', 'subclass'], ['link'], true, false], ['match', ['get', 'bicycle'], ['no'], true, false], ['match', ['get', 'access'], ['no', 'private'], true, false], ['match', ['get', 'vehicle'], ['no'], true, false], ['match', ['get', 'motor_vehicle'], ['no'], true, false]]] as any;
 const surfaceColor = (pavedColor: string, unpavedColor: string) => ['match', ['get', 'surface'], UNPAVED_SURFACES, unpavedColor, pavedColor] as any;
 const cyclewayFeature = ['any', ['match', ['get', 'class'], ['cycleway'], true, false], ['match', ['get', 'subclass'], ['cycleway'], true, false]] as any;
-const pathAccessFeature = ['any', cyclewayFeature, ['match', ['get', 'bicycle'], ['yes', 'designated', 'permissive'], true, false], ['match', ['get', 'foot'], ['yes', 'designated', 'permissive'], true, false]] as any;
+const discoveryAccessDeniedFeature = ['any', ['match', ['get', 'bicycle'], ['no'], true, false], ['match', ['get', 'access'], ['no', 'private'], true, false], ['match', ['get', 'vehicle'], ['no'], true, false], ['match', ['get', 'motor_vehicle'], ['no'], true, false]] as any;
+const pathAccessFeature = ['all', ['!', discoveryAccessDeniedFeature], ['any', cyclewayFeature, ['match', ['get', 'bicycle'], ['yes', 'designated', 'permissive'], true, false], ['match', ['get', 'foot'], ['yes', 'designated', 'permissive'], true, false]]] as any;
 const bikeablePathFeature = ['all', ['match', ['get', 'class'], PATH_CLASSES, true, false], pathAccessFeature] as any;
 const unpavedBikeablePathFeature = ['all', bikeablePathFeature, ['match', ['get', 'surface'], UNPAVED_SURFACES, true, false]] as any;
 const bikeablePathFilter = ['all', ['!', nonBikeableRoadFeature], ['!=', ['get', 'class'], 'parking_aisle'], ['!=', ['get', 'class'], 'service'], ['match', ['get', 'class'], PATH_CLASSES, true, false], pathAccessFeature] as any;
@@ -44,7 +45,7 @@ export function applyRoamBaseStyle(map: Map) {
       const isMajor = /motorway|trunk|primary/.test(id);
       map.setLayerZoomRange(layer.id, ROAD_MIN_ZOOM, ROAD_MAX_ZOOM);
       const existingFilter = 'filter' in layer ? layer.filter : undefined;
-      map.setFilter(layer.id, ['all', ...(existingFilter ? [existingFilter] : []), ['!=', ['get', 'class'], 'parking_aisle'], ['!=', ['get', 'class'], 'service'], ...(isPath ? [pathAccessFeature] : [])] as any);
+      map.setFilter(layer.id, ['all', ...(existingFilter ? [existingFilter] : []), ['!=', ['get', 'class'], 'parking_aisle'], ['!=', ['get', 'class'], 'service'], ...(isPath ? [bikeablePathFeature] : [])] as any);
       map.setPaintProperty(layer.id, 'line-color', ['case', nonBikeableRoadFeature, '#28161a', isHighway, '#333a38', unpavedBikeablePathFeature, '#4f3c2b', cyclewayFeature, '#154644', bikeablePathFeature, '#154644', surfaceColor('#2d3331', '#3a2e23')]);
       map.setPaintProperty(layer.id, 'line-opacity', isPedestrianFootpath ? 0 : 1);
       map.setPaintProperty(layer.id, 'line-width', isMajor ? ['interpolate', ['linear'], ['zoom'], 6, .9, 10, 1.1, 14, 4.5, 18, 7] : isPath ? ['interpolate', ['linear'], ['zoom'], 6, 1, 10, 1.2, 14, 2.4, 18, 3] : ['interpolate', ['linear'], ['zoom'], 6, .75, 10, .95, 14, 3, 18, 4]);

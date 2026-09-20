@@ -44,17 +44,6 @@ dependencies {
 
 apply from: 'capacitor.build.gradle'
 
-// Keep Android Studio builds in step with the web app. Corepack reads the
-// packageManager pin from package.json, avoiding Android Studio's bundled pnpm.
-tasks.register('syncCapacitorWeb', Exec) {
-    workingDir rootProject.projectDir.parentFile
-    commandLine 'cmd', '/c', 'corepack', 'pnpm', 'cap:sync'
-}
-
-tasks.named('preBuild').configure {
-    dependsOn tasks.named('syncCapacitorWeb')
-}
-
 try {
     def servicesJSON = file('google-services.json')
     if (servicesJSON.text) {
