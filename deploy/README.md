@@ -49,7 +49,8 @@ docker compose --env-file .env.areas.production run --rm --no-deps area-api node
 
 `deploy/run-stockholm-county-import.sh` is the corresponding one-time job for
 the county-sized OsmAnd extract. It safely prevents overlapping runs, replaces
-the older Stockholm-city catalog, and calculates levels 4–10. Schedule that
+the older Stockholm-city catalog, saves a local pre-import database dump, and
+calculates levels 4–10. Schedule that
 script once with systemd for an overnight run; do not put it in a recurring
 cron job unless you also intend to refresh the catalog regularly.
 

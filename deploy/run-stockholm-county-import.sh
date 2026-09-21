@@ -14,6 +14,8 @@ LOCK_FILE=/tmp/roam-stockholm-county-import.lock
 exec flock -n "$LOCK_FILE" sh -c '
   set -eu
   mkdir -p data
+  mkdir -p backups
+  docker compose --env-file "'"$ENV_FILE"'" exec -T postgres sh -c '\''pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"'\'' > "backups/stockholm-pre-county-$(date -u +%Y%m%dT%H%M%SZ).sql"
   curl --fail --location --retry 4 --retry-delay 15 --output "'"$PBF"'.part" "'"$PBF_URL"'"
   mv "'"$PBF"'.part" "'"$PBF"'"
   docker compose --env-file "'"$ENV_FILE"'" --profile import run --rm importer stockholm-county SE /data/sweden_stockholm_europe.pbf --replace-region stockholm --download-url "'"$PBF_URL"'"
