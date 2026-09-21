@@ -60,3 +60,4 @@ The map provider and tile key will be configured through `.env.local` once the m
 
 - [Build plan](docs/BUILD_PLAN.md)
 - [Architecture notes](docs/ARCHITECTURE.md)
+- [On-demand OSM area progress setup](docs/AREA_PROGRESS.md)

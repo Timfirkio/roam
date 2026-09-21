@@ -1,5 +1,6 @@
 import { StrictMode, useCallback, useEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { AreaProgressView } from './area-progress-view';
 import maplibregl, { type Map } from 'maplibre-gl';
 import { circle } from '@turf/turf';
 import 'maplibre-gl/dist/maplibre-gl.css';
@@ -1160,6 +1161,18 @@ function LegacyGlobalProgressViewCurrent({ location, discoveries }: { location: 
 }
 
 function GlobalProgressView({ location, discoveries }: { location: LocationState; discoveries: DiscoveredSegment[] }) {
+  const [tab, setTab] = useState('areas');
+  return <ShadcnTabs value={tab} onValueChange={setTab}>
+    <TabsList variant="line" aria-label="Progress coverage" className="mx-auto mt-6 max-w-3xl px-6">
+      <TabsTrigger value="areas">OSM areas</TabsTrigger>
+      <TabsTrigger value="stockholm">Stockholm districts</TabsTrigger>
+    </TabsList>
+    <TabsContent value="areas"><AreaProgressView location={location} discoveries={discoveries} /></TabsContent>
+    <TabsContent value="stockholm"><StockholmProgressView location={location} discoveries={discoveries} /></TabsContent>
+  </ShadcnTabs>;
+}
+
+function StockholmProgressView({ location, discoveries }: { location: LocationState; discoveries: DiscoveredSegment[] }) {
   const [selectedMunicipality, setSelectedMunicipality] = useState('Stockholm');
   const currentDistrict = findStockholmDistrict([location.lng, location.lat]);
   const currentRegion = currentDistrict ? STOCKHOLM_REGION_BY_DISTRICT.get(currentDistrict.id) : undefined;
