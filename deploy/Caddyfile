@@ -1,0 +1,14 @@
+{
+	email {$CADDY_EMAIL}
+}
+
+{$CADDY_SITE_ADDRESS} {
+	encode zstd gzip
+
+	@area_api path /api/areas/*
+	handle @area_api {
+		reverse_proxy area-api:8787
+	}
+
+	respond "Not found" 404
+}

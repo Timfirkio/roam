@@ -59,6 +59,27 @@ export class AreaService {
       return { areas: ids.map(id => this.record(this.store.area(id))).sort((a, b) => a.area.adminLevel - b.area.adminLevel), source: 'OpenStreetMap' };
     });
   }
+  async search(query) {
+    const normalized = String(query ?? '').trim().replace(/\s+/g, ' ');
+    if (normalized.length < 2) return [];
+    if (normalized.length > 120) throw new Error('Use a shorter location search.');
+    const key = normalized.toLocaleLowerCase();
+    const cached = this.store.search(key);
+    if (cached) return cached;
+    if (!this.options.geocoderUrl) throw new Error('Location search is not configured.');
+    const url = new URL(this.options.geocoderUrl);
+    url.searchParams.set('q', normalized);
+    url.searchParams.set('format', 'jsonv2');
+    url.searchParams.set('limit', '6');
+    url.searchParams.set('addressdetails', '1');
+    const response = await this.options.fetch(url, { headers: { Accept: 'application/json', 'User-Agent': 'Roam-area-service/0.1' }, signal: AbortSignal.timeout(15_000) });
+    if (!response.ok) throw new Error(`Location search unavailable (${response.status}). Try again later.`);
+    const results = (await response.json()).filter(entry => Number.isFinite(Number(entry.lon)) && Number.isFinite(Number(entry.lat))).map(entry => ({
+      id: `${entry.osm_type}/${entry.osm_id}`, name: String(entry.display_name), lng: Number(entry.lon), lat: Number(entry.lat), type: String(entry.type ?? entry.category ?? 'place'),
+    }));
+    this.store.saveSearch(key, results);
+    return results;
+  }
   jobId(area) { return digest([area.id, area.boundaryVersion, this.options.tileTemplate, RULES_VERSION]); }
   record(area) {
     const job = area.boundaryVersion ? this.store.job(this.jobId(area)) : null;

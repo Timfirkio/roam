@@ -8,6 +8,7 @@ export class AreaStore {
       PRAGMA journal_mode = WAL;
       CREATE TABLE IF NOT EXISTS areas (id TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS lookups (key TEXT PRIMARY KEY, value TEXT NOT NULL, expires INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS searches (key TEXT PRIMARY KEY, value TEXT NOT NULL, expires INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS tiles (key TEXT PRIMARY KEY, value TEXT NOT NULL, accessed INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS checkpoints (job TEXT NOT NULL, tile TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(job,tile));
@@ -30,6 +31,14 @@ export class AreaStore {
   saveLookup(key, ids) {
     this.db.prepare('DELETE FROM lookups WHERE expires < ?').run(Date.now());
     this.db.prepare('INSERT OR REPLACE INTO lookups VALUES (?,?,?)').run(key, JSON.stringify(ids), Date.now() + 86_400_000);
+  }
+  search(key) {
+    const row = this.db.prepare('SELECT value FROM searches WHERE key=? AND expires>?').get(key, Date.now());
+    return row ? JSON.parse(row.value) : null;
+  }
+  saveSearch(key, results) {
+    this.db.prepare('DELETE FROM searches WHERE expires < ?').run(Date.now());
+    this.db.prepare('INSERT OR REPLACE INTO searches VALUES (?,?,?)').run(key, JSON.stringify(results), Date.now() + 7 * 86_400_000);
   }
   tile(key) {
     const row = this.db.prepare('SELECT value FROM tiles WHERE key=?').get(key);

@@ -1,0 +1,22 @@
+FROM iboates/osm2pgsql@sha256:6548a1e2492e08fa0d5ce987d382ad57c4b21c8a94ff00017c6109770a061b79
+
+RUN apk add --no-cache ca-certificates nodejs npm \
+  && npm install --global corepack@0.34.3 \
+  && corepack enable \
+  && adduser -D -u 10001 roam
+
+WORKDIR /app
+
+COPY --chown=roam:roam package.json pnpm-lock.yaml ./
+RUN corepack pnpm install --frozen-lockfile --prod
+
+COPY --chown=roam:roam server ./server
+COPY --chown=roam:roam src ./src
+COPY --chown=roam:roam scripts ./scripts
+COPY --chown=roam:roam osm ./osm
+
+USER roam
+
+ENTRYPOINT []
+
+CMD ["node", "server/area-server.mjs"]

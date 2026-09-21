@@ -98,6 +98,21 @@ describe('shared area calculation jobs', () => {
     await expect(service.lookup(181, 59)).rejects.toThrow('valid');
     await service.close();
   });
+  it('caches normalized geocoder results and rejects an unconfigured search', async () => {
+    let requests = 0;
+    const service = setup(async url => {
+      requests++;
+      expect(String(url)).toContain('q=Liljeholmen');
+      return Response.json([{ osm_type: 'relation', osm_id: 16436121, display_name: 'Liljeholmen, Stockholm', lon: '18.0223', lat: '59.3106', type: 'suburb' }]);
+    });
+    service.options.geocoderUrl = 'https://geocoder.test/search';
+    await expect(service.search('Liljeholmen')).resolves.toEqual([{ id: 'relation/16436121', name: 'Liljeholmen, Stockholm', lng: 18.0223, lat: 59.3106, type: 'suburb' }]);
+    await service.search('  liljeholmen ');
+    expect(requests).toBe(1);
+    service.options.geocoderUrl = undefined;
+    await expect(service.search('Årsta')).rejects.toThrow('not configured');
+    await service.close();
+  });
 });
 
 describe('area API', () => {
@@ -117,6 +132,8 @@ describe('area API', () => {
       await service.worker;
       const ready = await (await fetch(base, { headers: { Authorization: 'Bearer test' } })).json();
       expect(ready.job.status).toBe('ready');
+      const areaWithGeometry = await (await fetch(`${base}?geometry=true`, { headers: { Authorization: 'Bearer test' } })).json();
+      expect(areaWithGeometry.area.geometry).toEqual(geometry);
     } finally {
       await service.close();
       await new Promise(resolve => server.close(resolve));

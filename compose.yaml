@@ -1,0 +1,83 @@
+name: roam-areas
+
+services:
+  postgres:
+    image: postgis/postgis:17-3.5
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-roam_catalog}
+      POSTGRES_USER: ${POSTGRES_USER:-roam_catalog}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.areas.production}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./deploy/postgres/init/000_api_roles.sql:/docker-entrypoint-initdb.d/000_api_roles.sql:ro
+      - ./supabase/migrations/20260921194924_area_osm_catalog.sql:/docker-entrypoint-initdb.d/010_catalog.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [catalog]
+
+  area-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.areas
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      AREA_HOST: 0.0.0.0
+      AREA_PORT: 8787
+      AREA_ALLOWED_ORIGIN: ${AREA_ALLOWED_ORIGIN:?Set AREA_ALLOWED_ORIGIN in .env.areas.production}
+      AREA_DATABASE_URL: postgresql://${POSTGRES_USER:-roam_catalog}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-roam_catalog}
+      SUPABASE_URL: ${SUPABASE_URL:?Set SUPABASE_URL in .env.areas.production}
+      SUPABASE_PUBLISHABLE_KEY: ${SUPABASE_PUBLISHABLE_KEY:?Set SUPABASE_PUBLISHABLE_KEY in .env.areas.production}
+    expose: ["8787"]
+    networks: [catalog, egress]
+
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    depends_on:
+      area-api:
+        condition: service_started
+    environment:
+      CADDY_SITE_ADDRESS: ${CADDY_SITE_ADDRESS:?Set CADDY_SITE_ADDRESS in .env.areas.production}
+      CADDY_EMAIL: ${CADDY_EMAIL:?Set CADDY_EMAIL in .env.areas.production}
+    ports:
+      # Use the defaults once CADDY_SITE_ADDRESS is a DNS hostname. For a
+      # bootstrap HTTP-only instance, bind both ports to loopback instead.
+      - "${CADDY_HTTP_BIND:-80}:80"
+      - "${CADDY_HTTPS_BIND:-443}:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [catalog, egress]
+
+  importer:
+    build:
+      context: .
+      dockerfile: Dockerfile.areas
+    profiles: ["import"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      AREA_DATABASE_URL: postgresql://${POSTGRES_USER:-roam_catalog}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-roam_catalog}
+    volumes:
+      - ./data:/data:ro
+    entrypoint: ["node", "scripts/import-osm-region.mjs"]
+    networks: [catalog]
+
+networks:
+  catalog:
+    internal: true
+  egress:
+
+volumes:
+  postgres-data:
+  caddy-data:
+  caddy-config:

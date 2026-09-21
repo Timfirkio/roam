@@ -1,5 +1,59 @@
 # On-demand OSM area progress
 
+## Production catalog: PostGIS, not Overpass
+
+Roam's production path is a PostGIS OSM catalog. The app never queries
+Overpass while a user pans the map. A regional importer writes versioned
+administrative polygons and eligible road lines to the private `osm` schema;
+the area service reads that catalog for point containment, name search,
+coverage jobs and vector-tile boundaries.
+
+Apply `supabase/migrations/20260921194924_area_osm_catalog.sql` to enable the
+private catalog schema and PostGIS. It deliberately grants no browser role
+access to raw OSM tables. The area service connects with a server-only
+database URL, while the frontend calls its existing authenticated HTTP API.
+
+```dotenv
+# Area service: enables catalog mode and removes runtime Overpass calls.
+AREA_DATABASE_URL=postgresql://catalog-importer:password@host:5432/postgres
+
+# Frontend: renders every imported boundary in the current viewport as MVT.
+VITE_AREA_CATALOG=true
+VITE_AREA_API_URL=https://areas.example.com/api/areas
+```
+
+The importer should begin with the Sweden Geofabrik PBF extract, write its
+source timestamp into `osm.import_regions`, and only mark it `ready` after
+both `osm.boundaries` and `osm.roads` have been indexed. Re-import a region
+atomically into a new source version, then retire the prior version. This
+ensures a coverage job always sees a consistent boundary/road snapshot.
+
+`osm2pgsql` Flex output is the intended importer: retain only
+`boundary=administrative` relations with valid polygon geometry, and the same
+eligible `highway` classes used by `road-rules.ts`. Store both WGS84 and Web
+Mercator geometry, create the supplied GiST indexes, and run daily regional
+updates through a single import queue. Country imports can be requested on
+demand; while an import is queued, the API should return a deliberate
+“preparing this region” state rather than attempting an external lookup.
+
+Install `osm2pgsql` on the import worker, obtain a regional PBF extract, then
+run the importer with a non-browser database role that owns the private import
+schemas:
+
+```powershell
+corepack pnpm areas:import-region sweden-2026-09-21 SE C:\osm\sweden-latest.osm.pbf
+```
+
+The importer writes to staging tables first and swaps the region into the
+catalog inside one transaction. It is intentionally a single-worker command;
+the production scheduler must not import the same region concurrently.
+
+The catalog API adds `GET /api/areas/tiles/{z}/{x}/{y}.mvt`. PostGIS clips the
+stored polygons into a vector tile, so all available administrative boundaries
+remain visible at the current map zoom. The coverage worker stores its result
+in `osm.coverage_jobs`, keyed by boundary version, OSM source version and road
+rules version.
+
 The first slice adds a shared Node 24 area service and an **OSM areas** tab in
 Progress. Existing Stockholm progress remains under **Stockholm districts**.
 The new service does not access rides or discoveries. Personal coverage is
@@ -16,7 +70,7 @@ corepack pnpm areas:serve
 corepack pnpm dev
 ```
 
-`.env.areas` (ignored by Git):
+`.env.areas` (ignored by Git), for the legacy development fallback only:
 
 ```dotenv
 # Required: a self-hosted or contracted Overpass endpoint suitable for app traffic.
@@ -26,6 +80,9 @@ AREA_HOST=127.0.0.1
 AREA_PORT=8787
 AREA_DATA_DIR=.roam-data
 AREA_MAX_TILES=1024
+# Required for the Progress map's sticky location search. Use a hosted or
+# contracted Nominatim-compatible geocoder in production.
+AREA_GEOCODER_URL=https://your-geocoder-host/search
 ```
 
 There is deliberately no default public Overpass endpoint. Public instances are
@@ -35,6 +92,12 @@ The configured provider must support `is_in`, area tags, and relation `out geom`
 Vite proxies `/api/areas` to localhost:8787. For an Android build or separately
 hosted frontend, set `VITE_AREA_API_URL=https://your-area-host/api/areas` at build
 time. A static frontend deployment alone cannot run this worker.
+
+The Progress map uses the current zoom to choose which enclosing administrative
+boundary to show: country at overview zoom, then regional, municipality and
+smallest available local boundary at street zoom. Search is proxied through the
+worker, cached for seven days, and must not point at a public geocoder for a
+production application.
 
 For a remote worker set `AREA_HOST=0.0.0.0`, `AREA_ALLOWED_ORIGIN` to the exact
 frontend origin, and `SUPABASE_URL` / `SUPABASE_PUBLISHABLE_KEY`. Every request
