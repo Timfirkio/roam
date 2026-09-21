@@ -3,10 +3,17 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import pg from 'pg';
 
-const [regionId, countryCode, pbf] = process.argv.slice(2);
+const [regionId, countryCode, pbf, ...flags] = process.argv.slice(2);
 const databaseUrl = process.env.AREA_DATABASE_URL;
-if (!regionId || !/^[a-z0-9-]+$/.test(regionId) || !countryCode || !/^[A-Z]{2}$/.test(countryCode) || !pbf || !databaseUrl) {
-  throw new Error('Usage: AREA_DATABASE_URL=... node scripts/import-osm-region.mjs <region-id> <COUNTRY-CODE> <extract.osm.pbf>');
+const replacementRegionIds = [];
+let downloadUrl = process.env.OSM_DOWNLOAD_URL ?? 'manual-import';
+for (let index = 0; index < flags.length; index += 1) {
+  if (flags[index] === '--replace-region') replacementRegionIds.push(flags[++index]);
+  else if (flags[index] === '--download-url') downloadUrl = flags[++index];
+  else throw new Error(`Unknown import option: ${flags[index]}`);
+}
+if (!regionId || !/^[a-z0-9-]+$/.test(regionId) || !countryCode || !/^[A-Z]{2}$/.test(countryCode) || !pbf || !databaseUrl || replacementRegionIds.some(id => !/^[a-z0-9-]+$/.test(id)) || !downloadUrl) {
+  throw new Error('Usage: AREA_DATABASE_URL=... node scripts/import-osm-region.mjs <region-id> <COUNTRY-CODE> <extract.osm.pbf> [--replace-region <region-id>] [--download-url <url>]');
 }
 const input = resolve(pbf);
 if (!existsSync(input)) throw new Error(`OSM extract not found: ${input}`);
@@ -26,11 +33,13 @@ try {
   if (imported.error) throw new Error(`Could not run osm2pgsql: ${imported.error.message}`);
   if (imported.status !== 0) throw new Error(`osm2pgsql exited with ${imported.status}.`);
   await pool.query('begin');
+  // Relations and ways can appear in overlapping extracts. Replacing the
+  // smaller source catalog in the same transaction avoids primary-key
+  // collisions and keeps every live boundary tied to one road source.
+  const regionsToReplace = [...new Set([regionId, ...replacementRegionIds])];
+  await pool.query('delete from osm.import_regions where id = any($1::text[])', [regionsToReplace]);
   await pool.query(`insert into osm.import_regions (id, name, country_code, download_url, source_version, status, imported_at)
-    values ($1, $1, $2, 'manual-import', $1, 'importing', now())
-    on conflict (id) do update set status = 'importing', error = null, updated_at = now()`, [regionId, countryCode]);
-  await pool.query('delete from osm.roads where source_region_id = $1', [regionId]);
-  await pool.query('delete from osm.boundaries where source_region_id = $1', [regionId]);
+    values ($1, $1, $2, $3, $1, 'importing', now())`, [regionId, countryCode, downloadUrl]);
   await pool.query(`insert into osm.boundaries (id, source_region_id, osm_relation_id, osm_version, name, admin_level, country_code, tags, geometry, geometry_3857, boundary_version, source_version)
     select 'relation/' || osm_relation_id, $1, osm_relation_id, osm_version, name, admin_level, $2, tags,
       gis.ST_Transform(gis.ST_Multi(geometry), 4326)::gis.geometry(MultiPolygon, 4326),

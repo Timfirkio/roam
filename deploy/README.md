@@ -36,6 +36,23 @@ mkdir -p data
 docker compose --env-file .env.areas.production --profile import run --rm importer stockholm SE /data/stockholm.osm.pbf
 ```
 
+When a larger catalog supersedes an overlapping smaller one, pass the old
+catalog ID with `--replace-region`; this keeps OSM relation IDs unique. Queue
+stored road-length totals after an import, then process the queue with one or
+two workers:
+
+```bash
+docker compose --env-file .env.areas.production --profile import run --rm importer stockholm-county SE /data/stockholm-county.osm.pbf --replace-region stockholm
+docker compose --env-file .env.areas.production run --rm --no-deps area-api node scripts/queue-area-coverage.mjs stockholm-county 4 10
+docker compose --env-file .env.areas.production run --rm --no-deps area-api node scripts/process-area-coverage.mjs 2
+```
+
+`deploy/run-stockholm-county-import.sh` is the corresponding one-time job for
+the county-sized OsmAnd extract. It safely prevents overlapping runs, replaces
+the older Stockholm-city catalog, and calculates levels 4–10. Schedule that
+script once with systemd for an overnight run; do not put it in a recurring
+cron job unless you also intend to refresh the catalog regularly.
+
 For a larger extract, temporarily rescale or create a short-lived importer
 server with more memory. Do not run a country-sized `osm2pgsql` import on the
 CPX22.
