@@ -54,11 +54,14 @@ export function AreaCoverageCard({ record, discoveries, onUpdate }: { record: Ar
 }
 
 function hierarchyLevel(zoom: number) {
-  if (zoom < 6) return 2;
-  if (zoom < 9) return 4;
-  if (zoom < 11) return 6;
-  if (zoom < 13) return 7;
-  if (zoom < 15) return 9;
+  if (zoom < 5) return 2;
+  if (zoom < 7) return 4;
+  if (zoom < 8) return 6;
+  // Municipal borders remain useful at a regional view, so keep them visible
+  // well below city scale. Stockholm's municipal regions then take over
+  // before neighbourhood districts are useful to distinguish individually.
+  if (zoom < 12) return 7;
+  if (zoom < 13) return 9;
   return 10;
 }
 
