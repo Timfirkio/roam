@@ -55,11 +55,18 @@ export function areaHttpServer(service, { authenticate = async () => true, origi
         send(202, publicRecord(await service.request(id, url.searchParams.get('automatic') === 'true'))); return;
       }
       if (req.method === 'GET' && !match[2]) {
-        const area = service.store.area(id);
-        if (!area) { send(404, { error: 'Area not found.' }); return; }
-        const record = url.searchParams.get('geometry') === 'true'
-          ? service.record(await service.boundary(id))
-          : service.record(area);
+        // The PostGIS service has no legacy SQLite store. Its boundary lookup
+        // returns the complete record directly, including geometry when needed.
+        let record;
+        if (service.catalog) {
+          record = await service.boundary(id);
+        } else {
+          const area = service.store.area(id);
+          record = area
+            ? (url.searchParams.get('geometry') === 'true' ? service.record(await service.boundary(id)) : service.record(area))
+            : null;
+        }
+        if (!record) { send(404, { error: 'Area not found.' }); return; }
         send(200, publicRecord(record)); return;
       }
       send(405, { error: 'Method not allowed.' });
