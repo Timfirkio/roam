@@ -20,13 +20,20 @@ export function areaHttpServer(service, { authenticate = async () => true, origi
     }
     if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
     try {
+      const url = new URL(req.url, 'http://localhost');
       if (req.headers.origin) {
         const caller = new URL(req.headers.origin);
         const allowed = origin ? req.headers.origin === origin : ['localhost', '127.0.0.1', '[::1]'].includes(caller.hostname);
         if (!allowed) { send(403, { error: 'Origin not allowed.' }); return; }
       }
+      const tile = /^\/api\/areas\/tiles\/(\d+)\/(\d+)\/(\d+)\.mvt$/.exec(url.pathname);
+      // Boundary tiles contain public OSM geometry only. Leaving them
+      // unauthenticated lets MapLibre cache and pan them without a browser
+      // token, while every record and coverage request remains user-authenticated.
+      if (req.method === 'GET' && tile && service.catalog) {
+        sendTile(await service.boundaryTile(...tile.slice(1).map(Number))); return;
+      }
       if (!await authenticate(req.headers.authorization)) { send(401, { error: 'Sign in to calculate area coverage.' }); return; }
-      const url = new URL(req.url, 'http://localhost');
       const expensive = req.method === 'POST' || (!service.catalog && (url.pathname.endsWith('/lookup') || url.pathname.endsWith('/search')));
       if (expensive) {
         const now = Date.now(), key = req.socket.remoteAddress;
@@ -43,7 +50,6 @@ export function areaHttpServer(service, { authenticate = async () => true, origi
       if (req.method === 'GET' && url.pathname === '/api/areas/search') {
         send(200, { results: await service.search(url.searchParams.get('q')) }); return;
       }
-      const tile = /^\/api\/areas\/tiles\/(\d+)\/(\d+)\/(\d+)\.mvt$/.exec(url.pathname);
       if (req.method === 'GET' && tile) {
         if (!service.catalog) { send(404, { error: 'Boundary tiles require the PostGIS catalog.' }); return; }
         sendTile(await service.boundaryTile(...tile.slice(1).map(Number))); return;

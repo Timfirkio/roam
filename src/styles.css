@@ -223,6 +223,9 @@ aside.rounded-control.border-l-2.border-accent { display: none; }
 .progress-map-search-results p { color: var(--color-danger-500); font-size: var(--text-body); }
 .progress-map-overlay { position: absolute; z-index: 2; top: calc(max(12px, var(--roam-safe-top)) + var(--spacing-control) + 10px); right: 12px; left: 12px; max-width: 620px; }
 .progress-map-overlay .area-progress-card { border-color: var(--color-border-strong); background: color-mix(in srgb, var(--color-surface-raised) 94%, transparent); box-shadow: 0 12px 32px #0009; backdrop-filter: blur(16px); }
+.progress-map-hover { position: absolute; z-index: 2; right: 12px; bottom: calc(12px + var(--roam-safe-bottom)); display: flex; max-width: min(360px, calc(100% - 24px)); align-items: baseline; gap: 12px; border: 1px solid var(--color-border); border-radius: var(--radius-control); background: color-mix(in srgb, var(--color-surface-raised) 94%, transparent); padding: 8px 11px; box-shadow: 0 8px 24px #0008; color: var(--color-text); font-size: var(--text-body); backdrop-filter: blur(16px); pointer-events: none; }
+.progress-map-hover strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.progress-map-hover span { margin-left: auto; color: var(--color-location-200); font-family: var(--font-mono); font-size: var(--text-data); }
 .area-progress-status { min-height: 0; color: var(--color-text-subtle); font-size: var(--text-label); line-height: var(--text-label--line-height); }
 .area-progress-status:empty { display: none; }
 .area-progress-actions { justify-content: flex-end; }

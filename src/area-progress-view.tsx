@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import maplibregl, { type Map } from 'maplibre-gl';
 import { bbox } from '@turf/turf';
 import { MagnifyingGlass, X } from '@phosphor-icons/react';
-import { areaApiBase, calculateArea, loadArea, lookupAreas, searchLocations, type LocationSearchResult } from './area-client';
+import { areaApiBase, calculateArea, loadArea, searchLocations, type LocationSearchResult } from './area-client';
 import { exploredAreaTotals } from './area-geometry';
 import type { AreaRecord, AreaTotals } from './area-types';
 import type { DiscoveredSegment } from './discovery';
@@ -18,6 +18,7 @@ const AREA_SOURCE = 'roam-progress-areas';
 const AREA_FILL = 'roam-progress-areas-fill';
 const AREA_LINE = 'roam-progress-areas-line';
 const AREA_TILE_SOURCE = 'roam-progress-area-tiles';
+const AREA_TILE_FILL = 'roam-progress-area-tile-fills';
 const AREA_TILE_LINE = 'roam-progress-area-tile-lines';
 const DISCOVERED_SOURCE = 'roam-progress-discovered-network';
 const DISCOVERED_LAYER = 'roam-progress-discovered-network-line';
@@ -52,18 +53,23 @@ export function AreaCoverageCard({ record, discoveries, onUpdate }: { record: Ar
   </Item>;
 }
 
-function preferredArea(records: AreaRecord[], zoom: number) {
-  if (!records.length) return null;
-  const target = zoom >= 13 ? 10 : zoom >= 10 ? 8 : zoom >= 7 ? 5 : 2;
-  return [...records].sort((a, b) => Math.abs(a.area.adminLevel - target) - Math.abs(b.area.adminLevel - target) || b.area.adminLevel - a.area.adminLevel)[0];
+function hierarchyLevel(zoom: number) {
+  if (zoom < 6) return 2;
+  if (zoom < 9) return 4;
+  if (zoom < 11) return 6;
+  if (zoom < 13) return 7;
+  if (zoom < 15) return 9;
+  return 10;
 }
 
-function ProgressMap({ centre, records, discoveries, selected, onMapMove, onSelect }: { centre: [number, number]; records: AreaRecord[]; discoveries: DiscoveredSegment[]; selected: AreaRecord | null; onMapMove: (lng: number, lat: number, zoom: number) => void; onSelect: (record: AreaRecord) => void }) {
+type HoveredArea = { id: string; name: string; adminLevel: number };
+
+function ProgressMap({ centre, discoveries, selected, onSelectId, onHover }: { centre: [number, number]; discoveries: DiscoveredSegment[]; selected: AreaRecord | null; onSelectId: (id: string) => void; onHover: (area: HoveredArea | null) => void }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<Map | null>(null);
-  const recordsRef = useRef(records); recordsRef.current = records;
-  const onMapMoveRef = useRef(onMapMove); onMapMoveRef.current = onMapMove;
-  const onSelectRef = useRef(onSelect); onSelectRef.current = onSelect;
+  const onSelectIdRef = useRef(onSelectId); onSelectIdRef.current = onSelectId;
+  const onHoverRef = useRef(onHover); onHoverRef.current = onHover;
+  const hoveredId = useRef<string | null>(null);
   const [ready, setReady] = useState(false);
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -87,27 +93,47 @@ function ProgressMap({ centre, records, discoveries, selected, onMapMove, onSele
       } as any);
       map.addSource(AREA_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
       if (import.meta.env.VITE_AREA_CATALOG !== 'false') {
-        map.addSource(AREA_TILE_SOURCE, { type: 'vector', tiles: [`${areaApiBase}/tiles/{z}/{x}/{y}.mvt`], minzoom: 0, maxzoom: 22 });
-        map.addLayer({ id: AREA_TILE_LINE, type: 'line', source: AREA_TILE_SOURCE, 'source-layer': 'boundaries', paint: { 'line-color': '#5fbbb4', 'line-opacity': 0.86, 'line-width': ['interpolate', ['linear'], ['zoom'], 6, 0.7, 12, 1.2, 18, 2] } } as any);
+        map.addSource(AREA_TILE_SOURCE, { type: 'vector', tiles: [`${areaApiBase}/tiles/{z}/{x}/{y}.mvt`], minzoom: 0, maxzoom: 22, promoteId: 'id' });
+        const levelFilter = () => ['==', ['get', 'admin_level'], hierarchyLevel(map.getZoom())] as any;
+        map.addLayer({ id: AREA_TILE_FILL, type: 'fill', source: AREA_TILE_SOURCE, 'source-layer': 'boundaries', filter: levelFilter(), paint: { 'fill-color': '#2bb8b0', 'fill-opacity': ['case', ['boolean', ['feature-state', 'hover'], false], 0.22, 0.075] } } as any);
+        map.addLayer({ id: AREA_TILE_LINE, type: 'line', source: AREA_TILE_SOURCE, 'source-layer': 'boundaries', filter: levelFilter(), paint: { 'line-color': ['case', ['boolean', ['feature-state', 'hover'], false], '#f0eee7', '#5fbbb4'], 'line-opacity': 0.94, 'line-width': ['interpolate', ['linear'], ['zoom'], 6, 0.8, 12, 1.35, 18, 2.3] } } as any);
+        map.on('zoomend', () => {
+          const filter = levelFilter();
+          map.setFilter(AREA_TILE_FILL, filter);
+          map.setFilter(AREA_TILE_LINE, filter);
+          onHoverRef.current(null);
+        });
+        const tileFeature = (event: maplibregl.MapLayerMouseEvent): HoveredArea | null => {
+          const feature = event.features?.[0];
+          const id = String(feature?.properties?.id ?? '');
+          const name = String(feature?.properties?.name ?? '');
+          const adminLevel = Number(feature?.properties?.admin_level);
+          return id && name && Number.isFinite(adminLevel) ? { id, name, adminLevel } : null;
+        };
+        map.on('click', AREA_TILE_FILL, event => { const area = tileFeature(event); if (area) onSelectIdRef.current(area.id); });
+        map.on('mousemove', AREA_TILE_FILL, event => {
+          const area = tileFeature(event);
+          if (area?.id === hoveredId.current) return;
+          if (hoveredId.current) map.setFeatureState({ source: AREA_TILE_SOURCE, sourceLayer: 'boundaries', id: hoveredId.current }, { hover: false });
+          hoveredId.current = area?.id ?? null;
+          if (area) map.setFeatureState({ source: AREA_TILE_SOURCE, sourceLayer: 'boundaries', id: area.id }, { hover: true });
+          map.getCanvas().style.cursor = area ? 'pointer' : '';
+          onHoverRef.current(area);
+        });
+        map.on('mouseleave', AREA_TILE_FILL, () => {
+          if (hoveredId.current) map.setFeatureState({ source: AREA_TILE_SOURCE, sourceLayer: 'boundaries', id: hoveredId.current }, { hover: false });
+          hoveredId.current = null;
+          map.getCanvas().style.cursor = '';
+          onHoverRef.current(null);
+        });
       }
       map.addLayer({ id: AREA_FILL, type: 'fill', source: AREA_SOURCE, paint: { 'fill-color': '#2bb8b0', 'fill-opacity': ['case', ['boolean', ['get', 'selected'], false], 0.16, 0.06] } });
       map.addLayer({ id: AREA_LINE, type: 'line', source: AREA_SOURCE, paint: { 'line-color': ['case', ['boolean', ['get', 'selected'], false], '#f0eee7', '#5fbbb4'], 'line-width': ['interpolate', ['linear'], ['zoom'], 7, ['case', ['boolean', ['get', 'selected'], false], 2.2, 1.25], 13, ['case', ['boolean', ['get', 'selected'], false], 3.2, 1.8], 18, ['case', ['boolean', ['get', 'selected'], false], 4, 2.4]], 'line-opacity': 1 } });
-      map.on('click', AREA_FILL, event => { const id = String(event.features?.[0]?.properties?.id ?? ''); const record = recordsRef.current.find(item => item.area.id === id); if (record) onSelectRef.current(record); });
-      map.on('mouseenter', AREA_FILL, () => { map.getCanvas().style.cursor = 'pointer'; });
-      map.on('mouseleave', AREA_FILL, () => { map.getCanvas().style.cursor = ''; });
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      map.on('moveend', () => { if (timer) clearTimeout(timer); timer = setTimeout(() => { const center = map.getCenter(); onMapMoveRef.current(center.lng, center.lat, map.getZoom()); }, 250); });
       setReady(true);
     });
     return () => { map.remove(); removeNetworkProtocol(); mapRef.current = null; };
   }, []);
   useEffect(() => { const map = mapRef.current; if (map && !map.isMoving()) map.easeTo({ center: centre, duration: 550 }); }, [centre[0], centre[1]]);
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!ready || !map?.getSource(AREA_SOURCE)) return;
-    const data = { type: 'FeatureCollection' as const, features: records.filter(record => record.area.geometry).map(record => ({ type: 'Feature' as const, properties: { id: record.area.id, selected: record.area.id === selected?.area.id }, geometry: record.area.geometry! })) };
-    (map.getSource(AREA_SOURCE) as maplibregl.GeoJSONSource).setData(data);
-  }, [records, ready, selected?.area.id]);
   useEffect(() => {
     const map = mapRef.current;
     if (!ready || !map?.getSource(DISCOVERED_SOURCE)) return;
@@ -124,21 +150,19 @@ function LocationSearch({ onSelect }: { onSelect: (result: LocationSearchResult)
 }
 
 export function AreaProgressView({ location, discoveries }: { location: { lng: number; lat: number }; discoveries: DiscoveredSegment[] }) {
-  const [centre, setCentre] = useState<[number, number]>([location.lng, location.lat]); const [zoom, setZoom] = useState(12); const [records, setRecords] = useState<AreaRecord[]>([]); const [selected, setSelected] = useState<AreaRecord | null>(null); const [error, setError] = useState<string | null>(null); const lookupGeneration = useRef(0); const recordsRef = useRef(records); recordsRef.current = records;
-  useEffect(() => { const controller = new AbortController(); const generation = ++lookupGeneration.current; setError(null); void lookupAreas(centre[0], centre[1], controller.signal).then(async ({ areas }) => { if (generation !== lookupGeneration.current) return; const preferred = preferredArea(areas, zoom); if (!preferred) { setRecords([]); setSelected(null); return; }
-    // Resolve every enclosing boundary one at a time. This keeps each outline
-    // tappable and avoids a burst of requests to the OSM boundary provider.
-    const loaded: AreaRecord[] = [];
-    for (const record of [preferred, ...areas.filter(record => record.area.id !== preferred.area.id)]) {
-      try { loaded.push(await loadArea(record.area.id, controller.signal, true)); }
-      catch (cause) { if (!controller.signal.aborted && record.area.id === preferred.area.id) throw cause; }
-      if (generation !== lookupGeneration.current || controller.signal.aborted) return;
-    }
-    setRecords(loaded);
-    setSelected(current => loaded.find(record => record.area.id === current?.area.id) ?? loaded[0] ?? null);
-  }).catch(cause => { if (!controller.signal.aborted) setError(message(cause)); }); return () => controller.abort(); }, [centre[0], centre[1], zoom]);
+  const [centre, setCentre] = useState<[number, number]>([location.lng, location.lat]); const [records, setRecords] = useState<AreaRecord[]>([]); const [selected, setSelected] = useState<AreaRecord | null>(null); const [hovered, setHovered] = useState<HoveredArea | null>(null); const [error, setError] = useState<string | null>(null); const recordsRef = useRef(records); recordsRef.current = records;
   useEffect(() => { const controller = new AbortController(); let timer: ReturnType<typeof setTimeout>; const poll = async () => { const pending = recordsRef.current.filter(record => record.job?.status === 'queued' || record.job?.status === 'running'); if (pending.length) { try { const updates = await Promise.all(pending.map(record => loadArea(record.area.id, controller.signal, true))); if (!controller.signal.aborted) { setRecords(current => current.map(record => updates.find(update => update.area.id === record.area.id) ?? record)); setSelected(current => updates.find(update => update.area.id === current?.area.id) ?? current); } } catch {} } if (!controller.signal.aborted) timer = setTimeout(() => void poll(), 3000); }; timer = setTimeout(() => void poll(), 3000); return () => { controller.abort(); clearTimeout(timer); }; }, []);
   const updateRecord = (updated: AreaRecord) => { setRecords(current => current.map(record => record.area.id === updated.area.id ? updated : record)); setSelected(current => current?.area.id === updated.area.id ? updated : current); };
-  const select = (record: AreaRecord) => { setSelected(record); if (!record.area.geometry) void loadArea(record.area.id, undefined, true).then(updateRecord).catch(cause => setError(message(cause))); };
-  return <section className="progress-map-view"><ProgressMap centre={centre} records={records} discoveries={discoveries} selected={selected} onMapMove={(lng, lat, nextZoom) => { setCentre([lng, lat]); setZoom(nextZoom); }} onSelect={select} /><LocationSearch onSelect={result => { setCentre([result.lng, result.lat]); setZoom(13); }} />{selected && <div className="progress-map-overlay"><AreaCoverageCard record={selected} discoveries={discoveries} onUpdate={updateRecord} /></div>}{error && <div className="progress-map-message" role="alert">{error}</div>}</section>;
+  const select = (id: string) => {
+    setError(null);
+    void loadArea(id, undefined, true).then(record => {
+      setRecords(current => [...current.filter(item => item.area.id !== record.area.id), record]);
+      setSelected(record);
+    }).catch(cause => setError(message(cause)));
+  };
+  const hoveredRecord = hovered ? records.find(record => record.area.id === hovered.id) : null;
+  const hoveredProgress = hoveredRecord?.area.geometry ? exploredAreaTotals(discoveries, hoveredRecord.area.geometry) : null;
+  const hoveredTotal = hoveredRecord?.job?.status === 'ready' ? hoveredRecord.job.totals?.lengthMeters ?? null : null;
+  const hoveredPercentage = hoveredProgress && hoveredTotal && hoveredTotal > 0 ? Math.min(100, hoveredProgress.lengthMeters / hoveredTotal * 100) : null;
+  return <section className="progress-map-view"><ProgressMap centre={centre} discoveries={discoveries} selected={selected} onSelectId={select} onHover={setHovered} /><LocationSearch onSelect={result => { setCentre([result.lng, result.lat]); select(result.id); }} />{hovered && <div className="progress-map-hover" role="status"><strong>{hovered.name}</strong><span>{hoveredPercentage === null ? '—' : `${hoveredPercentage.toFixed(1)}%`}</span></div>}{selected && <div className="progress-map-overlay"><AreaCoverageCard record={selected} discoveries={discoveries} onUpdate={updateRecord} /></div>}{error && <div className="progress-map-message" role="alert">{error}</div>}</section>;
 }
