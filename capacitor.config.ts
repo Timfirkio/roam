@@ -4,6 +4,10 @@ const config: CapacitorConfig = {
   appId: 'com.roam.exploration',
   appName: 'Roam',
   webDir: 'dist',
+  server: {
+    // Capacitor 8's Android WebView uses this origin for fetch/CORS requests.
+    androidScheme: 'https',
+  },
   plugins: {
     Geolocation: {
       // A five-second fix is visibly too sparse on a bicycle. The native ride

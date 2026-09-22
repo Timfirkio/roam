@@ -1171,15 +1171,7 @@ function LegacyGlobalProgressViewCurrent({ location, discoveries }: { location: 
 }
 
 function GlobalProgressView({ location, discoveries }: { location: LocationState; discoveries: DiscoveredSegment[] }) {
-  const [tab, setTab] = useState('areas');
-  return <ShadcnTabs value={tab} onValueChange={setTab}>
-    <TabsList variant="line" aria-label="Progress coverage" className="mx-auto mt-6 max-w-3xl px-6">
-      <TabsTrigger value="areas">OSM areas</TabsTrigger>
-      <TabsTrigger value="stockholm">Stockholm districts</TabsTrigger>
-    </TabsList>
-    <TabsContent value="areas"><AreaProgressView location={location} discoveries={discoveries} /></TabsContent>
-    <TabsContent value="stockholm"><StockholmProgressView location={location} discoveries={discoveries} /></TabsContent>
-  </ShadcnTabs>;
+  return <AreaProgressView location={location} discoveries={discoveries} />;
 }
 
 function StockholmProgressView({ location, discoveries }: { location: LocationState; discoveries: DiscoveredSegment[] }) {

@@ -141,7 +141,7 @@ describe('area API', () => {
   });
   it('allows configured web and Capacitor origins', async () => {
     const service = setup(async () => new Response(tile()));
-    const server = areaHttpServer(service, { authenticate: async header => header === 'Bearer test', origin: 'https://roam-pied.vercel.app,http://localhost,capacitor://localhost' });
+    const server = areaHttpServer(service, { authenticate: async header => header === 'Bearer test', origin: 'https://roam-pied.vercel.app,http://localhost,https://localhost,capacitor://localhost' });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const base = `http://127.0.0.1:${server.address().port}/api/areas/${area.id}`;
     try {
@@ -150,6 +150,27 @@ describe('area API', () => {
       expect(response.headers.get('access-control-allow-origin')).toBe('http://localhost');
     } finally {
       await service.close();
+      await new Promise(resolve => server.close(resolve));
+    }
+  });
+  it('serves catalog regions without a user session', async () => {
+    const record = { area, job: null, automatic: true };
+    const catalog = {
+      catalog: true,
+      boundaryTile: async () => tile(),
+      lookup: async () => ({ areas: [record], source: 'Roam OSM catalog' }),
+      search: async () => [{ id: area.id, name: area.name, lng: 18, lat: 59, type: 'Administrative level 7' }],
+      boundary: async () => record,
+    };
+    const server = areaHttpServer(catalog, { authenticate: async () => false, origin: 'https://localhost' });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const base = `http://127.0.0.1:${server.address().port}/api/areas`;
+    try {
+      expect((await fetch(`${base}/lookup?lng=18&lat=59`, { headers: { Origin: 'https://localhost' } })).status).toBe(200);
+      expect((await fetch(`${base}/search?q=Test`, { headers: { Origin: 'https://localhost' } })).status).toBe(200);
+      expect((await fetch(`${base}/${area.id}`, { headers: { Origin: 'https://localhost' } })).status).toBe(200);
+      expect((await fetch(`${base}/${area.id}/calculate`, { method: 'POST', headers: { Origin: 'https://localhost' } })).status).toBe(401);
+    } finally {
       await new Promise(resolve => server.close(resolve));
     }
   });

@@ -28,14 +28,16 @@ export function areaHttpServer(service, { authenticate = async () => true, origi
         if (!allowed) { send(403, { error: 'Origin not allowed.' }); return; }
       }
       const tile = /^\/api\/areas\/tiles\/(\d+)\/(\d+)\/(\d+)\.mvt$/.exec(url.pathname);
+      const relation = /^\/api\/areas\/relation\/\d+$/.test(url.pathname);
+      const publicCatalogRead = req.method === 'GET' && Boolean(service.catalog) && (Boolean(tile) || relation || url.pathname === '/api/areas/lookup' || url.pathname === '/api/areas/search');
       // Boundary tiles contain public OSM geometry only. Leaving them
       // unauthenticated lets MapLibre cache and pan them without a browser
       // token, while every record and coverage request remains user-authenticated.
       if (req.method === 'GET' && tile && service.catalog) {
         sendTile(await service.boundaryTile(...tile.slice(1).map(Number))); return;
       }
-      if (!await authenticate(req.headers.authorization)) { send(401, { error: 'Sign in to calculate area coverage.' }); return; }
-      const expensive = req.method === 'POST' || (!service.catalog && (url.pathname.endsWith('/lookup') || url.pathname.endsWith('/search')));
+      if (!publicCatalogRead && !await authenticate(req.headers.authorization)) { send(401, { error: 'Sign in to calculate area coverage.' }); return; }
+      const expensive = req.method === 'POST' || url.pathname.endsWith('/search') || (!service.catalog && url.pathname.endsWith('/lookup'));
       if (expensive) {
         const now = Date.now(), key = req.socket.remoteAddress;
         for (const [ip, budget] of budgets) if (budget.until < now) budgets.delete(ip);
