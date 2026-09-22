@@ -1,6 +1,6 @@
 import { StrictMode, useCallback, useEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef, type CSSProperties, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { AreaCoverageCard } from './area-progress-view';
+import { AnimatedProgressValue, AreaCoverageCard, ScrambleText } from './area-progress-view';
 import { areaApiBase, loadArea, lookupAreas } from './area-client';
 import type { AreaRecord, AreaTotals } from './area-types';
 import maplibregl, { type Map } from 'maplibre-gl';
@@ -42,7 +42,7 @@ import { useScreenWakeLock } from './use-screen-wake-lock';
 import { AccountSettings } from './account-settings';
 import { syncAccountProgress } from './cloud-sync';
 import { supabase } from './supabase';
-import { ArrowsClockwise, CheckCircle, CrosshairSimple, Cube, DotsThreeVertical, DownloadSimple, Gear, MapTrifold, PencilSimple, Record, RoadHorizon, Square, Stack, Trash, UploadSimple } from '@phosphor-icons/react';
+import { ArrowsClockwise, CheckCircle, CrosshairSimple, Cube, DotsThreeVertical, DownloadSimple, Gear, MapTrifold, PencilSimple, Record, RoadHorizon, Stack, Trash, UploadSimple } from '@phosphor-icons/react';
 
 type View = 'map' | 'sessions' | 'settings' | 'design-system';
 type LocationState = { city: string; region: string; lng: number; lat: number };
@@ -76,6 +76,7 @@ const DISCOVERED_SOURCE = 'roam-discovered-network';
 const REGION_BOUNDARIES_SOURCE = 'roam-catalog-boundaries';
 const REGION_BOUNDARIES_FILL = 'roam-catalog-boundaries-fill';
 const REGION_BOUNDARIES_LINE = 'roam-catalog-boundaries-line';
+const REGION_BOUNDARY_COLOR = '#d59c67';
 const CURRENT_AREA_SOURCE = 'roam-current-area';
 const CURRENT_AREA_FILL = 'roam-current-area-fill';
 const CURRENT_AREA_LINE = 'roam-current-area-line';
@@ -128,33 +129,28 @@ function ProgressTransitionPreview() {
   const regions = [{ name: 'Södermalm', percentage: 37.4 }, { name: 'Norrmalm', percentage: 52.8 }, { name: 'Kungsholmen', percentage: 18.6 }];
   const [regionIndex, setRegionIndex] = useState(0);
   const [percentage, setPercentage] = useState(regions[0].percentage);
-  const [previous, setPrevious] = useState<string | null>(null);
-  const timeoutRef = useRef<number | null>(null);
-  const label = `${percentage.toFixed(1)}%`;
   const update = (nextIndex: number, nextPercentage: number) => {
-    setPrevious(label);
     setRegionIndex(nextIndex);
     setPercentage(nextPercentage);
-    if (timeoutRef.current !== null) window.clearTimeout(timeoutRef.current);
-    timeoutRef.current = window.setTimeout(() => setPrevious(null), 460);
   };
   const nextRegion = () => {
     const nextIndex = (regionIndex + 1) % regions.length;
     update(nextIndex, regions[nextIndex].percentage);
   };
   const stats = { discovered: percentage, pavedBikeableRoads: percentage * .55, pavedCycleways: percentage * .3, unpavedPaths: percentage * .15 };
-  const increasing = Number.parseFloat(label) > Number.parseFloat(previous ?? label);
+  const discoveredDistance = percentage * .224;
   return <div>
-    <p className="mb-3 font-mono text-label font-semibold tracking-[0.14em] text-text-subtle">REGION PROGRESS TRANSITIONS</p>
+    <p className="mb-3 font-mono text-label font-semibold tracking-[0.14em] text-text-subtle">DISTRICT PROGRESS CARD</p>
     <Surface className="space-y-4 p-4">
-      <p className="text-body text-text-muted">Use this compact meter for live coverage updates and area changes. It holds its last reading while recalculating, rolls upward on gains, and smoothly redistributes the segmented bar.</p>
-      <div className="district-progress-content rounded-control border border-border-muted bg-surface p-4">
-        <div className="district-progress-top"><div className="district-progress-title">{regions[regionIndex].name}</div><div className="district-progress-percent"><span className={`area-progress-percent${previous ? ' area-progress-percent--changing' : ''}${increasing ? ' area-progress-percent--increasing' : ''}`} aria-live="polite" aria-atomic="true">{previous && <span className="area-progress-percent__previous" aria-hidden="true">{previous}</span>}<span className="area-progress-percent__current">{label}</span></span></div></div>
-        <div className="district-progress-description">{(percentage * .84).toFixed(1)} km / 22.4 km</div>
+      <p className="text-body text-text-muted">Map card for the active district. The parent region is contextual, the bar stays visible during recalculation, and both distance and completion readings roll with their values.</p>
+      <div className="district-progress-content map-district-progress-preview rounded-control border border-border-muted bg-surface p-4">
+        <div className="district-progress-parent roam-overline-sm"><ScrambleText text="Stockholms kommun" /></div>
+        <div className="district-progress-top"><div className="district-progress-title"><ScrambleText text={regions[regionIndex].name} /></div></div>
         <ProgressBar stats={stats} />
+        <div className="district-progress-readouts"><div className="district-progress-description"><AnimatedProgressValue value={discoveredDistance} label={`${discoveredDistance.toFixed(1)} km`} className="area-progress-distance" /><span className="district-progress-distance-separator"> / </span><AnimatedProgressValue value={22.4} label="22.4 km" className="area-progress-distance" /></div><div className="district-progress-percent"><AnimatedProgressValue value={percentage} label={`${percentage.toFixed(1)}%`} className="area-progress-percent area-progress-percent--white" /></div></div>
         <span className="text-label text-text-subtle">Updating progress…</span>
       </div>
-      <div className="flex flex-wrap gap-3"><ShadcnButton variant="secondary" size="small" onClick={() => update(regionIndex, Math.min(100, percentage + 1.2))}>Add coverage</ShadcnButton><ShadcnButton variant="secondary" size="small" onClick={nextRegion}>Change region</ShadcnButton></div>
+      <div className="flex flex-wrap gap-3"><ShadcnButton variant="secondary" size="small" onClick={() => update(regionIndex, Math.min(100, percentage + 1.2))}>Add coverage</ShadcnButton><ShadcnButton variant="secondary" size="small" onClick={() => update(regionIndex, Math.max(0, percentage - 1.2))}>Reduce coverage</ShadcnButton><ShadcnButton variant="secondary" size="small" onClick={nextRegion}>Change region</ShadcnButton></div>
     </Surface>
   </div>;
 }
@@ -252,10 +248,12 @@ function mapBoundaryLevel(zoom: number) {
 
 function refreshMapBoundaryLevel(map: Map) {
   const level = mapBoundaryLevel(map.getZoom());
-  // Local administrative boundaries are not uniformly tagged at level 9.
-  // At street zoom, retain both district (7) and neighbourhood (9) shapes.
-  const filter = level === 9 ? ['>=', ['get', 'admin_level'], 7] : ['==', ['get', 'admin_level'], level];
-  for (const id of [REGION_BOUNDARIES_FILL, REGION_BOUNDARIES_LINE]) if (map.getLayer(id)) map.setFilter(id, filter as any);
+  const filter = level === 9
+    ? ['>=', ['to-number', ['get', 'admin_level'], 0], 7]
+    : ['==', ['to-number', ['get', 'admin_level'], 0], level];
+  for (const id of [REGION_BOUNDARIES_FILL, REGION_BOUNDARIES_LINE]) {
+    if (map.getLayer(id)) map.setFilter(id, filter as any);
+  }
 }
 
 function styleRoamMap(map: Map, showDiscovered: boolean, showRegionProgress: boolean, is3D: boolean, showBuildings3D: boolean, showTerrain3D: boolean) {
@@ -341,9 +339,12 @@ function styleRoamMap(map: Map, showDiscovered: boolean, showRegionProgress: boo
     });
   }
   if (import.meta.env.VITE_AREA_CATALOG !== 'false') {
-    if (!map.getSource(REGION_BOUNDARIES_SOURCE)) map.addSource(REGION_BOUNDARIES_SOURCE, { type: 'vector', tiles: [`${areaApiBase}/tiles/{z}/{x}/{y}.mvt?v=2`], minzoom: 0, maxzoom: 22, promoteId: 'id' });
-    if (!map.getLayer(REGION_BOUNDARIES_FILL)) map.addLayer({ id: REGION_BOUNDARIES_FILL, type: 'fill', source: REGION_BOUNDARIES_SOURCE, 'source-layer': 'boundaries', layout: { visibility: showRegionProgress ? 'visible' : 'none' }, paint: { 'fill-color': '#2bb8b0', 'fill-opacity': 0.09 } } as any, firstRoadLayer);
-    if (!map.getLayer(REGION_BOUNDARIES_LINE)) map.addLayer({ id: REGION_BOUNDARIES_LINE, type: 'line', source: REGION_BOUNDARIES_SOURCE, 'source-layer': 'boundaries', layout: { visibility: showRegionProgress ? 'visible' : 'none' }, paint: { 'line-color': '#72d3cc', 'line-opacity': 0.9, 'line-width': ['interpolate', ['linear'], ['zoom'], 6, 1, 12, 1.6, 18, 2.8] } } as any);
+    if (!map.getSource(REGION_BOUNDARIES_SOURCE)) map.addSource(REGION_BOUNDARIES_SOURCE, { type: 'vector', scheme: 'xyz', tiles: [`${areaApiBase}/tiles/{z}/{x}/{y}.mvt?v=2`], minzoom: 0, maxzoom: 22, promoteId: { boundaries: 'id' } });
+    if (!map.getLayer(REGION_BOUNDARIES_FILL)) map.addLayer({ id: REGION_BOUNDARIES_FILL, type: 'fill', source: REGION_BOUNDARIES_SOURCE, 'source-layer': 'boundaries', layout: { visibility: showRegionProgress ? 'visible' : 'none' }, paint: { 'fill-color': REGION_BOUNDARY_COLOR, 'fill-opacity': 0.035 } } as any, firstRoadLayer);
+    if (!map.getLayer(REGION_BOUNDARIES_LINE)) map.addLayer({ id: REGION_BOUNDARIES_LINE, type: 'line', source: REGION_BOUNDARIES_SOURCE, 'source-layer': 'boundaries', layout: { visibility: showRegionProgress ? 'visible' : 'none' }, paint: { 'line-color': REGION_BOUNDARY_COLOR, 'line-opacity': 1, 'line-width': ['interpolate', ['linear'], ['zoom'], 6, 1.2, 12, 1.8, 18, 2.8] } } as any);
+    map.setPaintProperty(REGION_BOUNDARIES_FILL, 'fill-color', REGION_BOUNDARY_COLOR);
+    map.setPaintProperty(REGION_BOUNDARIES_LINE, 'line-color', REGION_BOUNDARY_COLOR);
+    map.setPaintProperty(REGION_BOUNDARIES_LINE, 'line-opacity', 1);
     refreshMapBoundaryLevel(map);
   }
   if (!map.getSource(DISCOVERED_SOURCE)) {
@@ -482,6 +483,14 @@ function styleRoamMap(map: Map, showDiscovered: boolean, showRegionProgress: boo
   }
   if (map.getLayer(REGION_BOUNDARIES_FILL)) map.moveLayer(REGION_BOUNDARIES_FILL);
   if (map.getLayer(REGION_BOUNDARIES_LINE)) map.moveLayer(REGION_BOUNDARIES_LINE);
+  if (map.getLayer(REGION_BOUNDARIES_FILL)) map.setLayoutProperty(REGION_BOUNDARIES_FILL, 'visibility', showRegionProgress ? 'visible' : 'none');
+  if (map.getLayer(REGION_BOUNDARIES_LINE)) map.setLayoutProperty(REGION_BOUNDARIES_LINE, 'visibility', showRegionProgress ? 'visible' : 'none');
+  for (const id of [REGION_BOUNDARIES_FILL, CURRENT_AREA_FILL, REGION_BOUNDARIES_LINE, CURRENT_AREA_LINE]) {
+    if (map.getLayer(id)) map.moveLayer(id);
+  }
+  // The shared base-map treatment hides any style layer with “boundary” in
+  // its id. Reassert catalog visibility after the final layer-order pass so
+  // sibling/admin-level features cannot be left hidden behind the active area.
   if (map.getLayer(REGION_BOUNDARIES_FILL)) map.setLayoutProperty(REGION_BOUNDARIES_FILL, 'visibility', showRegionProgress ? 'visible' : 'none');
   if (map.getLayer(REGION_BOUNDARIES_LINE)) map.setLayoutProperty(REGION_BOUNDARIES_LINE, 'visibility', showRegionProgress ? 'visible' : 'none');
 }
@@ -775,6 +784,7 @@ function MapView({ onRequestLocation, sessionActive, onSessionChange, activityDr
   const [debugOpen, setDebugOpen] = useState(false);
   const [location, setLocation] = useState<LocationState>(DEFAULT_LOCATION);
   const [currentArea, setCurrentArea] = useState<AreaRecord | null>(null);
+  const [currentParentAreaName, setCurrentParentAreaName] = useState<string | null>(null);
   const mapRef = useRef<Map | null>(null);
   const currentAreaIdRef = useRef<string | null>(null);
   const wakeLockStatus = useScreenWakeLock(sessionActive);
@@ -800,8 +810,13 @@ function MapView({ onRequestLocation, sessionActive, onSessionChange, activityDr
         if (!candidate) {
           currentAreaIdRef.current = null;
           setCurrentArea(null);
+          setCurrentParentAreaName(null);
           return;
         }
+        const parentArea = areas
+          .filter(record => record.area.countryCode === candidate.area.countryCode && record.area.adminLevel >= 4 && record.area.adminLevel < candidate.area.adminLevel)
+          .sort((left, right) => right.area.adminLevel - left.area.adminLevel)[0];
+        setCurrentParentAreaName(parentArea?.area.name ?? null);
         if (candidate.area.id === currentAreaIdRef.current) return;
         const cached = mapAreaCache.get(candidate.area.id);
         const record = cached ?? await loadArea(candidate.area.id, controller.signal, true);
@@ -824,10 +839,15 @@ function MapView({ onRequestLocation, sessionActive, onSessionChange, activityDr
     if (!map || !currentArea?.area.geometry) return;
     if (!map.getSource(CURRENT_AREA_SOURCE)) map.addSource(CURRENT_AREA_SOURCE, { type: 'geojson', data: currentArea.area.geometry as any });
     else (map.getSource(CURRENT_AREA_SOURCE) as maplibregl.GeoJSONSource).setData(currentArea.area.geometry as any);
-    if (!map.getLayer(CURRENT_AREA_FILL)) map.addLayer({ id: CURRENT_AREA_FILL, type: 'fill', source: CURRENT_AREA_SOURCE, paint: { 'fill-color': '#2bb8b0', 'fill-opacity': 0.14 } } as any);
-    if (!map.getLayer(CURRENT_AREA_LINE)) map.addLayer({ id: CURRENT_AREA_LINE, type: 'line', source: CURRENT_AREA_SOURCE, paint: { 'line-color': '#b9fff7', 'line-opacity': 1, 'line-width': ['interpolate', ['linear'], ['zoom'], 6, 1.25, 12, 2, 18, 3] } } as any);
+    if (!map.getLayer(CURRENT_AREA_FILL)) map.addLayer({ id: CURRENT_AREA_FILL, type: 'fill', source: CURRENT_AREA_SOURCE, paint: { 'fill-color': REGION_BOUNDARY_COLOR, 'fill-opacity': 0.11 } } as any);
+    if (!map.getLayer(CURRENT_AREA_LINE)) map.addLayer({ id: CURRENT_AREA_LINE, type: 'line', source: CURRENT_AREA_SOURCE, paint: { 'line-color': REGION_BOUNDARY_COLOR, 'line-opacity': 1, 'line-width': ['interpolate', ['linear'], ['zoom'], 6, 1.8, 12, 2.4, 18, 3.2] } } as any);
+    map.setPaintProperty(CURRENT_AREA_FILL, 'fill-color', REGION_BOUNDARY_COLOR);
+    map.setPaintProperty(CURRENT_AREA_LINE, 'line-color', REGION_BOUNDARY_COLOR);
     map.setLayoutProperty(CURRENT_AREA_FILL, 'visibility', showRegionProgress ? 'visible' : 'none');
     map.setLayoutProperty(CURRENT_AREA_LINE, 'visibility', showRegionProgress ? 'visible' : 'none');
+    for (const id of [REGION_BOUNDARIES_FILL, CURRENT_AREA_FILL, REGION_BOUNDARIES_LINE, CURRENT_AREA_LINE]) {
+      if (map.getLayer(id)) map.moveLayer(id);
+    }
   }, [currentArea, showRegionProgress]);
   useEffect(() => { mapRef.current?.resize(); }, [activityDrawerHeight]);
   const sessionDockOffset = sessionActive ? 'var(--spacing-map-edge)' : 'calc(var(--spacing-map-edge) + 44px + var(--map-control-gap))';
@@ -852,12 +872,14 @@ function MapView({ onRequestLocation, sessionActive, onSessionChange, activityDr
   const isFollowingPlayer = followPlayer && Boolean(playerLocation);
   const handleFollowChange = (following: boolean) => { setFollowPlayer(following); if (!following) setActiveRotationFollow(false); };
   const resetCompass = () => { setActiveRotationFollow(false); mapRef.current?.easeTo({ bearing: 0, duration: 450 }); };
+  const normalizedBearing = (bearing % 360 + 360) % 360;
+  const compassVisible = Math.min(normalizedBearing, 360 - normalizedBearing) > 1;
   const locationControlClass = activeRotationFollow ? 'map-ui-surface location-control location-control--following location-control--active' : isFollowingPlayer ? 'map-ui-surface location-control location-control--following' : 'map-ui-surface location-control';
   const locationControlLabel = activeRotationFollow ? 'Active heading follow' : isFollowingPlayer ? 'Following your location' : 'Follow your location';
   const activeLayerCount = [showRegionProgress, showBuildings3D, showTerrain3D].filter(Boolean).length;
   return <section className="map-view"><MapCanvas mapRef={mapRef} viewportBottomInset={0} showDiscovered={showDiscovered} showRegionProgress={showRegionProgress} is3D={is3D} showBuildings3D={showBuildings3D} showTerrain3D={showTerrain3D} playerLocation={playerLocation} followPlayer={followPlayer} activeRotationFollow={activeRotationFollow} discoveries={discoveries} onDiscoveries={onDiscoveries} onLocationChange={handleLocationChange} onBearingChange={handleBearingChange} onZoomChange={() => {}} onPitchChange={() => {}} onFollowPlayerChange={handleFollowChange} />{!isFollowingPlayer && <div className="map-center-crosshair" aria-hidden="true"><span /></div>}
-    <header className="map-header"><div className="map-top-right">{currentArea && <div className="location-summary map-ui-surface"><AreaCoverageCard record={currentArea} discoveries={discoveries} onUpdate={updateCurrentArea} onExplored={ignoreMapAreaExplored} parentAreaName="Stockholms kommun" className="min-h-0 border-0 bg-transparent p-0" /></div>}<div className="map-compass"><ShadcnButton variant="secondary" size="icon" className="map-ui-surface" aria-label="Reset compass north" onClick={resetCompass}><span className="compass-rotor" style={{ transform: `rotate(${-bearing}deg)` }}><i className="compass-needle"><b className="compass-north">▲</b><b className="compass-south">▼</b></i></span></ShadcnButton></div></div></header>
-    <div className="map-controls" style={{ bottom: sessionDockOffset }} aria-label="Map controls"><ShadcnButton variant="secondary" size="icon" className="map-ui-surface layers-control" aria-label={`Open layers panel, ${activeLayerCount} active`} aria-expanded={debugOpen} onClick={() => setDebugOpen(!debugOpen)}><Stack weight="regular" aria-hidden="true" />{activeLayerCount > 0 && <span className="layers-control__count" aria-hidden="true">{activeLayerCount}</span>}</ShadcnButton><ShadcnButton variant="secondary" size="icon" className={locationControlClass} aria-label={locationControlLabel} aria-pressed={isFollowingPlayer} onClick={centerOnPlayer}><CrosshairSimple weight="regular" aria-hidden="true" /></ShadcnButton><ShadcnButton variant="secondary" size="icon" className="map-ui-surface map-mode-toggle" aria-label={`Switch to ${is3D ? '2D' : '3D'} view`} onClick={() => setIs3D(!is3D)}>{is3D ? <Cube weight="regular" aria-hidden="true" /> : <Square weight="regular" aria-hidden="true" />}</ShadcnButton></div>{!sessionActive && <ShadcnButton variant="secondary" className="record-fab map-ui-surface" onClick={() => onSessionChange(true)}><Record weight="fill" aria-hidden="true" />Record</ShadcnButton>}
+    <header className="map-header"><div className="map-top-right">{currentArea && <div className="location-summary map-ui-surface"><AreaCoverageCard record={currentArea} discoveries={discoveries} onUpdate={updateCurrentArea} onExplored={ignoreMapAreaExplored} parentAreaName={currentParentAreaName ?? undefined} className="min-h-0 border-0 bg-transparent p-0" /></div>}<div className={`map-compass${compassVisible ? ' map-compass--visible' : ''}`} aria-hidden={!compassVisible}><ShadcnButton variant="secondary" size="icon" className="map-ui-surface" aria-label="Reset compass north" tabIndex={compassVisible ? 0 : -1} onClick={resetCompass}><span className="compass-rotor" style={{ transform: `rotate(${-bearing}deg)` }}><i className="compass-needle"><b className="compass-north">▲</b><b className="compass-south">▼</b></i></span></ShadcnButton></div></div></header>
+    <div className="map-controls" style={{ bottom: sessionDockOffset }} aria-label="Map controls"><ShadcnButton variant="secondary" size="icon" className="map-ui-surface layers-control" aria-label={`Open layers panel, ${activeLayerCount} active`} aria-expanded={debugOpen} onClick={() => setDebugOpen(!debugOpen)}><Stack weight="regular" aria-hidden="true" />{activeLayerCount > 0 && <span className="layers-control__count" aria-hidden="true">{activeLayerCount}</span>}</ShadcnButton><ShadcnButton variant="secondary" size="icon" className={locationControlClass} aria-label={locationControlLabel} aria-pressed={isFollowingPlayer} onClick={centerOnPlayer}><CrosshairSimple weight="regular" aria-hidden="true" /></ShadcnButton><ShadcnButton variant="secondary" size="icon" className="map-ui-surface map-mode-toggle" aria-label={`Switch to ${is3D ? '2D' : '3D'} view`} onClick={() => setIs3D(!is3D)}>{is3D ? '3D' : '2D'}</ShadcnButton></div>{!sessionActive && <ShadcnButton variant="secondary" className="record-fab map-ui-surface" onClick={() => onSessionChange(true)}><Record weight="fill" aria-hidden="true" />Record</ShadcnButton>}
     {showDebugMenu && debugOpen && <div className="map-layers-panel map-ui-surface" style={{ bottom: sessionDockOffset }}><p>LAYERS</p><label><span><strong>Region boundaries</strong><small>Administrative area outlines</small></span><Switch checked={showRegionProgress} onCheckedChange={setShowRegionProgress} aria-label="Region boundaries" /></label><label><span><strong>3D buildings</strong><small>Building massing</small></span><Switch checked={showBuildings3D} onCheckedChange={setShowBuildings3D} aria-label="3D buildings" /></label><label><span><strong>3D terrain</strong><small>Elevation and shading</small></span><Switch checked={showTerrain3D} onCheckedChange={setShowTerrain3D} aria-label="3D terrain" /></label></div>}
   </section>;
 }

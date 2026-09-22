@@ -21,33 +21,73 @@ const AREA_TILE_FILL = 'roam-progress-area-tile-fills';
 const AREA_TILE_LINE = 'roam-progress-area-tile-lines';
 const DISCOVERED_SOURCE = 'roam-progress-discovered-network';
 const DISCOVERED_LAYER = 'roam-progress-discovered-network-line';
-const distance = (meters: number) => `${(meters / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 })} km`;
+const distance = (meters: number) => `${(meters / 1000).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} km`;
 const message = (error: unknown) => error instanceof Error ? error.message : 'Could not load area coverage. Try again.';
 const exploredTotalsCache = new Map<string, AreaTotals>();
 const discoveryVersions = new WeakMap<DiscoveredSegment[], string>();
 
-function AnimatedPercentage({ value }: { value: number | null }) {
-  const label = value === null ? '—' : `${Math.min(100, value).toFixed(1)}%`;
-  const [current, setCurrent] = useState(label);
-  const [previous, setPrevious] = useState<string | null>(null);
+export function AnimatedProgressValue({ value, label, className = 'area-progress-percent' }: { value: number | null; label: string; className?: string }) {
+  const initial = { label, value };
+  const [current, setCurrent] = useState(initial);
+  const [previous, setPrevious] = useState<typeof initial | null>(null);
   const currentRef = useRef(current);
+  const valueRef = useRef(value);
   const timeoutRef = useRef<number | null>(null);
+  valueRef.current = value;
 
   useEffect(() => {
-    if (label === currentRef.current) return;
+    if (label === currentRef.current.label) return;
+    const next = { label, value: valueRef.current };
     setPrevious(currentRef.current);
-    setCurrent(label);
-    currentRef.current = label;
+    setCurrent(next);
+    currentRef.current = next;
     if (timeoutRef.current !== null) window.clearTimeout(timeoutRef.current);
     timeoutRef.current = window.setTimeout(() => setPrevious(null), 460);
     return () => { if (timeoutRef.current !== null) window.clearTimeout(timeoutRef.current); };
   }, [label]);
 
-  const increasing = Number.parseFloat(label) > Number.parseFloat(previous ?? label);
-  return <span className={`area-progress-percent${previous ? ' area-progress-percent--changing' : ''}${increasing ? ' area-progress-percent--increasing' : ''}`} aria-live="polite" aria-atomic="true">
-    {previous && <span className="area-progress-percent__previous" aria-hidden="true">{previous}</span>}
-    <span className="area-progress-percent__current">{current}</span>
+  const increasing = previous !== null && value !== null && previous.value !== null && value > previous.value;
+  return <span className={`${className}${previous ? ' area-progress-percent--changing' : ''}${increasing ? ' area-progress-percent--increasing' : ''}`} aria-live="polite" aria-atomic="true">
+    {previous && <span className="area-progress-percent__previous" aria-hidden="true">{previous.label}</span>}
+    <span className="area-progress-percent__current">{current.label}</span>
   </span>;
+}
+
+const scrambleCharacters = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+export function ScrambleText({ text, className }: { text: string; className?: string }) {
+  const [displayText, setDisplayText] = useState(text);
+  const previousText = useRef(text);
+
+  useEffect(() => {
+    if (text === previousText.current) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { previousText.current = text; setDisplayText(text); return; }
+
+    const characters = Array.from(text);
+    const frames = 10;
+    let frame = 0;
+    const reveal = () => {
+      const revealCount = Math.ceil(characters.length * frame / frames);
+      setDisplayText(characters.map((character, index) => {
+        if (index < revealCount || !/[\p{L}\p{N}]/u.test(character)) return character;
+        return scrambleCharacters[Math.floor(Math.random() * scrambleCharacters.length)];
+      }).join(''));
+    };
+    reveal();
+    const interval = window.setInterval(() => {
+      frame += 1;
+      reveal();
+      if (frame >= frames) { window.clearInterval(interval); previousText.current = text; }
+    }, 28);
+    return () => window.clearInterval(interval);
+  }, [text]);
+
+  return <span className={className}><span className="sr-only" aria-live="polite" aria-atomic="true">{text}</span><span aria-hidden="true">{displayText}</span></span>;
+}
+
+function AnimatedPercentage({ value, white = false }: { value: number | null; white?: boolean }) {
+  const className = `area-progress-percent${white ? ' area-progress-percent--white' : ''}`;
+  return <AnimatedProgressValue value={value} label={value === null ? '—' : `${Math.min(100, value).toFixed(1)}%`} className={className} />;
 }
 
 function discoveryVersion(discoveries: DiscoveredSegment[]) {
@@ -92,10 +132,10 @@ export function AreaCoverageCard({ record, discoveries, onUpdate, onExplored, pa
   }
   return <Item variant="outline" className={`area-progress-card ${className ?? ''}`} role={onClick ? 'button' : undefined} tabIndex={onClick ? 0 : undefined} onClick={onClick} onKeyDown={event => { if (onClick && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); onClick(); } }}>
     <ItemContent className="district-progress-content">
-      {parentAreaName && <div className="district-progress-parent roam-overline-sm">{parentAreaName}</div>}
-      <div className="district-progress-top"><div className="district-progress-title">{area.name}</div><div className="district-progress-percent">{ready && explored === undefined && !calculationError ? <Spinner className="size-4" /> : <AnimatedPercentage value={percentage !== null && !inconsistent ? percentage : null} />}</div></div>
-      <ItemDescription className="district-progress-description">{explored ? `${distance(explored.lengthMeters)} / ` : ''}{ready ? distance(ready.lengthMeters) : explored === undefined ? 'Calculating your progress…' : 'Coverage not calculated'}</ItemDescription>
+      {parentAreaName && <div className="district-progress-parent roam-overline-sm"><ScrambleText text={parentAreaName} /></div>}
+      <div className="district-progress-top"><div className="district-progress-title"><ScrambleText text={area.name} /></div></div>
       <div className="progress-bar" aria-label={percentage !== null ? `${area.name}: ${Math.min(100, percentage).toFixed(1)} percent explored` : `${area.name}: coverage not calculated`}><i className="progress-bar__discovered"><em className="progress-bar__paved-roads" style={{ width: `${segmentWidth('paved-road')}%` }} /><em className="progress-bar__paved-cycleways" style={{ width: `${segmentWidth('cycleway')}%` }} /><em className="progress-bar__unpaved" style={{ width: `${segmentWidth('unpaved-path')}%` }} /></i></div>
+      <div className="district-progress-readouts"><ItemDescription className="district-progress-description">{explored ? <><AnimatedProgressValue value={explored.lengthMeters} label={distance(explored.lengthMeters)} className="area-progress-distance" /><span className="district-progress-distance-separator"> / </span><AnimatedProgressValue value={ready ? ready.lengthMeters : null} label={ready ? distance(ready.lengthMeters) : '…'} className="area-progress-distance" /></> : ready ? <><AnimatedProgressValue value={0} label="0 km" className="area-progress-distance" /><span className="district-progress-distance-separator"> / </span><AnimatedProgressValue value={ready.lengthMeters} label={distance(ready.lengthMeters)} className="area-progress-distance" /></> : explored === undefined ? 'Calculating your progress…' : 'Coverage not calculated'}</ItemDescription><div className="district-progress-percent"><AnimatedPercentage white value={percentage !== null && !inconsistent ? percentage : null} /></div></div>
       <div role="status" className="area-progress-status">{refreshing && explored && <span>Updating progress…</span>}{calculationError && <span>Progress could not be calculated: {calculationError}</span>}{pending && <span>{job.status === 'queued' ? 'Queued' : `Calculating · ${job.completedTiles} of ${job.totalTiles} tiles`}</span>}{job?.status === 'failed' && <span>{job.error ?? 'Calculation failed. Retry to resume.'}</span>}{ready && ready.lengthMeters === 0 && 'No eligible roads in this map snapshot.'}{inconsistent && 'The saved discoveries and current map differ. Coverage needs reconciliation.'}{error && <span>{error}</span>}</div>
       {!ready && <ItemActions className="area-progress-actions"><Button variant="secondary" size="small" disabled={pending || requesting} onClick={event => { event.stopPropagation(); void calculate(); }}>{requesting ? <Spinner /> : null}{job?.status === 'failed' ? 'Retry calculation' : 'Calculate coverage'}</Button></ItemActions>}
     </ItemContent>
