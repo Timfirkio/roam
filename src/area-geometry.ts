@@ -1,4 +1,4 @@
-import { booleanPointInPolygon, distance, feature, lineIntersect, lineString } from '@turf/turf';
+import { booleanPointInPolygon, distance, lineIntersect, lineString } from '@turf/turf';
 import type { AreaDiscovery, AreaGeometry, AreaTotals, Position } from './area-types';
 
 export function emptyAreaTotals(): AreaTotals {
@@ -15,12 +15,15 @@ export function areaBounds(geometry: AreaGeometry): [number, number, number, num
   return bounds;
 }
 
-/** Split at every polygon edge; midpoint tests handle holes and disconnected islands. */
-export function clipLineToArea(coordinates: Position[], geometry: AreaGeometry): Position[][] {
+type AreaClipContext = { rings: Position[][]; polygon: AreaGeometry; bounds: [number, number, number, number] };
+
+function areaClipContext(geometry: AreaGeometry): AreaClipContext {
   const polygons = geometry.type === 'Polygon' ? [geometry.coordinates] : geometry.coordinates;
-  const rings = polygons.flat();
-  const polygon = feature(geometry);
-  const bounds = areaBounds(geometry);
+  return { rings: polygons.flat(), polygon: geometry, bounds: areaBounds(geometry) };
+}
+
+/** Split at every polygon edge; midpoint tests handle holes and disconnected islands. */
+function clipLineToAreaWithContext(coordinates: Position[], { rings, polygon, bounds }: AreaClipContext): Position[][] {
   const parts: Position[][] = [];
   for (let i = 1; i < coordinates.length; i++) {
     const a = coordinates[i - 1], b = coordinates[i];
@@ -42,6 +45,10 @@ export function clipLineToArea(coordinates: Position[], geometry: AreaGeometry):
     }
   }
   return parts;
+}
+
+export function clipLineToArea(coordinates: Position[], geometry: AreaGeometry): Position[][] {
+  return clipLineToAreaWithContext(coordinates, areaClipContext(geometry));
 }
 
 /** Union collinear overlapping stretches, including reversed and partially clipped copies.
@@ -80,11 +87,12 @@ export function exploredAreaTotals(discoveries: AreaDiscovery[], geometry: AreaG
   const totals = emptyAreaTotals();
   const lines: Record<string, Position[][]> = { 'paved-road': [], cycleway: [], 'unpaved-path': [] };
   const seen = new Set<string>();
+  const context = areaClipContext(geometry);
   for (const segment of discoveries) {
     if (seen.has(segment.id)) continue;
     seen.add(segment.id);
     const type = segment.roadType === 'unpaved-path' ? 'unpaved-path' : segment.roadType === 'paved-road' ? 'paved-road' : 'cycleway';
-    lines[type].push(...clipLineToArea(segment.geometry.coordinates, geometry));
+    lines[type].push(...clipLineToAreaWithContext(segment.geometry.coordinates, context));
   }
   for (const type of Object.keys(totals.byRoadType) as Array<keyof typeof totals.byRoadType>) {
     totals.byRoadType[type] = uniqueLineMeters(lines[type]);

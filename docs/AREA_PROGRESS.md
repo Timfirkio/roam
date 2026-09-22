@@ -66,9 +66,14 @@ Use Corepack and the repository's pnpm 11.19.0:
 ```powershell
 corepack pnpm install --frozen-lockfile
 # Create .env.areas with the settings below, then use two terminals:
-corepack pnpm areas:serve
 corepack pnpm dev
 ```
+
+By default, Vite proxies `/api/areas` to the hosted Roam catalog, allowing the
+local app to render regions without violating its production CORS policy. To
+exercise the legacy worker locally, create `.env.areas` below, run
+`corepack pnpm areas:serve` in a second terminal, and set
+`AREA_API_PROXY_TARGET=http://127.0.0.1:8787` before starting Vite.
 
 `.env.areas` (ignored by Git), for the legacy development fallback only:
 

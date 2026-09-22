@@ -3,9 +3,10 @@ import type { AreaLookup, AreaRecord } from './area-types';
 
 export type LocationSearchResult = { id: string; name: string; lng: number; lat: number; type: string };
 
-// The hosted catalog is the production default. Deployments may override it for
-// development or another environment through VITE_AREA_API_URL.
-export const areaApiBase = (import.meta.env.VITE_AREA_API_URL ?? 'https://areas.timplummer.co/api/areas').replace(/\/$/, '');
+// Development calls the catalog through Vite so the hosted API's production
+// CORS policy does not prevent localhost from loading regions. A configured
+// local worker can replace that proxy through AREA_API_PROXY_TARGET.
+export const areaApiBase = (import.meta.env.VITE_AREA_API_URL ?? (import.meta.env.DEV ? '/api/areas' : 'https://areas.timplummer.co/api/areas')).replace(/\/$/, '');
 async function request<T>(path: string, method = 'GET', signal?: AbortSignal): Promise<T> {
   const session = supabase ? (await supabase.auth.getSession()).data.session : null;
   const response = await fetch(`${areaApiBase}${path}`, {

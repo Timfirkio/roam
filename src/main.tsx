@@ -1,6 +1,6 @@
-import { StrictMode, useCallback, useEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef, type ReactNode } from 'react';
+import { StrictMode, useCallback, useEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef, type CSSProperties, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { AreaCoverageCard, AreaProgressView } from './area-progress-view';
+import { AreaCoverageCard } from './area-progress-view';
 import { areaApiBase, loadArea, lookupAreas } from './area-client';
 import type { AreaRecord, AreaTotals } from './area-types';
 import maplibregl, { type Map } from 'maplibre-gl';
@@ -42,9 +42,9 @@ import { useScreenWakeLock } from './use-screen-wake-lock';
 import { AccountSettings } from './account-settings';
 import { syncAccountProgress } from './cloud-sync';
 import { supabase } from './supabase';
-import { ArrowsClockwise, Bug, ChartBar, CheckCircle, CrosshairSimple, DotsThreeVertical, DownloadSimple, Gear, MapTrifold, Minus, PencilSimple, Plus, RoadHorizon, Trash, UploadSimple } from '@phosphor-icons/react';
+import { ArrowsClockwise, CheckCircle, CrosshairSimple, Cube, DotsThreeVertical, DownloadSimple, Gear, MapTrifold, PencilSimple, Record, RoadHorizon, Square, Stack, Trash, UploadSimple } from '@phosphor-icons/react';
 
-type View = 'map' | 'sessions' | 'progress' | 'settings' | 'design-system';
+type View = 'map' | 'sessions' | 'settings' | 'design-system';
 type LocationState = { city: string; region: string; lng: number; lat: number };
 type GpsPermission = 'prompt' | 'granted' | 'denied';
 type PlayerLocation = NavigationState & { accuracy: number };
@@ -76,6 +76,9 @@ const DISCOVERED_SOURCE = 'roam-discovered-network';
 const REGION_BOUNDARIES_SOURCE = 'roam-catalog-boundaries';
 const REGION_BOUNDARIES_FILL = 'roam-catalog-boundaries-fill';
 const REGION_BOUNDARIES_LINE = 'roam-catalog-boundaries-line';
+const CURRENT_AREA_SOURCE = 'roam-current-area';
+const CURRENT_AREA_FILL = 'roam-current-area-fill';
+const CURRENT_AREA_LINE = 'roam-current-area-line';
 const PLAYER_DISCOVERY_SOURCE = 'roam-player-discovery-radius';
 const PLAYER_DISCOVERY_FILL = 'roam-player-discovery-radius-fill';
 const PLAYER_DISCOVERY_LINE = 'roam-player-discovery-radius-line';
@@ -119,6 +122,41 @@ function bikeableDiscoveredMeters(discoveries: DiscoveredSegment[]) {
 
 function ProgressBar({ stats, className = '' }: { stats: ProgressStats; className?: string }) {
   return <div className={`progress-bar ${className}`}><i className="progress-bar__discovered"><em className="progress-bar__paved-roads" style={{ width: `${stats.pavedBikeableRoads}%` }} /><em className="progress-bar__paved-cycleways" style={{ width: `${stats.pavedCycleways}%` }} /><em className="progress-bar__unpaved" style={{ width: `${stats.unpavedPaths}%` }} /></i></div>;
+}
+
+function ProgressTransitionPreview() {
+  const regions = [{ name: 'Södermalm', percentage: 37.4 }, { name: 'Norrmalm', percentage: 52.8 }, { name: 'Kungsholmen', percentage: 18.6 }];
+  const [regionIndex, setRegionIndex] = useState(0);
+  const [percentage, setPercentage] = useState(regions[0].percentage);
+  const [previous, setPrevious] = useState<string | null>(null);
+  const timeoutRef = useRef<number | null>(null);
+  const label = `${percentage.toFixed(1)}%`;
+  const update = (nextIndex: number, nextPercentage: number) => {
+    setPrevious(label);
+    setRegionIndex(nextIndex);
+    setPercentage(nextPercentage);
+    if (timeoutRef.current !== null) window.clearTimeout(timeoutRef.current);
+    timeoutRef.current = window.setTimeout(() => setPrevious(null), 460);
+  };
+  const nextRegion = () => {
+    const nextIndex = (regionIndex + 1) % regions.length;
+    update(nextIndex, regions[nextIndex].percentage);
+  };
+  const stats = { discovered: percentage, pavedBikeableRoads: percentage * .55, pavedCycleways: percentage * .3, unpavedPaths: percentage * .15 };
+  const increasing = Number.parseFloat(label) > Number.parseFloat(previous ?? label);
+  return <div>
+    <p className="mb-3 font-mono text-label font-semibold tracking-[0.14em] text-text-subtle">REGION PROGRESS TRANSITIONS</p>
+    <Surface className="space-y-4 p-4">
+      <p className="text-body text-text-muted">Use this compact meter for live coverage updates and area changes. It holds its last reading while recalculating, rolls upward on gains, and smoothly redistributes the segmented bar.</p>
+      <div className="district-progress-content rounded-control border border-border-muted bg-surface p-4">
+        <div className="district-progress-top"><div className="district-progress-title">{regions[regionIndex].name}</div><div className="district-progress-percent"><span className={`area-progress-percent${previous ? ' area-progress-percent--changing' : ''}${increasing ? ' area-progress-percent--increasing' : ''}`} aria-live="polite" aria-atomic="true">{previous && <span className="area-progress-percent__previous" aria-hidden="true">{previous}</span>}<span className="area-progress-percent__current">{label}</span></span></div></div>
+        <div className="district-progress-description">{(percentage * .84).toFixed(1)} km / 22.4 km</div>
+        <ProgressBar stats={stats} />
+        <span className="text-label text-text-subtle">Updating progress…</span>
+      </div>
+      <div className="flex flex-wrap gap-3"><ShadcnButton variant="secondary" size="small" onClick={() => update(regionIndex, Math.min(100, percentage + 1.2))}>Add coverage</ShadcnButton><ShadcnButton variant="secondary" size="small" onClick={nextRegion}>Change region</ShadcnButton></div>
+    </Surface>
+  </div>;
 }
 
 function DistrictProgressContent({ title, distance, percentage, stats }: { title: ReactNode; distance: string; percentage: string; stats: ProgressStats }) {
@@ -214,11 +252,13 @@ function mapBoundaryLevel(zoom: number) {
 
 function refreshMapBoundaryLevel(map: Map) {
   const level = mapBoundaryLevel(map.getZoom());
-  const filter = level === 9 ? ['==', ['get', 'display_level'], 9] : ['==', ['get', 'admin_level'], level];
+  // Local administrative boundaries are not uniformly tagged at level 9.
+  // At street zoom, retain both district (7) and neighbourhood (9) shapes.
+  const filter = level === 9 ? ['>=', ['get', 'admin_level'], 7] : ['==', ['get', 'admin_level'], level];
   for (const id of [REGION_BOUNDARIES_FILL, REGION_BOUNDARIES_LINE]) if (map.getLayer(id)) map.setFilter(id, filter as any);
 }
 
-function styleRoamMap(map: Map, showDiscovered: boolean, is3D: boolean, showBuildings3D: boolean, showTerrain3D: boolean) {
+function styleRoamMap(map: Map, showDiscovered: boolean, showRegionProgress: boolean, is3D: boolean, showBuildings3D: boolean, showTerrain3D: boolean) {
   applyRoamBaseStyle(map);
   const layers = map.getStyle().layers ?? [];
   const firstRoadLayer = layers.find((layer: any) => layer.type === 'line' && ('source-layer' in layer ? layer['source-layer'] === 'transportation' : false))?.id;
@@ -302,8 +342,8 @@ function styleRoamMap(map: Map, showDiscovered: boolean, is3D: boolean, showBuil
   }
   if (import.meta.env.VITE_AREA_CATALOG !== 'false') {
     if (!map.getSource(REGION_BOUNDARIES_SOURCE)) map.addSource(REGION_BOUNDARIES_SOURCE, { type: 'vector', tiles: [`${areaApiBase}/tiles/{z}/{x}/{y}.mvt?v=2`], minzoom: 0, maxzoom: 22, promoteId: 'id' });
-    if (!map.getLayer(REGION_BOUNDARIES_FILL)) map.addLayer({ id: REGION_BOUNDARIES_FILL, type: 'fill', source: REGION_BOUNDARIES_SOURCE, 'source-layer': 'boundaries', paint: { 'fill-color': '#2bb8b0', 'fill-opacity': 0.045 } } as any, firstRoadLayer);
-    if (!map.getLayer(REGION_BOUNDARIES_LINE)) map.addLayer({ id: REGION_BOUNDARIES_LINE, type: 'line', source: REGION_BOUNDARIES_SOURCE, 'source-layer': 'boundaries', paint: { 'line-color': '#5fbbb4', 'line-opacity': 0.72, 'line-width': ['interpolate', ['linear'], ['zoom'], 6, 0.8, 12, 1.25, 18, 2] } } as any);
+    if (!map.getLayer(REGION_BOUNDARIES_FILL)) map.addLayer({ id: REGION_BOUNDARIES_FILL, type: 'fill', source: REGION_BOUNDARIES_SOURCE, 'source-layer': 'boundaries', layout: { visibility: showRegionProgress ? 'visible' : 'none' }, paint: { 'fill-color': '#2bb8b0', 'fill-opacity': 0.09 } } as any, firstRoadLayer);
+    if (!map.getLayer(REGION_BOUNDARIES_LINE)) map.addLayer({ id: REGION_BOUNDARIES_LINE, type: 'line', source: REGION_BOUNDARIES_SOURCE, 'source-layer': 'boundaries', layout: { visibility: showRegionProgress ? 'visible' : 'none' }, paint: { 'line-color': '#72d3cc', 'line-opacity': 0.9, 'line-width': ['interpolate', ['linear'], ['zoom'], 6, 1, 12, 1.6, 18, 2.8] } } as any);
     refreshMapBoundaryLevel(map);
   }
   if (!map.getSource(DISCOVERED_SOURCE)) {
@@ -442,6 +482,8 @@ function styleRoamMap(map: Map, showDiscovered: boolean, is3D: boolean, showBuil
   }
   if (map.getLayer(REGION_BOUNDARIES_FILL)) map.moveLayer(REGION_BOUNDARIES_FILL);
   if (map.getLayer(REGION_BOUNDARIES_LINE)) map.moveLayer(REGION_BOUNDARIES_LINE);
+  if (map.getLayer(REGION_BOUNDARIES_FILL)) map.setLayoutProperty(REGION_BOUNDARIES_FILL, 'visibility', showRegionProgress ? 'visible' : 'none');
+  if (map.getLayer(REGION_BOUNDARIES_LINE)) map.setLayoutProperty(REGION_BOUNDARIES_LINE, 'visibility', showRegionProgress ? 'visible' : 'none');
 }
 
 function roadTypeForFeature(properties: Record<string, unknown>) {
@@ -538,7 +580,7 @@ function loadCachedMapCenter(): [number, number] | null {
   }
 }
 
-function MapCanvas({ mapRef, showDiscovered, is3D, showBuildings3D, showTerrain3D, playerLocation, followPlayer, activeRotationFollow, discoveries, onDiscoveries, onLocationChange, onBearingChange, onZoomChange, onPitchChange, onFollowPlayerChange }: { mapRef: React.MutableRefObject<Map | null>; showDiscovered: boolean; is3D: boolean; showBuildings3D: boolean; showTerrain3D: boolean; playerLocation: PlayerLocation | null; followPlayer: boolean; activeRotationFollow: boolean; discoveries: DiscoveredSegment[]; onDiscoveries: (segments: DiscoveredSegment[]) => void; onLocationChange: (lng: number, lat: number, locality?: { city?: string; region?: string }) => void; onBearingChange: (bearing: number) => void; onZoomChange: (zoom: number) => void; onPitchChange: (pitch: number) => void; onFollowPlayerChange: (following: boolean) => void }) {
+function MapCanvas({ mapRef, viewportBottomInset, showDiscovered, showRegionProgress, is3D, showBuildings3D, showTerrain3D, playerLocation, followPlayer, activeRotationFollow, discoveries, onDiscoveries, onLocationChange, onBearingChange, onZoomChange, onPitchChange, onFollowPlayerChange }: { mapRef: React.MutableRefObject<Map | null>; viewportBottomInset: number; showDiscovered: boolean; showRegionProgress: boolean; is3D: boolean; showBuildings3D: boolean; showTerrain3D: boolean; playerLocation: PlayerLocation | null; followPlayer: boolean; activeRotationFollow: boolean; discoveries: DiscoveredSegment[]; onDiscoveries: (segments: DiscoveredSegment[]) => void; onLocationChange: (lng: number, lat: number, locality?: { city?: string; region?: string }) => void; onBearingChange: (bearing: number) => void; onZoomChange: (zoom: number) => void; onPitchChange: (pitch: number) => void; onFollowPlayerChange: (following: boolean) => void }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const playerMarkerRef = useRef<maplibregl.Marker | null>(null);
   const markerAnimationFrameRef = useRef<number | null>(null);
@@ -565,7 +607,7 @@ function MapCanvas({ mapRef, showDiscovered, is3D, showBuildings3D, showTerrain3
     map.on('load', () => {
       removeNetworkProtocol = installNetworkSource(map);
       const center = map.getCenter();
-      styleRoamMap(map, showDiscovered, is3D, showBuildings3D, showTerrain3D);
+      styleRoamMap(map, showDiscovered, showRegionProgress, is3D, showBuildings3D, showTerrain3D);
       onLocationChange(center.lng, center.lat, findMapLocality(map));
       onBearingChange(map.getBearing());
       onZoomChange(map.getZoom());
@@ -602,13 +644,17 @@ function MapCanvas({ mapRef, showDiscovered, is3D, showBuildings3D, showTerrain3
     return () => { if (markerAnimationFrameRef.current !== null) cancelAnimationFrame(markerAnimationFrameRef.current); if (markerRotationFrameRef.current !== null) cancelAnimationFrame(markerRotationFrameRef.current); if (cameraFrameRef.current !== null) cancelAnimationFrame(cameraFrameRef.current); playerMarkerRef.current?.remove(); playerMarkerRef.current = null; map.remove(); removeNetworkProtocol(); mapRef.current = null; };
   }, [mapRef]);
   useEffect(() => {
-    if (mapReady && mapRef.current) styleRoamMap(mapRef.current, showDiscovered, is3D, showBuildings3D, showTerrain3D);
-  }, [mapReady, mapRef, showDiscovered, is3D, showBuildings3D, showTerrain3D]);
+    if (mapReady && mapRef.current) styleRoamMap(mapRef.current, showDiscovered, showRegionProgress, is3D, showBuildings3D, showTerrain3D);
+  }, [mapReady, mapRef, showDiscovered, showRegionProgress, is3D, showBuildings3D, showTerrain3D]);
   useEffect(() => {
     if (mapReady && mapRef.current) {
       mapRef.current.easeTo({ pitch: is3D ? DEFAULT_3D_PITCH : 0, duration: 450 });
     }
   }, [mapReady, mapRef, is3D]);
+  useEffect(() => {
+    if (!mapReady) return;
+    mapRef.current?.resize();
+  }, [mapReady, mapRef, viewportBottomInset]);
   useEffect(() => {
     if (!mapReady || !mapRef.current) return;
     const source = mapRef.current.getSource(DISCOVERED_SOURCE) as maplibregl.GeoJSONSource | undefined;
@@ -717,40 +763,26 @@ function MapCanvas({ mapRef, showDiscovered, is3D, showBuildings3D, showTerrain3
       });
     }
   }, [followPlayer, mapReady, mapRef, playerLocation]);
-  return <div className="map-canvas"><div ref={containerRef} className={mapReady ? 'maplibre-container maplibre-container--ready' : 'maplibre-container'} /><div className={is3D ? 'map-depth-fade' : 'map-depth-fade map-depth-fade--hidden'} aria-hidden="true" />
+  return <div className="map-canvas" style={{ bottom: viewportBottomInset }}><div ref={containerRef} className={mapReady ? 'maplibre-container maplibre-container--ready' : 'maplibre-container'} /><div className={is3D ? 'map-depth-fade' : 'map-depth-fade map-depth-fade--hidden'} aria-hidden="true" />
     {!mapReady && <div className="map-loading">LOADING ROAD DATA…</div>}
   </div>;
 }
 
-function MapView({ onOpenProgress, onRequestLocation, onLocationUpdate, sessionActive, onSessionChange, sessionElapsedSeconds, sessionDistanceMeters, sessionDiscoveredMeters, showDiscovered, setShowDiscovered, is3D, setIs3D, showBuildings3D, setShowBuildings3D, showTerrain3D, setShowTerrain3D, showDebugMenu, playerLocation, discoveries, onDiscoveries }: { onOpenProgress: (location: LocationState) => void; onRequestLocation: () => void; onLocationUpdate: (location: LocationState) => void; sessionActive: boolean; onSessionChange: (active: boolean) => void; sessionElapsedSeconds: number; sessionDistanceMeters: number; sessionDiscoveredMeters: number; showDiscovered: boolean; setShowDiscovered: (value: boolean) => void; is3D: boolean; setIs3D: (value: boolean) => void; showBuildings3D: boolean; setShowBuildings3D: (value: boolean) => void; showTerrain3D: boolean; setShowTerrain3D: (value: boolean) => void; showDebugMenu: boolean; playerLocation: PlayerLocation | null; discoveries: DiscoveredSegment[]; onDiscoveries: (segments: DiscoveredSegment[]) => void }) {
+function MapView({ onRequestLocation, sessionActive, onSessionChange, activityDrawerHeight, showDiscovered, showRegionProgress, setShowRegionProgress, is3D, setIs3D, showBuildings3D, setShowBuildings3D, showTerrain3D, setShowTerrain3D, showDebugMenu, playerLocation, discoveries, onDiscoveries }: { onRequestLocation: () => void; sessionActive: boolean; onSessionChange: (active: boolean) => void; activityDrawerHeight: number; showDiscovered: boolean; showRegionProgress: boolean; setShowRegionProgress: (value: boolean) => void; is3D: boolean; setIs3D: (value: boolean) => void; showBuildings3D: boolean; setShowBuildings3D: (value: boolean) => void; showTerrain3D: boolean; setShowTerrain3D: (value: boolean) => void; showDebugMenu: boolean; playerLocation: PlayerLocation | null; discoveries: DiscoveredSegment[]; onDiscoveries: (segments: DiscoveredSegment[]) => void }) {
   const [bearing, setBearing] = useState(0);
-  const [zoom, setZoom] = useState(DEFAULT_MAP_ZOOM);
-  const [pitch, setPitch] = useState(DEFAULT_3D_PITCH);
   const [followPlayer, setFollowPlayer] = useState(false);
   const [activeRotationFollow, setActiveRotationFollow] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
   const [location, setLocation] = useState<LocationState>(DEFAULT_LOCATION);
   const [currentArea, setCurrentArea] = useState<AreaRecord | null>(null);
-  const [sessionDockHeight, setSessionDockHeight] = useState(76);
   const mapRef = useRef<Map | null>(null);
   const currentAreaIdRef = useRef<string | null>(null);
-  const sessionDockRef = useRef<HTMLDivElement | null>(null);
   const wakeLockStatus = useScreenWakeLock(sessionActive);
-  useEffect(() => {
-    const dock = sessionDockRef.current;
-    if (!dock) return;
-    const updateHeight = () => setSessionDockHeight(Math.ceil(dock.getBoundingClientRect().height));
-    updateHeight();
-    const observer = new ResizeObserver(updateHeight);
-    observer.observe(dock);
-    return () => observer.disconnect();
-  }, []);
   useEffect(() => { if (!playerLocation) { setFollowPlayer(false); setActiveRotationFollow(false); } }, [playerLocation]);
   const handleLocationChange = (lng: number, lat: number, locality?: { city?: string; region?: string }) => {
     const district = findStockholmDistrict([lng, lat]);
     const nextLocation = { ...location, lng, lat, city: locality?.city?.toUpperCase() || location.city, region: district?.name.toUpperCase() ?? '' };
     setLocation(nextLocation);
-    onLocationUpdate(nextLocation);
   };
   const handleBearingChange = (nextBearing: number) => setBearing((previousBearing) => {
     let adjustedBearing = nextBearing;
@@ -786,8 +818,19 @@ function MapView({ onOpenProgress, onRequestLocation, onLocationUpdate, sessionA
   const updateCurrentArea = useCallback((record: AreaRecord) => {
     mapAreaCache.set(record.area.id, record);
     setCurrentArea(current => current?.area.id === record.area.id ? record : current);
-  }, []);
-  const sessionDockOffset = `calc(${sessionDockHeight}px + var(--spacing-map-edge) + var(--spacing-map-edge))`;
+  }, [sessionActive]);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !currentArea?.area.geometry) return;
+    if (!map.getSource(CURRENT_AREA_SOURCE)) map.addSource(CURRENT_AREA_SOURCE, { type: 'geojson', data: currentArea.area.geometry as any });
+    else (map.getSource(CURRENT_AREA_SOURCE) as maplibregl.GeoJSONSource).setData(currentArea.area.geometry as any);
+    if (!map.getLayer(CURRENT_AREA_FILL)) map.addLayer({ id: CURRENT_AREA_FILL, type: 'fill', source: CURRENT_AREA_SOURCE, paint: { 'fill-color': '#2bb8b0', 'fill-opacity': 0.14 } } as any);
+    if (!map.getLayer(CURRENT_AREA_LINE)) map.addLayer({ id: CURRENT_AREA_LINE, type: 'line', source: CURRENT_AREA_SOURCE, paint: { 'line-color': '#b9fff7', 'line-opacity': 1, 'line-width': ['interpolate', ['linear'], ['zoom'], 6, 1.25, 12, 2, 18, 3] } } as any);
+    map.setLayoutProperty(CURRENT_AREA_FILL, 'visibility', showRegionProgress ? 'visible' : 'none');
+    map.setLayoutProperty(CURRENT_AREA_LINE, 'visibility', showRegionProgress ? 'visible' : 'none');
+  }, [currentArea, showRegionProgress]);
+  useEffect(() => { mapRef.current?.resize(); }, [activityDrawerHeight]);
+  const sessionDockOffset = sessionActive ? 'var(--spacing-map-edge)' : 'calc(var(--spacing-map-edge) + 44px + var(--map-control-gap))';
   const centerOnPlayer = () => {
     if (!playerLocation) {
       onRequestLocation();
@@ -811,10 +854,11 @@ function MapView({ onOpenProgress, onRequestLocation, onLocationUpdate, sessionA
   const resetCompass = () => { setActiveRotationFollow(false); mapRef.current?.easeTo({ bearing: 0, duration: 450 }); };
   const locationControlClass = activeRotationFollow ? 'map-ui-surface location-control location-control--following location-control--active' : isFollowingPlayer ? 'map-ui-surface location-control location-control--following' : 'map-ui-surface location-control';
   const locationControlLabel = activeRotationFollow ? 'Active heading follow' : isFollowingPlayer ? 'Following your location' : 'Follow your location';
-  return <section className="map-view map-view--has-session-dock"><MapCanvas mapRef={mapRef} showDiscovered={showDiscovered} is3D={is3D} showBuildings3D={showBuildings3D} showTerrain3D={showTerrain3D} playerLocation={playerLocation} followPlayer={followPlayer} activeRotationFollow={activeRotationFollow} discoveries={discoveries} onDiscoveries={onDiscoveries} onLocationChange={handleLocationChange} onBearingChange={handleBearingChange} onZoomChange={setZoom} onPitchChange={setPitch} onFollowPlayerChange={handleFollowChange} />{!isFollowingPlayer && <div className="map-center-crosshair" aria-hidden="true"><span /></div>}
-    <header className="map-header"><span className="map-header-spacer" aria-hidden="true" />{currentArea && <div className="location-summary map-ui-surface"><AreaCoverageCard record={currentArea} discoveries={discoveries} onUpdate={updateCurrentArea} onExplored={ignoreMapAreaExplored} className="min-h-0 border-0 bg-transparent p-0" onClick={() => onOpenProgress(location)} /></div>}</header>
-    <div className="map-controls" style={{ bottom: sessionDockOffset }} aria-label="Map controls"><div className="map-compass"><ShadcnButton variant="secondary" size="icon" className="map-ui-surface" aria-label="Reset compass north" onClick={resetCompass}><span className="compass-rotor" style={{ transform: `rotate(${-bearing}deg)` }}><i className="compass-needle"><b className="compass-north">▲</b><b className="compass-south">▼</b></i></span></ShadcnButton></div><ShadcnButton variant="secondary" size="icon" className={locationControlClass} aria-label={locationControlLabel} aria-pressed={isFollowingPlayer} onClick={centerOnPlayer}><CrosshairSimple weight="regular" aria-hidden="true" /></ShadcnButton><ShadcnButton variant="secondary" size="sm" className="map-ui-surface map-mode-toggle" aria-label={`Switch to ${is3D ? '2D' : '3D'} view`} onClick={() => setIs3D(!is3D)}>{is3D ? '3D' : '2D'}</ShadcnButton><ButtonGroup orientation="vertical" className="zoom-group map-ui-surface"><ShadcnButton variant="ghost" size="icon" aria-label="Zoom in" onClick={() => mapRef.current?.zoomIn()}><Plus weight="regular" aria-hidden="true" /></ShadcnButton><ShadcnButton variant="ghost" size="icon" aria-label="Zoom out" onClick={() => mapRef.current?.zoomOut()}><Minus weight="regular" aria-hidden="true" /></ShadcnButton></ButtonGroup></div><div ref={sessionDockRef} className="session-dock map-ui-surface"><div className="min-w-0"><span className="dock-label font-sans text-body-lg font-semibold tracking-normal text-text">{sessionActive ? 'Session active' : 'Ready to roam'}</span>{sessionActive ? <div className="session-dock-stats font-mono text-label"><span>{formatSessionTime(sessionElapsedSeconds)} • {formatDistance(sessionDistanceMeters)} ({formatDistance(sessionDiscoveredMeters)} new)</span></div> : <strong className="block font-mono text-label font-normal tracking-normal text-text-subtle">Start a recording</strong>}</div><ShadcnButton variant={sessionActive ? 'destructive' : 'primary'} onClick={() => onSessionChange(!sessionActive)}>{sessionActive ? 'Stop' : 'Record'}</ShadcnButton></div>
-    {showDebugMenu && <div className="map-debug" style={{ bottom: sessionDockOffset }}><ShadcnButton variant="secondary" size="icon" className="map-ui-surface debug-icon" aria-label="Open debug settings" aria-expanded={debugOpen} onClick={() => setDebugOpen(!debugOpen)}><Bug weight="regular" aria-hidden="true" /></ShadcnButton>{debugOpen && <div className="debug-menu map-ui-surface"><p>DEBUG SETTINGS</p><label><span>DISCOVERED LAYER</span><Switch checked={showDiscovered} onCheckedChange={setShowDiscovered} aria-label="Discovered layer" /></label><label><span>BUILDINGS 3D</span><Switch checked={showBuildings3D} onCheckedChange={setShowBuildings3D} aria-label="Buildings 3D" /></label><label><span>TERRAIN 3D</span><Switch checked={showTerrain3D} onCheckedChange={setShowTerrain3D} aria-label="Terrain 3D" /></label><div><span>ZOOM LEVEL</span><b className="debug-value">{zoom.toFixed(1)}</b></div><div><span>CAMERA PITCH</span><b className="debug-value">{pitch.toFixed(0)}°</b></div></div>}</div>}
+  const activeLayerCount = [showRegionProgress, showBuildings3D, showTerrain3D].filter(Boolean).length;
+  return <section className="map-view"><MapCanvas mapRef={mapRef} viewportBottomInset={0} showDiscovered={showDiscovered} showRegionProgress={showRegionProgress} is3D={is3D} showBuildings3D={showBuildings3D} showTerrain3D={showTerrain3D} playerLocation={playerLocation} followPlayer={followPlayer} activeRotationFollow={activeRotationFollow} discoveries={discoveries} onDiscoveries={onDiscoveries} onLocationChange={handleLocationChange} onBearingChange={handleBearingChange} onZoomChange={() => {}} onPitchChange={() => {}} onFollowPlayerChange={handleFollowChange} />{!isFollowingPlayer && <div className="map-center-crosshair" aria-hidden="true"><span /></div>}
+    <header className="map-header"><div className="map-top-right">{currentArea && <div className="location-summary map-ui-surface"><AreaCoverageCard record={currentArea} discoveries={discoveries} onUpdate={updateCurrentArea} onExplored={ignoreMapAreaExplored} parentAreaName="Stockholms kommun" className="min-h-0 border-0 bg-transparent p-0" /></div>}<div className="map-compass"><ShadcnButton variant="secondary" size="icon" className="map-ui-surface" aria-label="Reset compass north" onClick={resetCompass}><span className="compass-rotor" style={{ transform: `rotate(${-bearing}deg)` }}><i className="compass-needle"><b className="compass-north">▲</b><b className="compass-south">▼</b></i></span></ShadcnButton></div></div></header>
+    <div className="map-controls" style={{ bottom: sessionDockOffset }} aria-label="Map controls"><ShadcnButton variant="secondary" size="icon" className="map-ui-surface layers-control" aria-label={`Open layers panel, ${activeLayerCount} active`} aria-expanded={debugOpen} onClick={() => setDebugOpen(!debugOpen)}><Stack weight="regular" aria-hidden="true" />{activeLayerCount > 0 && <span className="layers-control__count" aria-hidden="true">{activeLayerCount}</span>}</ShadcnButton><ShadcnButton variant="secondary" size="icon" className={locationControlClass} aria-label={locationControlLabel} aria-pressed={isFollowingPlayer} onClick={centerOnPlayer}><CrosshairSimple weight="regular" aria-hidden="true" /></ShadcnButton><ShadcnButton variant="secondary" size="icon" className="map-ui-surface map-mode-toggle" aria-label={`Switch to ${is3D ? '2D' : '3D'} view`} onClick={() => setIs3D(!is3D)}>{is3D ? <Cube weight="regular" aria-hidden="true" /> : <Square weight="regular" aria-hidden="true" />}</ShadcnButton></div>{!sessionActive && <ShadcnButton variant="secondary" className="record-fab map-ui-surface" onClick={() => onSessionChange(true)}><Record weight="fill" aria-hidden="true" />Record</ShadcnButton>}
+    {showDebugMenu && debugOpen && <div className="map-layers-panel map-ui-surface" style={{ bottom: sessionDockOffset }}><p>LAYERS</p><label><span><strong>Region boundaries</strong><small>Administrative area outlines</small></span><Switch checked={showRegionProgress} onCheckedChange={setShowRegionProgress} aria-label="Region boundaries" /></label><label><span><strong>3D buildings</strong><small>Building massing</small></span><Switch checked={showBuildings3D} onCheckedChange={setShowBuildings3D} aria-label="3D buildings" /></label><label><span><strong>3D terrain</strong><small>Elevation and shading</small></span><Switch checked={showTerrain3D} onCheckedChange={setShowTerrain3D} aria-label="3D terrain" /></label></div>}
   </section>;
 }
 
@@ -935,10 +979,11 @@ function LegacyDesignSystemViewActive({ onBack }: { onBack: () => void }) {
       <div className="mt-4 flex items-center gap-3"><span className="font-mono text-label text-text-subtle">Button preview size</span><Select value={buttonSize} onValueChange={value => setButtonSize(value as 'large' | 'medium' | 'small')}><SelectTrigger className="w-36"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="large">Large · 16pt</SelectItem><SelectItem value="medium">Medium · 14pt</SelectItem><SelectItem value="small">Small · 12pt</SelectItem></SelectContent></Select></div>
       <TabsContent value="foundations" className="tab-panel mt-8 space-y-8">
         <div className="grid items-start gap-8 lg:grid-cols-2"><div className="space-y-8"><div><p className="mb-3 font-mono text-label font-semibold tracking-[0.14em] text-text-subtle">TYPE SCALE / GEIST</p><Surface className="divide-y divide-border-muted"><div className="p-4"><p className="text-subheading font-medium tracking-subheading">Outdoor map instrument</p><code className="mt-2 block font-mono text-label text-text-subtle">text-subheading · 28px · lh 1.05</code></div><div className="p-4"><p className="text-heading font-medium tracking-heading">Section heading</p><code className="mt-2 block font-mono text-label text-text-subtle">text-heading · 22px · lh 1.15</code></div><div className="p-4"><p className="text-body-lg">Larger supporting copy for a key message or longer orientation statement.</p><code className="mt-2 block font-mono text-label text-text-subtle">text-body-lg · 16px · lh 1.5</code></div><div className="p-4"><p className="text-body">Legible descriptions are built for planning before a ride and checking a route at a glance.</p><code className="mt-2 block font-mono text-label text-text-subtle">text-body · 14px · lh 1.55</code></div></Surface></div><div><p className="mb-3 font-mono text-label font-semibold tracking-[0.14em] text-text-subtle">MONOSPACE / GEIST MONO</p><Surface className="divide-y divide-border-muted"><div className="p-4"><p className="font-mono text-mono-display font-semibold tracking-mono-display">47.2%</p><code className="mt-2 block font-mono text-label text-text-subtle">text-mono-display · 28–40px · lh 1.05</code></div><div className="p-4"><p className="font-mono text-mono-heading font-semibold tracking-mono-heading">Norrmalm / ready</p><code className="mt-2 block font-mono text-label text-text-subtle">text-mono-heading · 20px · lh 1.2</code></div><div className="p-4"><p className="font-mono text-data font-semibold tracking-[0.08em]">Norrmalm / 47.2% discovered</p><code className="mt-2 block font-mono text-label text-text-subtle">text-data · 14px · lh 1.35</code></div><div className="p-4"><p className="font-mono text-label font-semibold tracking-[0.14em]">Map display</p><code className="mt-2 block font-mono text-label text-text-subtle">text-label · 12px · lh 1.25</code></div><div className="p-4"><p className="font-mono text-overline font-semibold uppercase tracking-[0.16em]">Roam / Settings / System</p><code className="mt-2 block font-mono text-label text-text-subtle">text-overline · 12px · lh 1.2 · all caps</code></div></Surface></div></div><div className="space-y-8"><div><p className="mb-3 font-mono text-label font-semibold tracking-[0.14em] text-text-subtle">SEMANTIC COLOURS</p><Surface className="p-4"><div className="grid grid-cols-2 gap-3 sm:grid-cols-3">{TOKEN_COLORS.map(([name, color]) => <div key={name} className="min-w-0"><div className={`h-12 rounded-control border border-white/10 ${color}`} /><p className="mt-2 truncate font-mono text-label text-text-muted">{name}</p></div>)}</div></Surface></div><div><p className="mb-3 font-mono text-label font-semibold tracking-[0.14em] text-text-subtle">SPACING & SHAPE</p><Surface className="space-y-4 p-4">{[['space-1', '4px', 16], ['space-2', '8px', 32], ['space-3', '12px', 48], ['space-4', '16px', 64], ['space-6', '24px', 96], ['space-8', '32px', 128]].map(([name, value, width]) => <div key={name}><div className="mb-2 flex justify-between font-mono text-label text-text-subtle"><span>{name}</span><span>{value}</span></div><div className="h-2 rounded-pill bg-accent" style={{ width: `${width}px` }} /></div>)}<div className="grid grid-cols-5 gap-2 border-t border-border-muted pt-4">{[['rounded-none', '0px'], ['rounded-tight', '4px'], ['rounded-control', '8px'], ['rounded-panel', '12px'], ['rounded-pill', 'pill']].map(([radius, label]) => <div key={radius}><div className={`h-10 bg-surface-interactive ${radius}`} /><p className="mt-2 font-mono text-overline text-text-subtle">{label}</p></div>)}</div></Surface></div></div></div>
-        <div className="grid gap-8 lg:grid-cols-2"><div><p className="mb-3 font-mono text-label font-semibold tracking-[0.14em] text-text-subtle">ACCESSIBILITY BASELINE</p><Surface className="space-y-3 p-4 text-body text-text-muted"><p><span className="font-mono text-data font-semibold text-location-200">44px</span> minimum interactive target.</p><p><span className="font-mono text-data font-semibold text-location-200">3px</span> visible focus ring with offset.</p><p><span className="font-mono text-data font-semibold text-location-200">Geist</span> for UI reading; mono reserved for compact data.</p></Surface></div><div><p className="mb-3 font-mono text-label font-semibold tracking-[0.14em] text-text-subtle">MOTION</p><Surface className="p-4"><p className="font-mono text-data font-semibold tracking-[0.08em]">ease-outdoor</p><p className="mt-2 text-body text-text-muted">cubic-bezier(0.16, 1, 0.3, 1) · 150ms default</p><div className="mt-4 h-2 w-full rounded-pill bg-surface-interactive"><div className="h-2 w-2/3 rounded-pill bg-location-500 transition-all duration-150 ease-outdoor hover:w-full" /></div></Surface></div></div>
+        <div className="grid gap-8 lg:grid-cols-2"><div><p className="mb-3 font-mono text-label font-semibold tracking-[0.14em] text-text-subtle">ACCESSIBILITY BASELINE</p><Surface className="space-y-3 p-4 text-body text-text-muted"><p><span className="font-mono text-data font-semibold text-location-200">44px</span> minimum interactive target.</p><p><span className="font-mono text-data font-semibold text-location-200">3px</span> visible focus ring with offset.</p><p><span className="font-mono text-data font-semibold text-location-200">Geist</span> for UI reading; mono reserved for compact data.</p><p><span className="roam-overline-sm text-text-subtle">Active session / Stockholms kommun</span><span className="ml-2">10px mono overline for compact context.</span></p></Surface></div><div><p className="mb-3 font-mono text-label font-semibold tracking-[0.14em] text-text-subtle">MOTION</p><Surface className="p-4"><p className="font-mono text-data font-semibold tracking-[0.08em]">ease-outdoor</p><p className="mt-2 text-body text-text-muted">cubic-bezier(0.16, 1, 0.3, 1) · 150ms default</p><div className="mt-4 h-2 w-full rounded-pill bg-surface-interactive"><div className="h-2 w-2/3 rounded-pill bg-location-500 transition-all duration-150 ease-outdoor hover:w-full" /></div></Surface></div></div>
       </TabsContent>
-      <TabsContent value="components" className="tab-panel mt-8 space-y-8"><div><p className="mb-3 font-mono text-label font-semibold tracking-[0.14em] text-text-subtle">BUTTON MATRIX</p><Surface className="overflow-x-auto p-4"><p className="mb-5 text-body text-text-muted">shadcn Button variants use Roam colour, spacing, type and radius tokens. Hover, pressed and disabled states are built into each source variant.</p><div className="min-w-[720px] overflow-hidden rounded-panel border border-border-muted"><div className="grid grid-cols-[110px_repeat(4,minmax(130px,1fr))] text-center"><div className="border-b border-border-muted p-3 text-left font-mono text-label text-text-subtle">Variant</div><div className="border-b border-border-muted p-3 text-body text-text-muted">Text</div><div className="border-b border-border-muted p-3 text-body text-text-muted">Left icon</div><div className="border-b border-border-muted p-3 text-body text-text-muted">Right icon</div><div className="border-b border-border-muted p-3 text-body text-text-muted">Spinner</div>{variants.flatMap(([label, variant]) => { const disabled = label === 'Disabled'; return [<div key={`${label}-label`} className="flex items-center border-b border-border-muted p-3 text-left font-mono text-label text-text-subtle">{label}</div>, <div key={`${label}-text`} className="border-b border-border-muted p-2">{buttonCell(variant, disabled, 'Continue')}</div>, <div key={`${label}-left`} className="border-b border-border-muted p-2">{buttonCell(variant, disabled, <><span data-icon="inline-start" aria-hidden="true">←</span>Continue</>)}</div>, <div key={`${label}-right`} className="border-b border-border-muted p-2">{buttonCell(variant, disabled, <>Continue<span data-icon="inline-end" aria-hidden="true">→</span></>)}</div>, <div key={`${label}-spinner`} className="border-b border-border-muted p-2">{buttonCell(variant, disabled, <><Spinner />Continue</>)}</div>]; })}</div></div></Surface></div>
+      <TabsContent value="components" className="tab-panel mt-8 space-y-8"><div><p className="mb-3 font-mono text-label font-semibold tracking-[0.14em] text-text-subtle">BUTTON MATRIX</p><Surface className="overflow-x-auto p-4"><p className="mb-5 text-body text-text-muted">shadcn Button variants use Roam colour, spacing, type and radius tokens. Text buttons use the regular Geist weight for a calmer, more readable outdoor interface; hover, pressed and disabled states are built into each source variant.</p><div className="min-w-[720px] overflow-hidden rounded-panel border border-border-muted"><div className="grid grid-cols-[110px_repeat(4,minmax(130px,1fr))] text-center"><div className="border-b border-border-muted p-3 text-left font-mono text-label text-text-subtle">Variant</div><div className="border-b border-border-muted p-3 text-body text-text-muted">Text</div><div className="border-b border-border-muted p-3 text-body text-text-muted">Left icon</div><div className="border-b border-border-muted p-3 text-body text-text-muted">Right icon</div><div className="border-b border-border-muted p-3 text-body text-text-muted">Spinner</div>{variants.flatMap(([label, variant]) => { const disabled = label === 'Disabled'; return [<div key={`${label}-label`} className="flex items-center border-b border-border-muted p-3 text-left font-mono text-label text-text-subtle">{label}</div>, <div key={`${label}-text`} className="border-b border-border-muted p-2">{buttonCell(variant, disabled, 'Continue')}</div>, <div key={`${label}-left`} className="border-b border-border-muted p-2">{buttonCell(variant, disabled, <><span data-icon="inline-start" aria-hidden="true">←</span>Continue</>)}</div>, <div key={`${label}-right`} className="border-b border-border-muted p-2">{buttonCell(variant, disabled, <>Continue<span data-icon="inline-end" aria-hidden="true">→</span></>)}</div>, <div key={`${label}-spinner`} className="border-b border-border-muted p-2">{buttonCell(variant, disabled, <><Spinner />Continue</>)}</div>]; })}</div></div></Surface></div>
         <div className="grid gap-8 lg:grid-cols-2"><div><p className="mb-3 font-mono text-label font-semibold tracking-[0.14em] text-text-subtle">ICON BUTTON MATRIX</p><Surface className="space-y-5 overflow-x-auto p-4"><div className="grid min-w-[520px] grid-cols-[110px_repeat(5,1fr)] overflow-hidden rounded-panel border border-border-muted text-center"><div className="border-b border-border-muted p-3 text-left font-mono text-label text-text-subtle">Variant</div><div className="border-b border-border-muted p-3 text-body text-text-muted">Primary</div><div className="border-b border-border-muted p-3 text-body text-text-muted">Secondary</div><div className="border-b border-border-muted p-3 text-body text-text-muted">Ghost</div><div className="border-b border-border-muted p-3 text-body text-text-muted">Destructive</div><div className="border-b border-border-muted p-3 text-body text-text-muted">Disabled</div><div className="flex items-center border-b border-border-muted p-3 text-left font-mono text-label text-text-subtle">Icon button</div>{(['primary', 'secondary', 'ghost', 'destructive'] as const).map((variant, index) => <div key={variant} className="flex justify-center border-b border-border-muted p-2"><ShadcnButton variant={variant} size="icon" aria-label={`${variant} icon button`}>{['●', '+', '▦', '×'][index]}</ShadcnButton></div>)}<div className="flex justify-center border-b border-border-muted p-2"><ShadcnButton variant="primary" size="icon" disabled aria-label="Disabled icon button">●</ShadcnButton></div></div><div><p className="mb-3 font-mono text-label font-semibold tracking-[0.14em] text-text-subtle">BUTTON GROUP</p><ButtonGroup><ShadcnButton variant="secondary">Day</ShadcnButton><ShadcnButton variant="secondary">Week</ShadcnButton><ShadcnButton variant="secondary">Month</ShadcnButton></ButtonGroup></div></Surface></div><div className="space-y-8"><div><p className="mb-3 font-mono text-label font-semibold tracking-[0.14em] text-text-subtle">SWITCH</p><Surface className="flex min-h-control items-center justify-between gap-4 p-4"><span><span className="block text-body-lg font-medium">Discovered network</span><span className="mt-1 block text-body text-text-subtle">Highlight roads and paths you have uncovered.</span></span><Switch checked={previewToggle} onCheckedChange={setPreviewToggle} aria-label="Toggle discovered network" /></Surface></div><div><p className="mb-3 font-mono text-label font-semibold tracking-[0.14em] text-text-subtle">TABS / LINE</p><Surface className="p-4"><p className="mb-4 text-body text-text-muted">The line variant keeps the active bar exactly as wide as its label and uses a short content transition.</p><ShadcnTabs defaultValue="routes"><TabsList variant="line"><TabsTrigger value="routes">Routes</TabsTrigger><TabsTrigger value="saved">Saved places</TabsTrigger></TabsList><TabsContent value="routes" className="tab-panel pt-4 text-body text-text-muted">Your active routes appear here.</TabsContent><TabsContent value="saved" className="tab-panel pt-4 text-body text-text-muted">Your saved places appear here.</TabsContent></ShadcnTabs></Surface></div></div></div>
+        <ProgressTransitionPreview />
       </TabsContent>
       <DesignSystemReusableComponents />
     </ShadcnTabs>
@@ -984,9 +1029,9 @@ function DesignSystemView({ onBack }: { onBack: () => void }) {
   return <LegacyDesignSystemViewActive onBack={onBack} />;
 }
 
-function SettingsViewBase({ showDiscovered, setShowDiscovered, showBuildings3D, setShowBuildings3D, showTerrain3D, setShowTerrain3D, showDebugMenu, setShowDebugMenu, gpsEnabled, gpsPermission, onGpsChange, onOpenDesignSystem }: { showDiscovered: boolean; setShowDiscovered: (value: boolean) => void; showBuildings3D: boolean; setShowBuildings3D: (value: boolean) => void; showTerrain3D: boolean; setShowTerrain3D: (value: boolean) => void; showDebugMenu: boolean; setShowDebugMenu: (value: boolean) => void; gpsEnabled: boolean; gpsPermission: GpsPermission; onGpsChange: (value: boolean) => void; onOpenDesignSystem: () => void }) {
+function SettingsViewBase({ showBuildings3D, setShowBuildings3D, showTerrain3D, setShowTerrain3D, showDebugMenu, setShowDebugMenu, gpsEnabled, gpsPermission, onGpsChange, onOpenDesignSystem }: { showBuildings3D: boolean; setShowBuildings3D: (value: boolean) => void; showTerrain3D: boolean; setShowTerrain3D: (value: boolean) => void; showDebugMenu: boolean; setShowDebugMenu: (value: boolean) => void; gpsEnabled: boolean; gpsPermission: GpsPermission; onGpsChange: (value: boolean) => void; onOpenDesignSystem: () => void }) {
   const gpsDescription = gpsPermission === 'denied' ? 'Location access was denied. Enable it in browser settings to retry.' : 'Show your live position on the map.';
-  return <section className="min-h-[calc(100svh-76px)] overflow-auto bg-surface px-6 pb-32 pt-10 text-text sm:px-8"><div className="mx-auto max-w-2xl"><header className="mb-10"><h1 className="font-sans text-title font-semibold tracking-display">Settings</h1><p className="mt-4 max-w-xl text-body-lg text-text-muted">Shape the map to match how you explore. Changes apply immediately.</p></header><div className="space-y-8"><section className="rounded-panel border border-border bg-surface-raised px-4"><p className="-mx-4 border-b border-border-muted px-4 py-3 font-mono text-overline font-semibold tracking-[0.14em] text-accent">MAP DISPLAY</p><SettingToggle label="BUILDINGS 3D" description="Show building massing above the map." value={showBuildings3D} onChange={setShowBuildings3D} /><SettingToggle label="TERRAIN 3D" description="Show elevation and terrain shading." value={showTerrain3D} onChange={setShowTerrain3D} /><SettingToggle label="DISCOVERED NETWORK" description="Highlight roads and paths you have uncovered." value={showDiscovered} onChange={setShowDiscovered} /></section><section className="rounded-panel border border-border bg-surface-raised px-4"><p className="-mx-4 border-b border-border-muted px-4 py-3 font-mono text-overline font-semibold tracking-[0.14em] text-accent">PLAYER</p><SettingToggle label="GPS LOCATION" description={gpsDescription} value={gpsEnabled} onChange={onGpsChange} /></section><section className="rounded-panel border border-border bg-surface-raised px-4"><p className="-mx-4 border-b border-border-muted px-4 py-3 font-mono text-overline font-semibold tracking-[0.14em] text-accent">DEVELOPER TOOLS</p><SettingToggle label="DEBUG MENU" description="Show the debug controls on the map." value={showDebugMenu} onChange={setShowDebugMenu} /><ShadcnButton variant="ghost" className="flex min-h-control w-full justify-between rounded-none border-0 bg-transparent px-0 text-left text-text hover:border-transparent hover:bg-surface-interactive hover:text-paper-50" type="button" onClick={onOpenDesignSystem}><span className="flex min-w-0 flex-col items-start gap-1"><strong className="font-mono text-data font-semibold tracking-[0.06em]">DESIGN SYSTEM</strong><small className="text-body text-text-subtle">Preview tokens and reusable interface components.</small></span><b aria-hidden="true" className="font-mono text-data text-accent">→</b></ShadcnButton></section><aside className="rounded-control border-l-2 border-accent bg-accent-muted px-4 py-3"><strong className="block font-mono text-label font-semibold tracking-[0.12em] text-accent">3D VIEW</strong><span className="mt-1 block text-body text-text-muted">Use the 3D button on the map to switch between flat and tilted views.</span></aside></div></div></section>;
+  return <section className="min-h-[calc(100svh-76px)] overflow-auto bg-surface px-6 pb-32 pt-10 text-text sm:px-8"><div className="mx-auto max-w-2xl"><header className="mb-10"><h1 className="font-sans text-title font-semibold tracking-display">Settings</h1><p className="mt-4 max-w-xl text-body-lg text-text-muted">Shape the map to match how you explore. Changes apply immediately.</p></header><div className="space-y-8"><section className="rounded-panel border border-border bg-surface-raised px-4"><p className="-mx-4 border-b border-border-muted px-4 py-3 font-mono text-overline font-semibold tracking-[0.14em] text-accent">MAP DISPLAY</p><SettingToggle label="BUILDINGS 3D" description="Show building massing above the map." value={showBuildings3D} onChange={setShowBuildings3D} /><SettingToggle label="TERRAIN 3D" description="Show elevation and terrain shading." value={showTerrain3D} onChange={setShowTerrain3D} /></section><section className="rounded-panel border border-border bg-surface-raised px-4"><p className="-mx-4 border-b border-border-muted px-4 py-3 font-mono text-overline font-semibold tracking-[0.14em] text-accent">PLAYER</p><SettingToggle label="GPS LOCATION" description={gpsDescription} value={gpsEnabled} onChange={onGpsChange} /></section><section className="rounded-panel border border-border bg-surface-raised px-4"><p className="-mx-4 border-b border-border-muted px-4 py-3 font-mono text-overline font-semibold tracking-[0.14em] text-accent">DEVELOPER TOOLS</p><SettingToggle label="DEBUG MENU" description="Show the layers controls on the map." value={showDebugMenu} onChange={setShowDebugMenu} /><ShadcnButton variant="ghost" className="flex min-h-control w-full justify-between rounded-none border-0 bg-transparent px-0 text-left text-text hover:border-transparent hover:bg-surface-interactive hover:text-paper-50" type="button" onClick={onOpenDesignSystem}><span className="flex min-w-0 flex-col items-start gap-1"><strong className="font-mono text-data font-semibold tracking-[0.06em]">DESIGN SYSTEM</strong><small className="text-body text-text-subtle">Preview tokens and reusable interface components.</small></span><b aria-hidden="true" className="font-mono text-data text-accent">→</b></ShadcnButton></section><aside className="rounded-control border-l-2 border-accent bg-accent-muted px-4 py-3"><strong className="block font-mono text-label font-semibold tracking-[0.12em] text-accent">3D VIEW</strong><span className="mt-1 block text-body text-text-muted">Use the 3D button on the map to switch between flat and tilted views.</span></aside></div></div></section>;
 }
 
 function PlaceholderView({ title, copy }: { title: string; copy: string }) { return <section className="min-h-[calc(100svh-76px)] overflow-auto bg-surface px-6 pb-32 pt-10 text-text sm:px-8"><div className="mx-auto max-w-2xl"><h1 className="font-sans text-title font-semibold tracking-display">{title}</h1><p className="mt-4 max-w-xl text-body-lg text-text-muted">{copy}</p><Item variant="outline" className="mt-10"><ItemContent><ItemTitle>Module ready</ItemTitle><ItemDescription>The next Sessions build slice will add route history and saved rides.</ItemDescription></ItemContent><ItemActions><span className="font-mono text-label text-accent">NEXT</span></ItemActions></Item></div></section>; }
@@ -1017,7 +1062,7 @@ function SessionRouteFallback({ coordinates }: { coordinates: [number, number][]
   return <div className="session-route-fallback" aria-hidden="true"><svg viewBox="0 0 100 56" preserveAspectRatio="xMidYMid meet"><path className="session-route-fallback-grid" d="M0 14H100M0 28H100M0 42H100M25 0V56M50 0V56M75 0V56" /><path className="session-route-fallback-line" d={routePath} /><circle className="session-route-fallback-start" cx={start[0]} cy={start[1]} r="2" /><g className="session-route-fallback-finish" transform={`translate(${end[0]} ${end[1]})`}><circle r="3.6" /><path className="session-route-fallback-flag" d="M-1.25 1.8V-2.1H1.7V1.1H-1.25" /><path className="session-route-fallback-checkers" d="M-1.25-2.1H.25V-.5H-1.25M.25-.5H1.7V1.1H.25" /></g></svg></div>;
 }
 
-function SettingsView({ showDiscovered, setShowDiscovered, showBuildings3D, setShowBuildings3D, showTerrain3D, setShowTerrain3D, showDebugMenu, setShowDebugMenu, gpsEnabled, gpsPermission, onGpsChange, onOpenDesignSystem }: Parameters<typeof SettingsViewBase>[0]) {
+function SettingsView({ showBuildings3D, setShowBuildings3D, showTerrain3D, setShowTerrain3D, showDebugMenu, setShowDebugMenu, gpsEnabled, gpsPermission, onGpsChange, onOpenDesignSystem }: Parameters<typeof SettingsViewBase>[0]) {
   const gpsDescription = gpsPermission === 'denied'
     ? 'Location access was denied. Enable it in browser settings to retry.'
     : 'Show your live position on the map.';
@@ -1034,7 +1079,6 @@ function SettingsView({ showDiscovered, setShowDiscovered, showBuildings3D, setS
           <p className="roam-overline -mx-4 border-b border-border-muted px-4 py-3 text-accent">MAP DISPLAY</p>
           <SettingToggle label="BUILDINGS 3D" description="Show building massing above the map." value={showBuildings3D} onChange={setShowBuildings3D} />
           <SettingToggle label="TERRAIN 3D" description="Show elevation and terrain shading." value={showTerrain3D} onChange={setShowTerrain3D} />
-          <SettingToggle label="DISCOVERED NETWORK" description="Highlight roads and paths you have uncovered." value={showDiscovered} onChange={setShowDiscovered} />
         </section>
         <section className="rounded-panel border border-border bg-surface-raised px-4">
           <p className="roam-overline -mx-4 border-b border-border-muted px-4 py-3 text-accent">PLAYER</p>
@@ -1170,10 +1214,6 @@ function LegacyGlobalProgressViewCurrent({ location, discoveries }: { location: 
   return <section className="min-h-[calc(100svh-76px)] overflow-auto bg-surface px-6 pb-32 pt-10 text-text sm:px-8"><div className="mx-auto max-w-3xl"><header><h1 className="font-sans text-title font-semibold tracking-display">Progress</h1><p className="mt-4 max-w-2xl text-body-lg text-text-muted">Track the roads and paths you have uncovered as you ride.</p><label className="municipality-select"><Select aria-label="Municipality" value={selectedMunicipality} onValueChange={setSelectedMunicipality}><SelectTrigger className="w-full min-h-control text-body-lg"><SelectValue placeholder="Choose a municipality" /></SelectTrigger><SelectContent>{SWEDEN_MUNICIPALITIES_SORTED.map(municipality => <SelectItem key={municipality} value={municipality}>{municipality}</SelectItem>)}</SelectContent></Select></label></header>{selectedMunicipality === 'Stockholm' ? <><section className="mt-10"><h2 className="mb-3 font-sans text-heading font-semibold">Recent districts</h2>{recentDistricts.length > 0 ? <div className="space-y-3">{recentDistricts.map(({ district }) => <DistrictProgressCard key={district.id} district={district} discoveries={discoveries} current={district.id === currentDistrict?.id} onSelect={() => openRecentDistrict(district)} />)}</div> : <p className="text-body text-text-muted">Districts you explore will appear here.</p>}</section><Item variant="outline" className="mt-10 border-accent bg-accent-muted"><ItemContent><ItemTitle>Current area</ItemTitle><ItemDescription>Stockholm / {formatItemText(currentDistrict?.name ?? location.region)}</ItemDescription></ItemContent><ItemActions><span className="font-mono text-mono-heading font-semibold text-accent">{currentDistrict ? `${progressStatsForDistrict(currentDistrict.id, discoveries).discovered.toFixed(1)}%` : '—'}</span></ItemActions></Item><section className="mt-10"><h2 className="mb-3 font-sans text-heading font-semibold">All regions &amp; districts</h2><Accordion multiple value={openRegions} onValueChange={setOpenRegions} className="region-accordion-list">{STOCKHOLM_REGIONS.map(region => <RegionAccordion key={region.id} region={region} discoveries={discoveries} currentDistrictId={currentDistrict?.id} onDistrictSelect={openRecentDistrict} districtRefs={districtRefs} />)}</Accordion></section></> : <Item className="mt-10"><ItemContent><ItemTitle>{selectedMunicipality}</ItemTitle><ItemDescription>Network coverage for this municipality is not indexed yet.</ItemDescription></ItemContent></Item>}</div></section>;
 }
 
-function GlobalProgressView({ location, discoveries }: { location: LocationState; discoveries: DiscoveredSegment[] }) {
-  return <AreaProgressView location={location} discoveries={discoveries} />;
-}
-
 function StockholmProgressView({ location, discoveries }: { location: LocationState; discoveries: DiscoveredSegment[] }) {
   const [selectedMunicipality, setSelectedMunicipality] = useState('Stockholm');
   const currentDistrict = findStockholmDistrict([location.lng, location.lat]);
@@ -1209,14 +1249,14 @@ function DesignSystemComponentsPreview() {
 
 function PrimaryNavigation({ view, onChange }: { view: View; onChange: (view: View) => void }) {
   const activeView = view === 'design-system' ? 'settings' : view;
-  const items = [{ value: 'map', icon: MapTrifold, label: 'Map' }, { value: 'sessions', icon: RoadHorizon, label: 'Sessions' }, { value: 'progress', icon: ChartBar, label: 'Progress' }, { value: 'settings', icon: Gear, label: 'Settings' }] as const;
+  const items = [{ value: 'map', icon: MapTrifold, label: 'Map' }, { value: 'sessions', icon: RoadHorizon, label: 'Sessions' }, { value: 'settings', icon: Gear, label: 'Settings' }] as const;
   return <ShadcnTabs value={activeView} onValueChange={(value) => onChange(value as View)} className="bottom-nav"><TabsList variant="line" className="bottom-nav-list" aria-label="Primary navigation">{items.map((item) => { const Icon = item.icon; return <TabsTrigger key={item.value} value={item.value} className="nav-item"><span className="nav-icon" aria-hidden="true"><Icon /></span><span>{item.label}</span></TabsTrigger>; })}</TabsList></ShadcnTabs>;
 }
 
 function App() {
   const [view, setView] = useState<View>('map');
-  const [progressLocation, setProgressLocation] = useState<LocationState>(DEFAULT_LOCATION);
-  const [showDiscovered, setShowDiscovered] = useState(true);
+  const showDiscovered = true;
+  const [showRegionProgress, setShowRegionProgress] = useState(false);
   const [is3D, setIs3D] = useState(true);
   const [showBuildings3D, setShowBuildings3D] = useState(false);
   const [showTerrain3D, setShowTerrain3D] = useState(false);
@@ -1237,6 +1277,9 @@ function App() {
   const [sessionDiscoveredMeters, setSessionDiscoveredMeters] = useState(0);
   const [sessionStartedAt, setSessionStartedAt] = useState<number | null>(null);
   const [sessionElapsedSeconds, setSessionElapsedSeconds] = useState(0);
+  const [activityDrawerHeight, setActivityDrawerHeight] = useState(0);
+  const [activityDrawerVisible, setActivityDrawerVisible] = useState(false);
+  const activityDrawerRef = useRef<HTMLDivElement | null>(null);
   const [playerLocation, setPlayerLocation] = useState<PlayerLocation | null>(null);
   const navigationRef = useRef<NavigationState | null>(null);
   const [discoveries, setDiscoveries] = useState<DiscoveredSegment[]>([]);
@@ -1250,6 +1293,26 @@ function App() {
   const [thumbnailWake, setThumbnailWake] = useState(0);
   const gpsWatchRef = useRef<CallbackID | null>(null);
   const lastReconciledPointTimestampRef = useRef(0);
+  useEffect(() => {
+    if (sessionActive) { setActivityDrawerVisible(true); return; }
+    if (!activityDrawerVisible) return;
+    // Release the layout reservation immediately. The drawer remains mounted
+    // only for its slide-out, so the map expands as the drawer leaves instead
+    // of exposing a temporary empty strip above the navigation.
+    setActivityDrawerHeight(0);
+    const timer = window.setTimeout(() => setActivityDrawerVisible(false), 220);
+    return () => window.clearTimeout(timer);
+  }, [activityDrawerVisible, sessionActive]);
+  useEffect(() => {
+    if (!activityDrawerVisible) { setActivityDrawerHeight(0); return; }
+    const drawer = activityDrawerRef.current;
+    if (!drawer) return;
+    const updateHeight = () => setActivityDrawerHeight(Math.ceil(drawer.getBoundingClientRect().height));
+    updateHeight();
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(drawer);
+    return () => observer.disconnect();
+  }, [activityDrawerVisible]);
   const backfillDiscoveryRegions = useCallback(() => {
     const enriched = assignDiscoveryRegions(discoveriesRef.current);
     const updates = enriched.filter((segment, index) => segment !== discoveriesRef.current[index]);
@@ -1279,7 +1342,6 @@ function App() {
     lastProcessedLocationTimestampRef.current = fix.timestamp;
     const currentPosition = { lng: fix.lng, lat: fix.lat };
     setGpsPermission('granted');
-    setProgressLocation(previous => ({ ...previous, ...currentPosition }));
     if (sessionActiveRef.current) {
       if (sessionLastPositionRef.current) {
         sessionDistanceRef.current += distanceMeters(sessionLastPositionRef.current, currentPosition);
@@ -1676,11 +1738,10 @@ function App() {
     if (failedRides > 0) return `Synced ${reconciledRides} ride${reconciledRides === 1 ? '' : 's'}; ${failedRides} could not be checked and can be retried.${restoredProgress}`;
     return addedSegments > 0 ? `Synced ${reconciledRides} ride${reconciledRides === 1 ? '' : 's'} and added ${addedSegments} missed map segments.${restoredProgress}` : `All ${reconciledRides} saved ride${reconciledRides === 1 ? '' : 's'} are already synced to the map.${restoredProgress}`;
   };
-  const openProgress = (location: LocationState) => { setProgressLocation(location); setView('progress'); };
   const handleDiscoveries = (newSegments: DiscoveredSegment[]) => {
     applyDiscoveredSegments(newSegments);
   };
-  return <main className="app-shell"><div className="app-content">{view === 'map' && <MapView onOpenProgress={openProgress} onRequestLocation={() => handleGpsChange(true)} onLocationUpdate={setProgressLocation} sessionActive={sessionActive} onSessionChange={handleSessionChange} sessionElapsedSeconds={sessionElapsedSeconds} sessionDistanceMeters={sessionDistanceMeters} sessionDiscoveredMeters={sessionDiscoveredMeters} showDiscovered={showDiscovered} setShowDiscovered={setShowDiscovered} is3D={is3D} setIs3D={setIs3D} showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} showDebugMenu={showDebugMenu} playerLocation={playerLocation} discoveries={discoveries} onDiscoveries={handleDiscoveries} />}{view === 'sessions' && <SessionsView sessions={sessions} onExport={handleGpxExport} onRename={handleSessionRename} onDelete={handleSessionDelete} onImportGpx={handleGpxImport} onSyncRides={handleSyncRidesToMap} />}{view === 'progress' && <GlobalProgressView location={progressLocation} discoveries={discoveries} />}{view === 'settings' && <SettingsView showDiscovered={showDiscovered} setShowDiscovered={setShowDiscovered} showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} showDebugMenu={showDebugMenu} setShowDebugMenu={setShowDebugMenu} gpsEnabled={gpsEnabled} gpsPermission={gpsPermission} onGpsChange={handleGpsChange} onOpenDesignSystem={() => setView('design-system')} />}{view === 'design-system' && <DesignSystemView onBack={() => setView('settings')} />}</div><PrimaryNavigation view={view} onChange={setView} /><Toaster /></main>;
+  return <main className="app-shell" style={{ '--activity-drawer-height': `${activityDrawerHeight}px` } as CSSProperties}><div className="app-content">{view === 'map' && <MapView onRequestLocation={() => handleGpsChange(true)} sessionActive={sessionActive} onSessionChange={handleSessionChange} activityDrawerHeight={activityDrawerHeight} showDiscovered={showDiscovered} showRegionProgress={showRegionProgress} setShowRegionProgress={setShowRegionProgress} is3D={is3D} setIs3D={setIs3D} showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} showDebugMenu={showDebugMenu} playerLocation={playerLocation} discoveries={discoveries} onDiscoveries={handleDiscoveries} />}{view === 'sessions' && <SessionsView sessions={sessions} onExport={handleGpxExport} onRename={handleSessionRename} onDelete={handleSessionDelete} onImportGpx={handleGpxImport} onSyncRides={handleSyncRidesToMap} />}{view === 'settings' && <SettingsView showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} showDebugMenu={showDebugMenu} setShowDebugMenu={setShowDebugMenu} gpsEnabled={gpsEnabled} gpsPermission={gpsPermission} onGpsChange={handleGpsChange} onOpenDesignSystem={() => setView('design-system')} />}{view === 'design-system' && <DesignSystemView onBack={() => setView('settings')} />}</div>{activityDrawerVisible && <div ref={activityDrawerRef} className={`activity-drawer ${sessionActive ? 'activity-drawer--open' : 'activity-drawer--closing'}`}><div className="activity-drawer-copy"><span className="roam-overline-sm activity-drawer-title">Active session</span><div className="activity-drawer-stats font-mono"><span className="activity-drawer-timer">{formatSessionTime(sessionElapsedSeconds)}</span><span className="activity-drawer-separator" aria-hidden="true">·</span><span className="activity-drawer-distance">{formatDistance(sessionDistanceMeters)}</span><span className="activity-drawer-new-distance">({formatDistance(sessionDiscoveredMeters)} new)</span></div></div>{sessionActive && <ShadcnButton variant="destructive" className="hover:!border-danger-500 active:!border-danger-500" onClick={() => handleSessionChange(false)}>Stop</ShadcnButton>}</div>}<PrimaryNavigation view={view} onChange={setView} /><Toaster /></main>;
 }
 
 const rootElement = document.getElementById('root')!;

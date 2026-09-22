@@ -8,5 +8,9 @@ type ProgressRequest = {
 };
 
 self.addEventListener('message', ({ data }: MessageEvent<ProgressRequest>) => {
-  self.postMessage({ id: data.id, totals: exploredAreaTotals(data.discoveries, data.geometry) });
+  try {
+    self.postMessage({ id: data.id, totals: exploredAreaTotals(data.discoveries, data.geometry) });
+  } catch (error) {
+    self.postMessage({ id: data.id, error: error instanceof Error ? error.message : 'Could not calculate area progress.' });
+  }
 });

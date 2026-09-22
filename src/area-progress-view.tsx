@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import maplibregl, { type Map as MapLibreMap } from 'maplibre-gl';
 import { bbox } from '@turf/turf';
 import { MagnifyingGlass, X } from '@phosphor-icons/react';
-import { areaApiBase, calculateArea, loadArea, searchLocations, type LocationSearchResult } from './area-client';
+import { areaApiBase, calculateArea, loadArea, lookupAreas, searchLocations, type LocationSearchResult } from './area-client';
 import type { AreaRecord, AreaTotals } from './area-types';
 import type { DiscoveredSegment } from './discovery';
 import { installNetworkSource, NETWORK_SOURCE } from './network-source';
@@ -26,6 +26,30 @@ const message = (error: unknown) => error instanceof Error ? error.message : 'Co
 const exploredTotalsCache = new Map<string, AreaTotals>();
 const discoveryVersions = new WeakMap<DiscoveredSegment[], string>();
 
+function AnimatedPercentage({ value }: { value: number | null }) {
+  const label = value === null ? '—' : `${Math.min(100, value).toFixed(1)}%`;
+  const [current, setCurrent] = useState(label);
+  const [previous, setPrevious] = useState<string | null>(null);
+  const currentRef = useRef(current);
+  const timeoutRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (label === currentRef.current) return;
+    setPrevious(currentRef.current);
+    setCurrent(label);
+    currentRef.current = label;
+    if (timeoutRef.current !== null) window.clearTimeout(timeoutRef.current);
+    timeoutRef.current = window.setTimeout(() => setPrevious(null), 460);
+    return () => { if (timeoutRef.current !== null) window.clearTimeout(timeoutRef.current); };
+  }, [label]);
+
+  const increasing = Number.parseFloat(label) > Number.parseFloat(previous ?? label);
+  return <span className={`area-progress-percent${previous ? ' area-progress-percent--changing' : ''}${increasing ? ' area-progress-percent--increasing' : ''}`} aria-live="polite" aria-atomic="true">
+    {previous && <span className="area-progress-percent__previous" aria-hidden="true">{previous}</span>}
+    <span className="area-progress-percent__current">{current}</span>
+  </span>;
+}
+
 function discoveryVersion(discoveries: DiscoveredSegment[]) {
   const cached = discoveryVersions.get(discoveries);
   if (cached) return cached;
@@ -48,12 +72,12 @@ function cachedExploredTotals(key: string) {
   } catch { return undefined; }
 }
 
-export function AreaCoverageCard({ record, discoveries, onUpdate, onExplored, className, onClick }: { record: AreaRecord; discoveries: DiscoveredSegment[]; onUpdate: (record: AreaRecord) => void; onExplored: (areaId: string, totals: AreaTotals) => void; className?: string; onClick?: () => void }) {
+export function AreaCoverageCard({ record, discoveries, onUpdate, onExplored, parentAreaName, className, onClick }: { record: AreaRecord; discoveries: DiscoveredSegment[]; onUpdate: (record: AreaRecord) => void; onExplored: (areaId: string, totals: AreaTotals) => void; parentAreaName?: string; className?: string; onClick?: () => void }) {
   const { area, job } = record;
   const [requesting, setRequesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const explored = useExploredAreaTotals(discoveries, area.geometry, `${area.id}:${area.boundaryVersion}`);
-  useEffect(() => { if (explored) onExplored(area.id, explored); }, [area.id, explored, onExplored]);
+  const { totals: explored, refreshing, calculationError, isCurrent } = useExploredAreaTotals(discoveries, area.geometry, `${area.id}:${area.boundaryVersion}`);
+  useEffect(() => { if (explored && isCurrent) onExplored(area.id, explored); }, [area.id, explored, isCurrent, onExplored]);
   const ready = job?.status === 'ready' && job.totals;
   const percentage = ready && explored && ready.lengthMeters > 0 ? explored.lengthMeters / ready.lengthMeters * 100 : null;
   const inconsistent = percentage !== null && percentage > 100.1;
@@ -68,10 +92,11 @@ export function AreaCoverageCard({ record, discoveries, onUpdate, onExplored, cl
   }
   return <Item variant="outline" className={`area-progress-card ${className ?? ''}`} role={onClick ? 'button' : undefined} tabIndex={onClick ? 0 : undefined} onClick={onClick} onKeyDown={event => { if (onClick && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); onClick(); } }}>
     <ItemContent className="district-progress-content">
-      <div className="district-progress-top"><div className="district-progress-title">{area.name}</div><div className="district-progress-percent">{ready && explored === undefined ? <Spinner className="size-4" /> : percentage !== null && !inconsistent ? `${Math.min(100, percentage).toFixed(1)}%` : '—'}</div></div>
+      {parentAreaName && <div className="district-progress-parent roam-overline-sm">{parentAreaName}</div>}
+      <div className="district-progress-top"><div className="district-progress-title">{area.name}</div><div className="district-progress-percent">{ready && explored === undefined && !calculationError ? <Spinner className="size-4" /> : <AnimatedPercentage value={percentage !== null && !inconsistent ? percentage : null} />}</div></div>
       <ItemDescription className="district-progress-description">{explored ? `${distance(explored.lengthMeters)} / ` : ''}{ready ? distance(ready.lengthMeters) : explored === undefined ? 'Calculating your progress…' : 'Coverage not calculated'}</ItemDescription>
       <div className="progress-bar" aria-label={percentage !== null ? `${area.name}: ${Math.min(100, percentage).toFixed(1)} percent explored` : `${area.name}: coverage not calculated`}><i className="progress-bar__discovered"><em className="progress-bar__paved-roads" style={{ width: `${segmentWidth('paved-road')}%` }} /><em className="progress-bar__paved-cycleways" style={{ width: `${segmentWidth('cycleway')}%` }} /><em className="progress-bar__unpaved" style={{ width: `${segmentWidth('unpaved-path')}%` }} /></i></div>
-      <div role="status" className="area-progress-status">{pending && <span>{job.status === 'queued' ? 'Queued' : `Calculating · ${job.completedTiles} of ${job.totalTiles} tiles`}</span>}{job?.status === 'failed' && <span>{job.error ?? 'Calculation failed. Retry to resume.'}</span>}{ready && ready.lengthMeters === 0 && 'No eligible roads in this map snapshot.'}{inconsistent && 'The saved discoveries and current map differ. Coverage needs reconciliation.'}{error && <span>{error}</span>}</div>
+      <div role="status" className="area-progress-status">{refreshing && explored && <span>Updating progress…</span>}{calculationError && <span>Progress could not be calculated: {calculationError}</span>}{pending && <span>{job.status === 'queued' ? 'Queued' : `Calculating · ${job.completedTiles} of ${job.totalTiles} tiles`}</span>}{job?.status === 'failed' && <span>{job.error ?? 'Calculation failed. Retry to resume.'}</span>}{ready && ready.lengthMeters === 0 && 'No eligible roads in this map snapshot.'}{inconsistent && 'The saved discoveries and current map differ. Coverage needs reconciliation.'}{error && <span>{error}</span>}</div>
       {!ready && <ItemActions className="area-progress-actions"><Button variant="secondary" size="small" disabled={pending || requesting} onClick={event => { event.stopPropagation(); void calculate(); }}>{requesting ? <Spinner /> : null}{job?.status === 'failed' ? 'Retry calculation' : 'Calculate coverage'}</Button></ItemActions>}
     </ItemContent>
   </Item>;
@@ -81,26 +106,36 @@ function useExploredAreaTotals(discoveries: DiscoveredSegment[], geometry: AreaR
   const workerRef = useRef<Worker | null>(null);
   const requestId = useRef(0);
   const [result, setResult] = useState<{ key: string; totals: AreaTotals } | null>(null);
+  const [calculationError, setCalculationError] = useState<string | null>(null);
   const key = geometry ? `${areaKey}:${discoveryVersion(discoveries)}` : null;
   const cached = key ? cachedExploredTotals(key) : undefined;
-  const totals = key === null ? null : result?.key === key ? result.totals : cached;
+  // Keep the previously rendered measurement on screen while the worker
+  // calculates the selected area's next value. Besides avoiding an empty bar,
+  // this gives the progress meter a meaningful value to animate from.
+  const totals = key === null ? null : result?.key === key ? result.totals : cached ?? result?.totals;
+  const refreshing = key !== null && result?.key !== key && !cached;
+  const isCurrent = key !== null && (result?.key === key || Boolean(cached));
   useEffect(() => {
     if (!geometry || !key) return;
     if (cached) { setResult({ key, totals: cached }); return; }
     const worker = workerRef.current ?? (workerRef.current = new Worker(new URL('./area-progress-worker.ts', import.meta.url), { type: 'module' }));
     const id = ++requestId.current;
-    const receive = ({ data }: MessageEvent<{ id: number; totals: AreaTotals }>) => {
+    setCalculationError(null);
+    const receive = ({ data }: MessageEvent<{ id: number; totals?: AreaTotals; error?: string }>) => {
       if (data.id !== id) return;
+      if (data.error || !data.totals) { setCalculationError(data.error ?? 'Could not calculate area progress.'); return; }
       exploredTotalsCache.set(key, data.totals);
       try { localStorage.setItem(`roam.area-progress.${key}`, JSON.stringify(data.totals)); } catch {}
       setResult({ key, totals: data.totals });
     };
+    const fail = () => setCalculationError('Could not calculate area progress.');
     worker.addEventListener('message', receive);
+    worker.addEventListener('error', fail);
     worker.postMessage({ id, discoveries, geometry });
-    return () => worker.removeEventListener('message', receive);
+    return () => { worker.removeEventListener('message', receive); worker.removeEventListener('error', fail); };
   }, [cached, discoveries, geometry, key]);
   useEffect(() => () => workerRef.current?.terminate(), []);
-  return totals;
+  return { totals, refreshing, calculationError, isCurrent };
 }
 
 function hierarchyLevel(zoom: number) {
@@ -147,10 +182,10 @@ function ProgressMap({ centre, discoveries, selected, onSelectId, onHover }: { c
       if (import.meta.env.VITE_AREA_CATALOG !== 'false') {
         map.addSource(AREA_TILE_SOURCE, { type: 'vector', tiles: [`${areaApiBase}/tiles/{z}/{x}/{y}.mvt?v=2`], minzoom: 0, maxzoom: 22, promoteId: 'id' });
         const levelFilter = () => hierarchyLevel(map.getZoom()) === 9
-          ? ['==', ['get', 'display_level'], 9] as any
+          ? ['>=', ['get', 'admin_level'], 7] as any
           : ['==', ['get', 'admin_level'], hierarchyLevel(map.getZoom())] as any;
-        map.addLayer({ id: AREA_TILE_FILL, type: 'fill', source: AREA_TILE_SOURCE, 'source-layer': 'boundaries', filter: levelFilter(), paint: { 'fill-color': '#2bb8b0', 'fill-opacity': ['case', ['boolean', ['feature-state', 'hover'], false], 0.22, 0.075] } } as any);
-        map.addLayer({ id: AREA_TILE_LINE, type: 'line', source: AREA_TILE_SOURCE, 'source-layer': 'boundaries', filter: levelFilter(), paint: { 'line-color': ['case', ['boolean', ['feature-state', 'hover'], false], '#f0eee7', '#5fbbb4'], 'line-opacity': 0.94, 'line-width': ['interpolate', ['linear'], ['zoom'], 6, 0.8, 12, 1.35, 18, 2.3] } } as any);
+        map.addLayer({ id: AREA_TILE_FILL, type: 'fill', source: AREA_TILE_SOURCE, 'source-layer': 'boundaries', filter: levelFilter(), paint: { 'fill-color': '#2bb8b0', 'fill-opacity': ['case', ['boolean', ['feature-state', 'hover'], false], 0.25, 0.12] } } as any);
+        map.addLayer({ id: AREA_TILE_LINE, type: 'line', source: AREA_TILE_SOURCE, 'source-layer': 'boundaries', filter: levelFilter(), paint: { 'line-color': ['case', ['boolean', ['feature-state', 'hover'], false], '#f0eee7', '#72d3cc'], 'line-opacity': 1, 'line-width': ['interpolate', ['linear'], ['zoom'], 6, 1, 12, 1.65, 18, 2.8] } } as any);
         map.on('zoomend', () => {
           const filter = levelFilter();
           map.setFilter(AREA_TILE_FILL, filter);
@@ -193,6 +228,13 @@ function ProgressMap({ centre, discoveries, selected, onSelectId, onHover }: { c
     if (!ready || !map?.getSource(DISCOVERED_SOURCE)) return;
     (map.getSource(DISCOVERED_SOURCE) as maplibregl.GeoJSONSource).setData({ type: 'FeatureCollection', features: discoveries.map(segment => ({ type: 'Feature', properties: { roadType: segment.roadType }, geometry: segment.geometry })) } as any);
   }, [discoveries, ready]);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!ready || !map?.getSource(AREA_SOURCE)) return;
+    (map.getSource(AREA_SOURCE) as maplibregl.GeoJSONSource).setData(selected?.area.geometry
+      ? { type: 'FeatureCollection', features: [{ type: 'Feature', properties: { selected: true }, geometry: selected.area.geometry }] }
+      : { type: 'FeatureCollection', features: [] });
+  }, [ready, selected?.area.geometry, selected?.area.id]);
   useEffect(() => { const map = mapRef.current; if (!map || !selected?.area.geometry) return; const [west, south, east, north] = bbox(selected.area.geometry as any); map.fitBounds([[west, south], [east, north]], { padding: { top: 116, right: 36, bottom: 244, left: 36 }, maxZoom: 14, duration: 600 }); }, [selected?.area.id, selected?.area.geometry]);
   return <div className="progress-map-canvas"><div ref={containerRef} className="maplibre-container maplibre-container--ready" aria-label="Area progress map" /></div>;
 }
@@ -215,6 +257,18 @@ export function AreaProgressView({ location, discoveries }: { location: { lng: n
       setSelected(record);
     }).catch(cause => setError(message(cause)));
   };
+  useEffect(() => {
+    const controller = new AbortController();
+    void lookupAreas(centre[0], centre[1], controller.signal).then(async ({ areas }) => {
+      const candidate = areas.filter(record => record.area.adminLevel >= 7 && record.area.adminLevel <= 9).sort((left, right) => right.area.adminLevel - left.area.adminLevel)[0];
+      if (!candidate) return;
+      const record = await loadArea(candidate.area.id, controller.signal, true);
+      if (controller.signal.aborted) return;
+      setRecords(current => [...current.filter(item => item.area.id !== record.area.id), record]);
+      setSelected(record);
+    }).catch(cause => { if (!controller.signal.aborted) setError(message(cause)); });
+    return () => controller.abort();
+  }, [centre[0], centre[1]]);
   const hoveredRecord = hovered ? records.find(record => record.area.id === hovered.id) : null;
   // Hover stays lightweight: values are reused after an area has been selected
   // and calculated in the card's Web Worker, never in a mouse-move handler.
