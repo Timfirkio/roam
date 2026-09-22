@@ -5,7 +5,7 @@ import pg from 'pg';
 
 const [regionId, countryCode, pbf, ...flags] = process.argv.slice(2);
 const databaseUrl = process.env.AREA_DATABASE_URL;
-const replacementRegionIds = [];
+const replacementRegionIds = (process.env.IMPORT_REPLACE_REGIONS ?? '').split(',').filter(Boolean);
 let downloadUrl = process.env.OSM_DOWNLOAD_URL ?? 'manual-import';
 for (let index = 0; index < flags.length; index += 1) {
   if (flags[index] === '--replace-region') replacementRegionIds.push(flags[++index]);
@@ -34,10 +34,17 @@ try {
   if (imported.status !== 0) throw new Error(`osm2pgsql exited with ${imported.status}.`);
   await pool.query('begin');
   // Relations and ways can appear in overlapping extracts. Replacing the
-  // smaller source catalog in the same transaction avoids primary-key
-  // collisions and keeps every live boundary tied to one road source.
+  // explicitly superseded catalog in the same transaction keeps the live
+  // boundaries and their road source together. The environment form is used
+  // by Compose because command-line flags can be consumed by its own parser.
   const regionsToReplace = [...new Set([regionId, ...replacementRegionIds])];
   await pool.query('delete from osm.import_regions where id = any($1::text[])', [regionsToReplace]);
+  // A prior extract may have used a different catalog ID. Remove only its
+  // boundary records that collide with this source; its remaining catalog can
+  // still be refreshed independently, while the new source owns each relation.
+  await pool.query(`delete from osm.boundaries existing
+    using osm_import.boundaries_stage staged
+    where existing.osm_relation_id = staged.osm_relation_id`);
   await pool.query(`insert into osm.import_regions (id, name, country_code, download_url, source_version, status, imported_at)
     values ($1, $1, $2, $3, $1, 'importing', now())`, [regionId, countryCode, downloadUrl]);
   await pool.query(`insert into osm.boundaries (id, source_region_id, osm_relation_id, osm_version, name, admin_level, country_code, tags, geometry, geometry_3857, boundary_version, source_version)

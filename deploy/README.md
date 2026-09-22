@@ -42,7 +42,7 @@ stored road-length totals after an import, then process the queue with one or
 two workers:
 
 ```bash
-docker compose --env-file .env.areas.production --profile import run --rm importer stockholm-county SE /data/stockholm-county.osm.pbf --replace-region stockholm
+docker compose --env-file .env.areas.production --profile import run --rm -e IMPORT_REPLACE_REGIONS=stockholm importer stockholm-county SE /data/stockholm-county.osm.pbf
 docker compose --env-file .env.areas.production run --rm --no-deps area-api node scripts/queue-area-coverage.mjs stockholm-county 4 10
 docker compose --env-file .env.areas.production run --rm --no-deps area-api node scripts/process-area-coverage.mjs 2
 ```
