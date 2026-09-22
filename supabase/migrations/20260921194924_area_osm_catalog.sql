@@ -93,6 +93,18 @@ as $$
       b.id,
       b.name,
       b.admin_level,
+      case
+        -- Municipalities without any OSM level-9 relation remain visible at
+        -- municipal-region zoom. Municipalities with level 9 children never
+        -- overlap their children in that tier.
+        when b.admin_level = 7 and not exists (
+          select 1 from osm.boundaries child
+          where child.source_region_id = b.source_region_id
+            and child.admin_level = 9
+            and gis.ST_Covers(b.geometry, gis.ST_PointOnSurface(child.geometry))
+        ) then 9
+        else b.admin_level
+      end as display_level,
       b.country_code,
       gis.ST_AsMVTGeom(b.geometry_3857, tile_bounds.geom, 4096, 64, true) as geom
     from osm.boundaries b

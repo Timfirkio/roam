@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import maplibregl, { type Map } from 'maplibre-gl';
+import maplibregl, { type Map as MapLibreMap } from 'maplibre-gl';
 import { bbox } from '@turf/turf';
 import { MagnifyingGlass, X } from '@phosphor-icons/react';
 import { areaApiBase, calculateArea, loadArea, searchLocations, type LocationSearchResult } from './area-client';
@@ -23,12 +23,36 @@ const DISCOVERED_SOURCE = 'roam-progress-discovered-network';
 const DISCOVERED_LAYER = 'roam-progress-discovered-network-line';
 const distance = (meters: number) => `${(meters / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 })} km`;
 const message = (error: unknown) => error instanceof Error ? error.message : 'Could not load area coverage. Try again.';
+const exploredTotalsCache = new Map<string, AreaTotals>();
+const discoveryVersions = new WeakMap<DiscoveredSegment[], string>();
+
+function discoveryVersion(discoveries: DiscoveredSegment[]) {
+  const cached = discoveryVersions.get(discoveries);
+  if (cached) return cached;
+  const latest = discoveries.at(-1);
+  const version = `${discoveries.length}:${latest?.id ?? ''}:${latest?.discoveredAt ?? 0}`;
+  discoveryVersions.set(discoveries, version);
+  return version;
+}
+
+function cachedExploredTotals(key: string) {
+  const memory = exploredTotalsCache.get(key);
+  if (memory) return memory;
+  try {
+    const stored = localStorage.getItem(`roam.area-progress.${key}`);
+    if (!stored) return undefined;
+    const totals = JSON.parse(stored) as AreaTotals;
+    if (!Number.isFinite(totals.lengthMeters)) return undefined;
+    exploredTotalsCache.set(key, totals);
+    return totals;
+  } catch { return undefined; }
+}
 
 export function AreaCoverageCard({ record, discoveries, onUpdate, onExplored }: { record: AreaRecord; discoveries: DiscoveredSegment[]; onUpdate: (record: AreaRecord) => void; onExplored: (areaId: string, totals: AreaTotals) => void }) {
   const { area, job } = record;
   const [requesting, setRequesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const explored = useExploredAreaTotals(discoveries, area.geometry);
+  const explored = useExploredAreaTotals(discoveries, area.geometry, `${area.id}:${area.boundaryVersion}`);
   useEffect(() => { if (explored) onExplored(area.id, explored); }, [area.id, explored, onExplored]);
   const ready = job?.status === 'ready' && job.totals;
   const percentage = ready && explored && ready.lengthMeters > 0 ? explored.lengthMeters / ready.lengthMeters * 100 : null;
@@ -53,20 +77,28 @@ export function AreaCoverageCard({ record, discoveries, onUpdate, onExplored }: 
   </Item>;
 }
 
-function useExploredAreaTotals(discoveries: DiscoveredSegment[], geometry: AreaRecord['area']['geometry']) {
+function useExploredAreaTotals(discoveries: DiscoveredSegment[], geometry: AreaRecord['area']['geometry'], areaKey: string) {
   const workerRef = useRef<Worker | null>(null);
   const requestId = useRef(0);
-  const [totals, setTotals] = useState<AreaTotals | null | undefined>(null);
+  const [result, setResult] = useState<{ key: string; totals: AreaTotals } | null>(null);
+  const key = geometry ? `${areaKey}:${discoveryVersion(discoveries)}` : null;
+  const cached = key ? cachedExploredTotals(key) : undefined;
+  const totals = key === null ? null : result?.key === key ? result.totals : cached;
   useEffect(() => {
-    if (!geometry) { setTotals(null); return; }
+    if (!geometry || !key) return;
+    if (cached) { setResult({ key, totals: cached }); return; }
     const worker = workerRef.current ?? (workerRef.current = new Worker(new URL('./area-progress-worker.ts', import.meta.url), { type: 'module' }));
     const id = ++requestId.current;
-    setTotals(undefined);
-    const receive = ({ data }: MessageEvent<{ id: number; totals: AreaTotals }>) => { if (data.id === id) setTotals(data.totals); };
+    const receive = ({ data }: MessageEvent<{ id: number; totals: AreaTotals }>) => {
+      if (data.id !== id) return;
+      exploredTotalsCache.set(key, data.totals);
+      try { localStorage.setItem(`roam.area-progress.${key}`, JSON.stringify(data.totals)); } catch {}
+      setResult({ key, totals: data.totals });
+    };
     worker.addEventListener('message', receive);
     worker.postMessage({ id, discoveries, geometry });
     return () => worker.removeEventListener('message', receive);
-  }, [discoveries, geometry]);
+  }, [cached, discoveries, geometry, key]);
   useEffect(() => () => workerRef.current?.terminate(), []);
   return totals;
 }
@@ -86,7 +118,7 @@ type HoveredArea = { id: string; name: string; adminLevel: number };
 
 function ProgressMap({ centre, discoveries, selected, onSelectId, onHover }: { centre: [number, number]; discoveries: DiscoveredSegment[]; selected: AreaRecord | null; onSelectId: (id: string) => void; onHover: (area: HoveredArea | null) => void }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<Map | null>(null);
+  const mapRef = useRef<MapLibreMap | null>(null);
   const onSelectIdRef = useRef(onSelectId); onSelectIdRef.current = onSelectId;
   const onHoverRef = useRef(onHover); onHoverRef.current = onHover;
   const hoveredId = useRef<string | null>(null);
@@ -114,7 +146,9 @@ function ProgressMap({ centre, discoveries, selected, onSelectId, onHover }: { c
       map.addSource(AREA_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
       if (import.meta.env.VITE_AREA_CATALOG !== 'false') {
         map.addSource(AREA_TILE_SOURCE, { type: 'vector', tiles: [`${areaApiBase}/tiles/{z}/{x}/{y}.mvt`], minzoom: 0, maxzoom: 22, promoteId: 'id' });
-        const levelFilter = () => ['==', ['get', 'admin_level'], hierarchyLevel(map.getZoom())] as any;
+        const levelFilter = () => hierarchyLevel(map.getZoom()) === 9
+          ? ['==', ['get', 'display_level'], 9] as any
+          : ['==', ['get', 'admin_level'], hierarchyLevel(map.getZoom())] as any;
         map.addLayer({ id: AREA_TILE_FILL, type: 'fill', source: AREA_TILE_SOURCE, 'source-layer': 'boundaries', filter: levelFilter(), paint: { 'fill-color': '#2bb8b0', 'fill-opacity': ['case', ['boolean', ['feature-state', 'hover'], false], 0.22, 0.075] } } as any);
         map.addLayer({ id: AREA_TILE_LINE, type: 'line', source: AREA_TILE_SOURCE, 'source-layer': 'boundaries', filter: levelFilter(), paint: { 'line-color': ['case', ['boolean', ['feature-state', 'hover'], false], '#f0eee7', '#5fbbb4'], 'line-opacity': 0.94, 'line-width': ['interpolate', ['linear'], ['zoom'], 6, 0.8, 12, 1.35, 18, 2.3] } } as any);
         map.on('zoomend', () => {
