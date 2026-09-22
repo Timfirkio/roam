@@ -87,6 +87,16 @@ can be clipped locally. Each temporary county extract is removed on completion.
 After every county is ready, queue levels 2–9 once to produce the final
 nationwide, län, and district totals.
 
+To schedule one batch nightly after the bootstrap completes:
+
+```bash
+cp deploy/systemd/roam-sweden-batch.service /etc/systemd/system/
+cp deploy/systemd/roam-sweden-batch.timer /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now roam-sweden-batch.timer
+systemctl list-timers roam-sweden-batch.timer
+```
+
 ## Update the app
 
 Build the frontend with:

@@ -1,0 +1,10 @@
+[Unit]
+Description=Roam incremental Sweden road catalog batch
+Wants=docker.service
+After=docker.service
+ConditionPathExists=/srv/roam-areas/data/sweden-latest.osm.pbf
+
+[Service]
+Type=oneshot
+WorkingDirectory=/srv/roam-areas
+ExecStart=/srv/roam-areas/deploy/run-sweden-batches.sh next

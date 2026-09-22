@@ -1,0 +1,11 @@
+[Unit]
+Description=Run one Roam Sweden catalog batch overnight
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+Persistent=true
+RandomizedDelaySec=15m
+Unit=roam-sweden-batch.service
+
+[Install]
+WantedBy=timers.target
