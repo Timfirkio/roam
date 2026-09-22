@@ -18,6 +18,7 @@ exec flock -n "$LOCK_FILE" sh -c '
   docker compose --env-file "'"$ENV_FILE"'" exec -T postgres sh -c '\''pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"'\'' > "backups/stockholm-pre-county-$(date -u +%Y%m%dT%H%M%SZ).sql"
   curl --fail --location --retry 4 --retry-delay 15 --output "'"$PBF"'.part" "'"$PBF_URL"'"
   mv "'"$PBF"'.part" "'"$PBF"'"
+  docker compose --env-file "'"$ENV_FILE"'" --profile import build importer
   docker compose --env-file "'"$ENV_FILE"'" --profile import run --rm -e IMPORT_REPLACE_REGIONS=stockholm importer stockholm-county SE /data/sweden_stockholm_europe.pbf --download-url "'"$PBF_URL"'"
   docker compose --env-file "'"$ENV_FILE"'" run --rm --no-deps area-api node scripts/queue-area-coverage.mjs stockholm-county 4 10
   docker compose --env-file "'"$ENV_FILE"'" run --rm --no-deps area-api node scripts/process-area-coverage.mjs 2
