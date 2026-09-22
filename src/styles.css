@@ -490,3 +490,14 @@ aside.rounded-control.border-l-2.border-accent { display: none; }
 .map-compass { opacity: 0; visibility: hidden; pointer-events: none; transform: translateY(-3px); transition: opacity 180ms ease, transform 180ms ease, visibility 0s linear 180ms; }
 .map-compass--visible { opacity: 1; visibility: visible; pointer-events: auto; transform: translateY(0); transition-delay: 0s; }
 @media (prefers-reduced-motion: reduce) { .map-compass { transition: none; } }
+
+/* The map header is measured as one top exclusion zone for the crosshair,
+   keeping its target centered in the unobstructed map viewport. */
+.map-top-right { width: 100%; justify-items: stretch; }
+.map-top-actions { display: flex; min-height: var(--spacing-control); align-items: center; justify-content: space-between; gap: calc(var(--spacing) * 3); }
+.map-header .map-compass { justify-self: end; }
+.map-header .progress-mode-toggle { min-height: var(--spacing-control); border-radius: var(--radius-pill); box-shadow: var(--map-control-shadow); color: var(--color-paper-50); }
+.map-header .progress-mode-toggle[aria-pressed="true"] { border-color: var(--color-accent); background: var(--color-accent-button); }
+.progress-region-badge { display: grid; min-width: 40px; height: 28px; place-items: center; border: 1px solid color-mix(in srgb, var(--color-accent) 78%, var(--color-paper-50)); border-radius: var(--radius-pill); background: color-mix(in srgb, var(--color-ink-900) 88%, transparent); padding: 0 7px; box-shadow: 0 3px 10px #0009; color: var(--color-paper-50); font-family: var(--font-mono); font-size: var(--text-label); font-weight: 600; line-height: 1; white-space: nowrap; backdrop-filter: blur(8px); cursor: pointer; }
+.progress-region-badge:hover, .progress-region-badge:focus-visible { border-color: var(--color-accent); background: var(--color-accent-button-hover); outline: none; }
+.progress-region-badge--current { border-color: var(--color-paper-50); background: var(--color-accent-button-hover); }
