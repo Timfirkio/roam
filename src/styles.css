@@ -143,6 +143,7 @@ button:focus-visible, [href]:focus-visible, [tabindex]:focus-visible, input:focu
 .map-legend { bottom: 104px; left: 24px; display: flex; gap: 16px; color: #9ba39f; font-size: 9px; letter-spacing: .08em; }.map-legend span { display: flex; align-items: center; gap: 6px; }.legend-line { display: inline-block; width: 20px; height: 2px; background: #e9e7df; }.legend-line--gravel { background: #d59c67; }.legend-line--hidden { opacity: .3; }.map-coordinates { bottom: 78px; right: 24px; display: flex; flex-direction: column; align-items: flex-end; color: #64716c; font-size: 9px; line-height: 1.6; }.map-scale { bottom: 79px; left: 24px; padding-top: 5px; width: 52px; border-top: 1px solid #aeb5b2; color: #9ba39f; font-size: 8px; }
 .session-dock { bottom: 18px; left: 18px; right: 18px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border: 1px solid #3a4542; background: #111718e8; backdrop-filter: blur(12px); }.dock-label { display: block; margin-bottom: 3px; color: #7c8783; font-size: 8px; letter-spacing: .1em; }.session-dock strong { font-size: 11px; letter-spacing: .04em; }.track-button { border: 1px solid #f0ede3; padding: 10px 13px; background: #f0ede3; color: #101314; font-size: 10px; font-weight: 700; letter-spacing: .05em; }.track-button--active { border-color: #d59c67; background: #d59c67; }.track-button__icon { margin-right: 8px; }
 .bottom-nav { display: flex; height: 76px; flex-shrink: 0; border-top: 1px solid #222a29; background: #0d1011; }.nav-item { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; border: 0; background: transparent; color: #626e69; font-size: 9px; letter-spacing: .08em; }.nav-item--active { color: #f0ede3; }.nav-icon { font-size: 19px; line-height: 1; }.nav-item--active .nav-icon { color: #d59c67; }
+.bottom-nav .nav-label { font-size: 8px; }
 .placeholder-view { min-height: calc(100svh - 76px); padding: 34px 24px; background: radial-gradient(circle at 20% 0%, #19211f, #0a0b0c 55%); }.eyebrow { margin: 0; color: #d59c67; font-size: 10px; letter-spacing: .15em; }.placeholder-view h1 { margin: 38px 0 12px; font-size: clamp(38px, 10vw, 64px); letter-spacing: -.08em; }.placeholder-view p:not(.eyebrow) { max-width: 480px; color: #8c9893; font-size: 14px; line-height: 1.7; }.empty-state { margin-top: 70px; padding: 18px; border: 1px dashed #3a4542; color: #9fa9a4; font-size: 11px; letter-spacing: .12em; }.empty-state span { color: #59645f; font-size: 9px; }
 .progress-view { min-height: calc(100svh - 76px); overflow: auto; padding: 34px 24px 48px; background: radial-gradient(circle at 20% 0%, #19211f, #0a0b0c 55%); }.progress-header h1 { margin: 34px 0 12px; font-size: clamp(38px, 10vw, 64px); letter-spacing: -.08em; }.progress-header > p:last-child { max-width: 480px; color: #8c9893; font-size: 14px; line-height: 1.7; }.progress-current { display: flex; max-width: 680px; flex-direction: column; gap: 6px; margin: 38px 0 18px; padding: 16px; border: 1px solid #d59c67; background: #151b19; }.progress-label { color: #d59c67; font-size: 9px; letter-spacing: .14em; }.progress-current strong { font-size: 15px; }.progress-current span:last-child { color: #728079; font-size: 9px; }.progress-areas { display: grid; max-width: 680px; gap: 10px; }.progress-area { padding: 15px 16px; border: 1px solid #293331; background: #111615; }.progress-area--current { border-color: #596b63; }.progress-area-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }.progress-area-top div { display: flex; flex-direction: column; gap: 4px; }.progress-area-top strong { font-size: 13px; }.progress-area-top span { color: #728079; font-size: 9px; }.progress-area-top b { color: #f0ede3; font-size: 16px; }.progress-bar { height: 4px; margin: 14px 0 10px; background: #28312e; }.progress-bar i { display: block; height: 100%; background: #d59c67; }.progress-area small { color: #7e8985; font-size: 8px; letter-spacing: .04em; }
 @media (min-width: 720px) { .app-shell { max-width: 1180px; margin: 0 auto; border-left: 1px solid #202624; border-right: 1px solid #202624; } .session-dock { left: 28px; right: 28px; bottom: 24px; }.map-header { padding-left: 32px; padding-right: 32px; } }
@@ -186,8 +187,14 @@ aside.rounded-control.border-l-2.border-accent { display: none; }
 .debug-menu .switch--on::after, .setting-toggle--on::after { background: #f0ede3; transform: translateX(16px); }
 .debug-menu .debug-value { min-width: 0; height: auto; padding: 0; border: 0; border-radius: 0; background: transparent; color: #f0ede3; font-size: 8px; }
 .map-compass { position: absolute; z-index: 2; top: 20px; right: 12px; }.map-compass button { position: relative; display: flex; width: 38px; height: 38px; align-items: center; justify-content: center; padding: 0; border-radius: 50%; font-size: 8px; line-height: 1; }.compass-rotor { position: absolute; inset: 0; transition: transform .15s ease-out; transform-origin: center; }.compass-needle { position: absolute; top: 50%; left: 50%; display: flex; flex-direction: column; align-items: center; gap: 1px; font-style: normal; line-height: .7; transform: translate(-50%, -50%); transform-origin: center; }.compass-north-label { position: absolute; top: 1px; left: 50%; color: #7f8b86; font-size: 8px; font-weight: 700; transform: translateX(-50%); }.compass-north { color: #d59c67; font-size: 14px; }.compass-south { color: #f0ede3; font-size: 14px; }.map-mode-toggle { font-size: 9px !important; letter-spacing: .04em; }
-.location-control { color: #2bb8b0 !important; }.location-control span { display: block; font-size: 18px; line-height: 1; text-shadow: 0 0 10px #2bb8b088; }.location-control--following { border-color: #87f4e8; background: #173b3bdd; color: #f0fffd !important; box-shadow: 0 0 0 1px #2bb8b055 inset, 0 0 16px #2bb8b066; }.location-control--following span { color: #b9fff7; font-size: 16px; text-shadow: 0 0 10px #2bb8b0cc; }
-.location-control--active { border-color: #b9fff7; background: #1a5250ee; box-shadow: 0 0 0 2px #2bb8b077 inset, 0 0 22px #2bb8b0bb; animation: location-follow-glow 1.8s ease-in-out infinite; }.location-control--active span { transform: translateY(-1px); }.player-marker__arrow { transition-duration: 320ms; } @keyframes location-follow-glow { 50% { box-shadow: 0 0 0 3px #b9fff766 inset, 0 0 30px #2bb8b0dd; } } @media (prefers-reduced-motion: reduce) { .location-control--active { animation: none; } }
+.location-control { color: var(--color-paper-50) !important; }
+.location-control svg { color: var(--color-paper-50); transition: color 180ms ease, filter 180ms ease; }
+.location-control--active svg { color: var(--color-location-500); }
+.location-control--active { animation: location-follow-glow 1.8s ease-in-out infinite; }
+.location-control--active svg { filter: drop-shadow(0 0 5px color-mix(in srgb, var(--color-location-500) 72%, transparent)); }
+.player-marker__arrow { transition-duration: 320ms; }
+@keyframes location-follow-glow { 50% { box-shadow: 0 5px 14px rgba(0, 0, 0, .34), 0 0 0 4px color-mix(in srgb, var(--color-location-500) 34%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .location-control--active { animation: none; } }
 
 /* The ride dock is persistent on the map, so every fixed control shares the
    same edge inset and leaves one space-4 gap above the dock. */
@@ -270,7 +277,7 @@ aside.rounded-control.border-l-2.border-accent { display: none; }
 .map-layers-panel label small { color: var(--color-text-subtle); font-size: var(--text-label); line-height: var(--text-label--line-height); }
 .map-layers-panel [data-slot="switch"] { min-width: 34px; }
 .record-fab { position: absolute; z-index: 3; right: var(--spacing-map-edge); bottom: var(--spacing-map-edge); display: inline-flex; min-width: 84px; min-height: 44px; align-items: center; gap: 8px; border-radius: var(--radius-pill) !important; color: var(--color-text); font-weight: 400; box-shadow: 0 8px 24px #0008; }
-.record-fab svg { width: 14px; height: 14px; color: var(--color-paper-50); }
+.record-fab svg, .progress-mode-toggle svg { width: 20px; height: 20px; flex: none; color: var(--color-paper-50); }
 .session-dock { border-radius: var(--radius-pill); animation: session-dock-expand 260ms var(--ease-outdoor); }
 @keyframes session-dock-expand { from { opacity: 0; transform: translateY(12px) scale(.96); } to { opacity: 1; transform: translateY(0) scale(1); } }
 .map-view--has-session-dock .session-dock { right: 0; bottom: 76px; left: 0; min-height: var(--spacing-session-dock-height); border-right: 0; border-bottom: 0; border-left: 0; border-radius: 0; }
@@ -293,8 +300,7 @@ aside.rounded-control.border-l-2.border-accent { display: none; }
 .map-controls [data-slot="button"] svg, .debug-icon svg { width: 1.25rem; height: 1.25rem; }
 .map-debug .debug-menu { bottom: 52px; }
 .debug-menu label, .debug-menu button, .debug-menu div { min-height: 34px; box-sizing: border-box; }
-.location-control { color: #d6d8d1 !important; }
-.location-control--following { color: #f0fffd !important; }
+.location-control { color: var(--color-paper-50) !important; }
 .app-content { position: relative; flex: 0 0 calc(100svh - 76px); height: calc(100svh - 76px); min-height: 0; max-height: calc(100svh - 76px); overflow: hidden; }
 .app-content > section.overflow-auto { height: 100%; min-height: 0; }
 .app-content > section:not(.map-view) { padding-inline: 1rem !important; }
@@ -312,9 +318,11 @@ aside.rounded-control.border-l-2.border-accent { display: none; }
 .location-summary { display: grid; width: 100%; max-width: none; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: calc(var(--spacing) * 4); text-align: left; }
 .location-summary { display: block; padding: calc(var(--spacing) * 3) calc(var(--spacing) * 4); border-radius: var(--radius-control); }
 .district-progress-content { display: flex; min-width: 0; width: 100%; flex-direction: column; gap: calc(var(--spacing) * 0.5); }
-.district-progress-top { display: flex; align-items: flex-start; justify-content: space-between; gap: calc(var(--spacing) * 4); }
+.district-progress-top { position: relative; display: flex; align-items: flex-start; justify-content: space-between; gap: calc(var(--spacing) * 4); }
+.district-progress-top--loading .district-progress-title { padding-right: calc(var(--spacing) * 6); }
+.area-progress-loading { position: absolute; top: 50%; right: 0; color: var(--color-paper-100); transform: translateY(-50%); }
 .district-progress-content > * { min-width: 0; }
-.district-progress-title { display: flex; width: fit-content; align-items: center; gap: calc(var(--spacing) * 2); overflow: hidden; font-family: var(--font-sans); font-size: var(--text-body); font-weight: 600; line-height: 1.55; text-overflow: ellipsis; white-space: nowrap; }
+.district-progress-title { display: flex; width: fit-content; min-width: 0; align-items: center; gap: calc(var(--spacing) * 2); overflow: hidden; font-family: var(--font-sans); font-size: var(--text-body); font-weight: 600; line-height: 1.55; text-overflow: ellipsis; white-space: nowrap; }
 .district-progress-description { display: block; overflow: hidden; color: var(--color-text-subtle); font-size: var(--text-body); line-height: 1.55; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 .district-progress-description { font-family: var(--font-mono); }
 .location-summary .district-progress-title { color: var(--color-paper-50); font-size: var(--text-body); line-height: 1.55; }
@@ -373,8 +381,8 @@ aside.rounded-control.border-l-2.border-accent { display: none; }
     border-color: var(--color-danger-500) !important;
   }
 }
-.location-summary .district-progress-parent { margin-bottom: calc(var(--spacing) * .5); color: var(--color-text-subtle); }
-.location-summary .district-progress-title { font-size: var(--text-body); font-weight: 500; line-height: var(--text-body--line-height); }
+.location-summary .district-progress-parent { overflow: hidden; margin-bottom: calc(var(--spacing) * .5); color: var(--color-text-subtle); text-overflow: ellipsis; white-space: nowrap; }
+.location-summary .district-progress-title { width: 100%; font-size: var(--text-body); font-weight: 500; line-height: var(--text-body--line-height); }
 .location-summary .district-progress-title-context { color: var(--color-text-subtle); font-weight: 400; }
 .location-summary .district-progress-title-active { color: var(--color-text); font-weight: 600; }
 .municipality-progress-group { overflow: hidden; border: 1px solid var(--color-border); border-radius: var(--radius-panel); background: var(--color-surface-raised); }
@@ -473,6 +481,12 @@ aside.rounded-control.border-l-2.border-accent { display: none; }
 .map-controls [data-slot="button"], .map-header .map-compass button, .location-summary, .record-fab { box-shadow: var(--map-control-shadow); }
 .map-controls [data-slot="button"], .map-header .map-compass button, .record-fab { color: var(--color-paper-50); }
 .map-controls .location-control { color: var(--color-paper-50) !important; }
+.map-controls .location-control--following, .map-controls .location-control--active { border-color: var(--color-border); background: var(--color-surface-raised); color: var(--color-paper-50) !important; }
+.map-controls .location-control--following { box-shadow: var(--map-control-shadow); }
+.map-controls .location-control--active { box-shadow: var(--map-control-shadow); }
+.map-controls .location-control svg { color: var(--color-paper-50); }
+.map-controls .location-control--active svg { color: var(--color-location-500); }
+.map-controls .location-control--active svg { filter: drop-shadow(0 0 5px color-mix(in srgb, var(--color-location-500) 72%, transparent)); }
 .record-fab { box-shadow: var(--map-control-shadow); }
 .map-mode-toggle { font-size: calc(var(--text-body) - 1px) !important; font-weight: 500; letter-spacing: .02em; }
 .location-summary .district-progress-parent { order: 0; }
@@ -491,8 +505,8 @@ aside.rounded-control.border-l-2.border-accent { display: none; }
 .map-compass--visible { opacity: 1; visibility: visible; pointer-events: auto; transform: translateY(0); transition-delay: 0s; }
 @media (prefers-reduced-motion: reduce) { .map-compass { transition: none; } }
 
-/* The map header is measured as one top exclusion zone for the crosshair,
-   keeping its target centered in the unobstructed map viewport. */
+/* The progress card defines the top of the actionable map area. The compass
+   sits below it but does not reserve an entire map-width strip. */
 .map-top-right { width: 100%; justify-items: stretch; }
 .map-top-actions { display: flex; min-height: var(--spacing-control); align-items: center; justify-content: flex-end; }
 .map-header .map-compass { justify-self: end; }

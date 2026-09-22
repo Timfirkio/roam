@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import maplibregl, { type Map as MapLibreMap } from 'maplibre-gl';
 import { bbox } from '@turf/turf';
 import { MagnifyingGlass, X } from '@phosphor-icons/react';
-import { areaApiBase, calculateArea, loadArea, lookupAreas, searchLocations, type LocationSearchResult } from './area-client';
+import { areaTileUrlTemplate, calculateArea, loadArea, lookupAreas, searchLocations, type LocationSearchResult } from './area-client';
 import type { AreaRecord, AreaTotals } from './area-types';
 import type { DiscoveredSegment } from './discovery';
 import { installNetworkSource, NETWORK_SOURCE } from './network-source';
@@ -89,7 +89,7 @@ function AnimatedPercentage({ value, white = false }: { value: number | null; wh
   return <AnimatedProgressValue value={value} label={value === null ? '—' : `${Math.min(100, value).toFixed(1)}%`} className={className} />;
 }
 
-export function AreaCoverageCard({ record, discoveries, onUpdate, onExplored, parentAreaName, className, onClick }: { record: AreaRecord; discoveries: DiscoveredSegment[]; onUpdate: (record: AreaRecord) => void; onExplored: (areaId: string, totals: AreaTotals) => void; parentAreaName?: string; className?: string; onClick?: () => void }) {
+export function AreaCoverageCard({ record, discoveries, onUpdate, onExplored, parentAreaName, reserveParentArea = false, showActions = true, className, onClick }: { record: AreaRecord; discoveries: DiscoveredSegment[]; onUpdate: (record: AreaRecord) => void; onExplored: (areaId: string, totals: AreaTotals) => void; parentAreaName?: string; reserveParentArea?: boolean; showActions?: boolean; className?: string; onClick?: () => void }) {
   const { area, job } = record;
   const [requesting, setRequesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -99,9 +99,15 @@ export function AreaCoverageCard({ record, discoveries, onUpdate, onExplored, pa
   const percentage = ready && explored && ready.lengthMeters > 0 ? explored.lengthMeters / ready.lengthMeters * 100 : null;
   const inconsistent = percentage !== null && percentage > 100.1;
   const pending = job?.status === 'queued' || job?.status === 'running';
-  const segmentWidth = (type: keyof AreaTotals['byRoadType']) => ready && explored
-    ? Math.min(100, explored.byRoadType[type] / ready.lengthMeters * 100)
-    : 0;
+  const loading = refreshing || pending || requesting;
+  const previousSegmentWidthsRef = useRef<Partial<Record<keyof AreaTotals['byRoadType'], number>>>({});
+  useEffect(() => {
+    if (!ready || !explored || !isCurrent) return;
+    previousSegmentWidthsRef.current = Object.fromEntries(Object.entries(explored.byRoadType).map(([type, meters]) => [type, ready.lengthMeters > 0 ? Math.min(100, meters / ready.lengthMeters * 100) : 0]));
+  }, [explored, isCurrent, ready]);
+  const segmentWidth = (type: keyof AreaTotals['byRoadType']) => ready && explored && isCurrent
+    ? ready.lengthMeters > 0 ? Math.min(100, explored.byRoadType[type] / ready.lengthMeters * 100) : 0
+    : previousSegmentWidthsRef.current[type] ?? 0;
   async function calculate() {
     setRequesting(true); setError(null);
     try { onUpdate(await calculateArea(area.id)); } catch (cause) { setError(message(cause)); }
@@ -109,12 +115,12 @@ export function AreaCoverageCard({ record, discoveries, onUpdate, onExplored, pa
   }
   return <Item variant="outline" className={`area-progress-card ${className ?? ''}`} role={onClick ? 'button' : undefined} tabIndex={onClick ? 0 : undefined} onClick={onClick} onKeyDown={event => { if (onClick && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); onClick(); } }}>
     <ItemContent className="district-progress-content">
-      {parentAreaName && <div className="district-progress-parent roam-overline-sm"><ScrambleText text={parentAreaName} /></div>}
-      <div className="district-progress-top"><div className="district-progress-title"><ScrambleText text={area.name} /></div></div>
+      {(parentAreaName || reserveParentArea) && <div className="district-progress-parent roam-overline-sm">{parentAreaName ? <ScrambleText text={parentAreaName} /> : <span aria-hidden="true">&nbsp;</span>}</div>}
+      <div className={`district-progress-top${loading ? ' district-progress-top--loading' : ''}`} aria-busy={loading}><div className="district-progress-title"><ScrambleText text={area.name} /></div>{loading && <Spinner className="area-progress-loading" aria-label="Loading area progress" />}</div>
       <div className="progress-bar" aria-label={percentage !== null ? `${area.name}: ${Math.min(100, percentage).toFixed(1)} percent explored` : `${area.name}: coverage not calculated`}><i className="progress-bar__discovered"><em className="progress-bar__paved-roads" style={{ width: `${segmentWidth('paved-road')}%` }} /><em className="progress-bar__paved-cycleways" style={{ width: `${segmentWidth('cycleway')}%` }} /><em className="progress-bar__unpaved" style={{ width: `${segmentWidth('unpaved-path')}%` }} /></i></div>
-      <div className="district-progress-readouts"><ItemDescription className="district-progress-description">{explored ? <><AnimatedProgressValue value={explored.lengthMeters} label={distance(explored.lengthMeters)} className="area-progress-distance" /><span className="district-progress-distance-separator"> / </span><AnimatedProgressValue value={ready ? ready.lengthMeters : null} label={ready ? distance(ready.lengthMeters) : '…'} className="area-progress-distance" /></> : ready ? <><AnimatedProgressValue value={0} label="0 km" className="area-progress-distance" /><span className="district-progress-distance-separator"> / </span><AnimatedProgressValue value={ready.lengthMeters} label={distance(ready.lengthMeters)} className="area-progress-distance" /></> : explored === undefined ? 'Calculating your progress…' : 'Coverage not calculated'}</ItemDescription><div className="district-progress-percent"><AnimatedPercentage white value={percentage !== null && !inconsistent ? percentage : null} /></div></div>
-      <div role="status" className="area-progress-status">{refreshing && explored && <span>Updating progress…</span>}{calculationError && <span>Progress could not be calculated: {calculationError}</span>}{pending && <span>{job.status === 'queued' ? 'Queued' : `Calculating · ${job.completedTiles} of ${job.totalTiles} tiles`}</span>}{job?.status === 'failed' && <span>{job.error ?? 'Calculation failed. Retry to resume.'}</span>}{ready && ready.lengthMeters === 0 && 'No eligible roads in this map snapshot.'}{inconsistent && 'The saved discoveries and current map differ. Coverage needs reconciliation.'}{error && <span>{error}</span>}</div>
-      {!ready && <ItemActions className="area-progress-actions"><Button variant="secondary" size="small" disabled={pending || requesting} onClick={event => { event.stopPropagation(); void calculate(); }}>{requesting ? <Spinner /> : null}{job?.status === 'failed' ? 'Retry calculation' : 'Calculate coverage'}</Button></ItemActions>}
+      <div className="district-progress-readouts"><ItemDescription className="district-progress-description">{explored ? <><AnimatedProgressValue value={explored.lengthMeters} label={distance(explored.lengthMeters)} className="area-progress-distance" /><span className="district-progress-distance-separator"> / </span><AnimatedProgressValue value={ready ? ready.lengthMeters : null} label={ready ? distance(ready.lengthMeters) : '…'} className="area-progress-distance" /></> : ready ? <><AnimatedProgressValue value={null} label="—" className="area-progress-distance" /><span className="district-progress-distance-separator"> / </span><AnimatedProgressValue value={ready.lengthMeters} label={distance(ready.lengthMeters)} className="area-progress-distance" /></> : calculationError || error ? null : <span aria-hidden="true">&nbsp;</span>}</ItemDescription><div className="district-progress-percent"><AnimatedPercentage white value={percentage !== null && !inconsistent ? percentage : null} /></div></div>
+      <div role="status" className="area-progress-status">{calculationError && <span>Progress could not be calculated: {calculationError}</span>}{job?.status === 'failed' && <span>{job.error ?? 'Calculation failed. Retry to resume.'}</span>}{ready && ready.lengthMeters === 0 && 'No eligible roads in this map snapshot.'}{inconsistent && 'The saved discoveries and current map differ. Coverage needs reconciliation.'}{error && <span>{error}</span>}</div>
+      {showActions && !ready && <ItemActions className="area-progress-actions"><Button variant="secondary" size="small" disabled={pending || requesting} onClick={event => { event.stopPropagation(); void calculate(); }}>{requesting ? <Spinner /> : null}{job?.status === 'failed' ? 'Retry calculation' : 'Calculate coverage'}</Button></ItemActions>}
     </ItemContent>
   </Item>;
 }
@@ -124,10 +130,9 @@ function useExploredAreaTotals(discoveries: DiscoveredSegment[], geometry: AreaR
   const [calculationError, setCalculationError] = useState<string | null>(null);
   const key = geometry ? exploredTotalsKey(discoveries, areaKey) : null;
   const cached = key ? cachedExploredTotals(key) : undefined;
-  // Keep the previously rendered measurement on screen while the worker
-  // calculates the selected area's next value. Besides avoiding an empty bar,
-  // this gives the progress meter a meaningful value to animate from.
-  const totals = key === null ? null : result?.key === key ? result.totals : cached ?? result?.totals;
+  // Do not combine a previous area's explored totals with the new area's
+  // denominator while its measurement is still running.
+  const totals = key === null ? null : result?.key === key ? result.totals : cached ?? null;
   const refreshing = key !== null && result?.key !== key && !cached;
   const isCurrent = key !== null && (result?.key === key || Boolean(cached));
   useEffect(() => {
@@ -185,7 +190,7 @@ function ProgressMap({ centre, discoveries, selected, onSelectId, onHover }: { c
       } as any);
       map.addSource(AREA_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
       if (import.meta.env.VITE_AREA_CATALOG !== 'false') {
-        map.addSource(AREA_TILE_SOURCE, { type: 'vector', tiles: [`${areaApiBase}/tiles/{z}/{x}/{y}.mvt?v=2`], minzoom: 0, maxzoom: 22, promoteId: 'id' });
+        map.addSource(AREA_TILE_SOURCE, { type: 'vector', tiles: [areaTileUrlTemplate()], minzoom: 0, maxzoom: 22, promoteId: 'id' });
         const levelFilter = () => hierarchyLevel(map.getZoom()) === 9
           ? ['>=', ['get', 'admin_level'], 7] as any
           : ['==', ['get', 'admin_level'], hierarchyLevel(map.getZoom())] as any;

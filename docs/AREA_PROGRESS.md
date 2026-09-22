@@ -70,7 +70,9 @@ corepack pnpm dev
 ```
 
 By default, Vite proxies `/api/areas` to the hosted Roam catalog, allowing the
-local app to render regions without violating its production CORS policy. To
+local app to render regions without violating its production CORS policy.
+MapLibre's tile worker needs an absolute URL, so the app resolves this proxy
+path against the local page's origin before requesting vector tiles. To
 exercise the legacy worker locally, create `.env.areas` below, run
 `corepack pnpm areas:serve` in a second terminal, and set
 `AREA_API_PROXY_TARGET=http://127.0.0.1:8787` before starting Vite.
