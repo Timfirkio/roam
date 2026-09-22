@@ -145,7 +145,7 @@ function ProgressMap({ centre, discoveries, selected, onSelectId, onHover }: { c
       } as any);
       map.addSource(AREA_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
       if (import.meta.env.VITE_AREA_CATALOG !== 'false') {
-        map.addSource(AREA_TILE_SOURCE, { type: 'vector', tiles: [`${areaApiBase}/tiles/{z}/{x}/{y}.mvt`], minzoom: 0, maxzoom: 22, promoteId: 'id' });
+        map.addSource(AREA_TILE_SOURCE, { type: 'vector', tiles: [`${areaApiBase}/tiles/{z}/{x}/{y}.mvt?v=2`], minzoom: 0, maxzoom: 22, promoteId: 'id' });
         const levelFilter = () => hierarchyLevel(map.getZoom()) === 9
           ? ['==', ['get', 'display_level'], 9] as any
           : ['==', ['get', 'admin_level'], hierarchyLevel(map.getZoom())] as any;

@@ -298,7 +298,7 @@ function styleRoamMap(map: Map, showDiscovered: boolean, is3D: boolean, showBuil
     });
   }
   if (import.meta.env.VITE_AREA_CATALOG !== 'false') {
-    if (!map.getSource(REGION_BOUNDARIES_SOURCE)) map.addSource(REGION_BOUNDARIES_SOURCE, { type: 'vector', tiles: [`${areaApiBase}/tiles/{z}/{x}/{y}.mvt`], minzoom: 0, maxzoom: 22, promoteId: 'id' });
+    if (!map.getSource(REGION_BOUNDARIES_SOURCE)) map.addSource(REGION_BOUNDARIES_SOURCE, { type: 'vector', tiles: [`${areaApiBase}/tiles/{z}/{x}/{y}.mvt?v=2`], minzoom: 0, maxzoom: 22, promoteId: 'id' });
     if (!map.getLayer(REGION_BOUNDARIES_FILL)) map.addLayer({ id: REGION_BOUNDARIES_FILL, type: 'fill', source: REGION_BOUNDARIES_SOURCE, 'source-layer': 'boundaries', paint: { 'fill-color': '#2bb8b0', 'fill-opacity': 0.045 } } as any, firstRoadLayer);
     if (!map.getLayer(REGION_BOUNDARIES_LINE)) map.addLayer({ id: REGION_BOUNDARIES_LINE, type: 'line', source: REGION_BOUNDARIES_SOURCE, 'source-layer': 'boundaries', paint: { 'line-color': '#5fbbb4', 'line-opacity': 0.72, 'line-width': ['interpolate', ['linear'], ['zoom'], 6, 0.8, 12, 1.25, 18, 2] } } as any);
     refreshMapBoundaryLevel(map);
