@@ -51,6 +51,10 @@ try {
   // by Compose because command-line flags can be consumed by its own parser.
   const regionsToReplace = [...new Set([regionId, ...replacementRegionIds])];
   await pool.query('delete from osm.import_regions where id = any($1::text[])', [regionsToReplace]);
+  // This catalog deliberately serves only the administrative hierarchy the
+  // product displays. A nationwide boundary refresh must also remove older,
+  // more granular records left by a previous regional import.
+  if (boundariesOnly) await pool.query('delete from osm.boundaries where country_code = $1 and (admin_level < 2 or admin_level > 9)', [countryCode]);
   // A prior extract may have used a different catalog ID. Remove only its
   // boundary records that collide with this source; its remaining catalog can
   // still be refreshed independently, while the new source owns each relation.
