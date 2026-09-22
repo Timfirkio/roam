@@ -1,0 +1,99 @@
+import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import pg from 'pg';
+import { RULES_VERSION } from '../server/area-network.mjs';
+
+const databaseUrl = process.env.AREA_DATABASE_URL;
+const pbf = process.env.SWEDEN_PBF ?? '/data/sweden-latest.osm.pbf';
+const requestedAreaId = process.argv[2];
+if (!databaseUrl) throw new Error('AREA_DATABASE_URL is required.');
+
+const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+const pool = new pg.Pool({ connectionString: databaseUrl });
+
+function toPoly(geometry, name) {
+  const polygons = geometry.type === 'Polygon' ? [geometry.coordinates] : geometry.coordinates;
+  const lines = [name.replace(/[^A-Za-z0-9_-]/g, '-') || 'sweden-batch'];
+  let index = 1;
+  for (const polygon of polygons) {
+    polygon.forEach((ring, ringIndex) => {
+      lines.push(`${ringIndex === 0 ? '' : '!'}${index++}`);
+      for (const [lng, lat] of ring) lines.push(`${lng} ${lat}`);
+      lines.push('END');
+    });
+  }
+  lines.push('END', '');
+  return lines.join('\n');
+}
+
+function run(command, args, environment = {}) {
+  const result = spawnSync(command, args, { stdio: 'inherit', env: { ...process.env, ...environment } });
+  if (result.error) throw new Error(`${command} could not start: ${result.error.message}`);
+  if (result.status !== 0) throw new Error(`${command} exited with ${result.status}.`);
+}
+
+async function queueCoverage(areaId) {
+  const { rows } = await pool.query(`
+    select child.id, child.boundary_version, child.source_version
+    from osm.boundaries parent
+    join osm.boundaries child on child.country_code = 'SE'
+      and child.admin_level between 7 and 9
+      and gis.ST_Covers(parent.geometry, gis.ST_PointOnSurface(child.geometry))
+    where parent.id = $1
+    order by child.admin_level, child.name`, [areaId]);
+  if (!rows.length) throw new Error(`No Swedish municipality or level-9 boundaries found inside ${areaId}.`);
+  await pool.query(`delete from osm.coverage_jobs job using osm.boundaries child, osm.boundaries parent
+    where parent.id = $1 and job.area_id = child.id and child.country_code = 'SE'
+      and child.admin_level between 7 and 9
+      and gis.ST_Covers(parent.geometry, gis.ST_PointOnSurface(child.geometry))`, [areaId]);
+  const values = rows.map(row => [digest([row.id, row.boundary_version, row.source_version, RULES_VERSION]), row.id, row.boundary_version, row.source_version, RULES_VERSION]);
+  const placeholders = values.map((_, index) => `($${index * 5 + 1}, $${index * 5 + 2}, $${index * 5 + 3}, $${index * 5 + 4}, $${index * 5 + 5}, 'queued')`).join(', ');
+  await pool.query(`insert into osm.coverage_jobs (id, area_id, boundary_version, source_version, rules_version, status) values ${placeholders}`, values.flat());
+  return rows.length;
+}
+
+let batch;
+let temporaryDirectory;
+try {
+  await pool.query('begin');
+  const { rows } = await pool.query(`
+    select batch.area_id, batch.source_region_id, batch.name, gis.ST_AsGeoJSON(boundary.geometry)::jsonb as geometry,
+      exists(select 1 from osm.roads where source_region_id = batch.source_region_id) as has_roads
+    from osm.sweden_batches batch join osm.boundaries boundary on boundary.id = batch.area_id
+    where batch.status in ('pending', 'failed') ${requestedAreaId ? 'and batch.area_id = $1' : ''}
+    order by case when batch.area_id = 'relation/54391' then 0 else 1 end, gis.ST_Area(boundary.geometry), batch.name
+    limit 1 for update skip locked`, requestedAreaId ? [requestedAreaId] : []);
+  batch = rows[0];
+  if (!batch) throw new Error(requestedAreaId ? `No pending Sweden batch for ${requestedAreaId}.` : 'No Sweden county batches are pending.');
+  await pool.query(`update osm.sweden_batches set status = 'running', error = null, started_at = now(), updated_at = now() where area_id = $1`, [batch.area_id]);
+  await pool.query('commit');
+
+  if (!batch.has_roads) {
+    temporaryDirectory = `/tmp/roam-${batch.source_region_id}`;
+    mkdirSync(temporaryDirectory, { recursive: true });
+    const polygon = resolve(temporaryDirectory, 'boundary.poly');
+    const extract = resolve(temporaryDirectory, 'roads.osm.pbf');
+    writeFileSync(polygon, toPoly(batch.geometry, batch.source_region_id));
+    run('osmium', ['extract', '--strategy=complete_ways', '--polygon', polygon, '--output', extract, '--overwrite', pbf]);
+    run('node', ['scripts/import-osm-region.mjs', batch.source_region_id, 'SE', extract, '--roads-only'], { OSM2PGSQL_CACHE_MB: process.env.OSM2PGSQL_CACHE_MB ?? '768', OSM_DOWNLOAD_URL: 'https://download.geofabrik.de/europe/sweden-latest.osm.pbf' });
+  }
+  const count = await queueCoverage(batch.area_id);
+  run('node', ['scripts/process-area-coverage.mjs', '1']);
+  const { rows: incomplete } = await pool.query(`
+    select job.status, job.error from osm.coverage_jobs job join osm.boundaries child on child.id = job.area_id
+    where child.country_code = 'SE' and child.admin_level between 7 and 9
+      and gis.ST_Covers((select geometry from osm.boundaries where id = $1), gis.ST_PointOnSurface(child.geometry))
+      and job.status <> 'ready' limit 1`, [batch.area_id]);
+  if (incomplete[0]) throw new Error(incomplete[0].error ?? `Coverage job finished as ${incomplete[0].status}.`);
+  await pool.query(`update osm.sweden_batches set status = 'ready', completed_at = now(), updated_at = now() where area_id = $1`, [batch.area_id]);
+  console.log(`Completed ${batch.name}; calculated ${count} municipality and level-9 totals.`);
+} catch (error) {
+  await pool.query('rollback').catch(() => {});
+  if (batch) await pool.query(`update osm.sweden_batches set status = 'failed', error = $2, updated_at = now() where area_id = $1`, [batch.area_id, error instanceof Error ? error.message : String(error)]);
+  throw error;
+} finally {
+  if (temporaryDirectory) rmSync(temporaryDirectory, { recursive: true, force: true });
+  await pool.end();
+}

@@ -61,6 +61,31 @@ For a larger extract, temporarily rescale or create a short-lived importer
 server with more memory. Do not run a country-sized `osm2pgsql` import on the
 CPX22.
 
+## Incremental Sweden catalog on a CPX22
+
+`deploy/run-sweden-batches.sh` is the low-cost alternative to a national road
+import. It reserves 15 GB of disk, holds a host-wide lock, and runs one job at
+a time. The first job reads the Sweden PBF once but stores administrative
+boundaries only (levels 2–9); it does not import the national road network.
+Subsequent `next` jobs clip one län from that local PBF, import only its roads,
+and calculate its municipality and level-9 totals using one worker.
+
+```bash
+# Creates the nationwide boundary/search catalog and the 21-län manifest.
+./deploy/run-sweden-batches.sh bootstrap
+
+# Run one county at a time, preferably overnight.
+./deploy/run-sweden-batches.sh next
+
+# Inspect pending, running, ready, and failed county batches.
+./deploy/run-sweden-batches.sh status
+```
+
+Keep `data/sweden-latest.osm.pbf` between batches (about 0.8 GB) so counties
+can be clipped locally. Each temporary county extract is removed on completion.
+After every county is ready, queue levels 2–9 once to produce the final
+nationwide, län, and district totals.
+
 ## Update the app
 
 Build the frontend with:

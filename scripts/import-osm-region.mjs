@@ -7,13 +7,17 @@ const [regionId, countryCode, pbf, ...flags] = process.argv.slice(2);
 const databaseUrl = process.env.AREA_DATABASE_URL;
 const replacementRegionIds = (process.env.IMPORT_REPLACE_REGIONS ?? '').split(',').filter(Boolean);
 let downloadUrl = process.env.OSM_DOWNLOAD_URL ?? 'manual-import';
+let boundariesOnly = false;
+let roadsOnly = false;
 for (let index = 0; index < flags.length; index += 1) {
   if (flags[index] === '--replace-region') replacementRegionIds.push(flags[++index]);
   else if (flags[index] === '--download-url') downloadUrl = flags[++index];
+  else if (flags[index] === '--boundaries-only') boundariesOnly = true;
+  else if (flags[index] === '--roads-only') roadsOnly = true;
   else throw new Error(`Unknown import option: ${flags[index]}`);
 }
-if (!regionId || !/^[a-z0-9-]+$/.test(regionId) || !countryCode || !/^[A-Z]{2}$/.test(countryCode) || !pbf || !databaseUrl || replacementRegionIds.some(id => !/^[a-z0-9-]+$/.test(id)) || !downloadUrl) {
-  throw new Error('Usage: AREA_DATABASE_URL=... node scripts/import-osm-region.mjs <region-id> <COUNTRY-CODE> <extract.osm.pbf> [--replace-region <region-id>] [--download-url <url>]');
+if (!regionId || !/^[a-z0-9-]+$/.test(regionId) || !countryCode || !/^[A-Z]{2}$/.test(countryCode) || !pbf || !databaseUrl || replacementRegionIds.some(id => !/^[a-z0-9-]+$/.test(id)) || !downloadUrl || (boundariesOnly && roadsOnly)) {
+  throw new Error('Usage: AREA_DATABASE_URL=... node scripts/import-osm-region.mjs <region-id> <COUNTRY-CODE> <extract.osm.pbf> [--boundaries-only|--roads-only] [--replace-region <region-id>] [--download-url <url>]');
 }
 const input = resolve(pbf);
 if (!existsSync(input)) throw new Error(`OSM extract not found: ${input}`);
@@ -26,9 +30,11 @@ try {
   // PostGIS is deliberately installed in the private `gis` schema. osm2pgsql
   // creates its Flex output through libpq, so give that import session the same
   // schema path rather than exposing the extension in `public`.
-  const imported = spawnSync('osm2pgsql', ['--create', '--slim', '--output=flex', '--style', style, '--database', databaseUrl, input], {
+  const cacheMb = Number(process.env.OSM2PGSQL_CACHE_MB ?? 768);
+  if (!Number.isInteger(cacheMb) || cacheMb < 128 || cacheMb > 2048) throw new Error('OSM2PGSQL_CACHE_MB must be an integer between 128 and 2048.');
+  const imported = spawnSync('osm2pgsql', ['--create', '--slim', `--cache=${cacheMb}`, '--output=flex', '--style', style, '--database', databaseUrl, input], {
     stdio: 'inherit',
-    env: { ...process.env, PGOPTIONS: `${process.env.PGOPTIONS ?? ''} -c search_path=gis,public` },
+    env: { ...process.env, ROAM_IMPORT_BOUNDARIES_ONLY: boundariesOnly ? '1' : '0', ROAM_IMPORT_ROADS_ONLY: roadsOnly ? '1' : '0', PGOPTIONS: `${process.env.PGOPTIONS ?? ''} -c search_path=gis,public` },
   });
   if (imported.error) throw new Error(`Could not run osm2pgsql: ${imported.error.message}`);
   if (imported.status !== 0) throw new Error(`osm2pgsql exited with ${imported.status}.`);
@@ -42,18 +48,18 @@ try {
   // A prior extract may have used a different catalog ID. Remove only its
   // boundary records that collide with this source; its remaining catalog can
   // still be refreshed independently, while the new source owns each relation.
-  await pool.query(`delete from osm.boundaries existing
+  if (!roadsOnly) await pool.query(`delete from osm.boundaries existing
     using osm_import.boundaries_stage staged
     where existing.osm_relation_id = staged.osm_relation_id`);
   await pool.query(`insert into osm.import_regions (id, name, country_code, download_url, source_version, status, imported_at)
     values ($1, $1, $2, $3, $1, 'importing', now())`, [regionId, countryCode, downloadUrl]);
-  await pool.query(`insert into osm.boundaries (id, source_region_id, osm_relation_id, osm_version, name, admin_level, country_code, tags, geometry, geometry_3857, boundary_version, source_version)
+  if (!roadsOnly) await pool.query(`insert into osm.boundaries (id, source_region_id, osm_relation_id, osm_version, name, admin_level, country_code, tags, geometry, geometry_3857, boundary_version, source_version)
     select 'relation/' || osm_relation_id, $1, osm_relation_id, osm_version, name, admin_level, $2, tags,
       gis.ST_Transform(gis.ST_Multi(geometry), 4326)::gis.geometry(MultiPolygon, 4326),
       gis.ST_Multi(geometry)::gis.geometry(MultiPolygon, 3857),
       md5(gis.ST_AsEWKB(gis.ST_Transform(geometry, 4326))), $1
     from osm_import.boundaries_stage where gis.ST_IsValid(geometry)`, [regionId, countryCode]);
-  await pool.query(`insert into osm.roads (source_region_id, osm_way_id, road_type, tags, geometry, geometry_3857, source_version)
+  if (!boundariesOnly) await pool.query(`insert into osm.roads (source_region_id, osm_way_id, road_type, tags, geometry, geometry_3857, source_version)
     select $1, osm_way_id, road_type, tags, gis.ST_Transform(geometry, 4326), geometry, $1
     from osm_import.roads_stage where gis.ST_IsValid(geometry)`, [regionId]);
   await pool.query(`update osm.import_regions set status = 'ready', imported_at = now(), updated_at = now() where id = $1`, [regionId]);

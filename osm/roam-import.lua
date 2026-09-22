@@ -8,6 +8,8 @@ local unpaved = {
 }
 local path_classes = { cycleway = true, path = true, pedestrian = true, footway = true, track = true, bridleway = true }
 local local_streets = { tertiary = true, secondary = true, residential = true, living_street = true, unclassified = true }
+local boundaries_only = os.getenv('ROAM_IMPORT_BOUNDARIES_ONLY') == '1'
+local roads_only = os.getenv('ROAM_IMPORT_ROADS_ONLY') == '1'
 
 local boundaries = osm2pgsql.define_table({
   name = 'boundaries_stage', schema = 'osm_import', ids = { type = 'any', id_column = 'source_id' },
@@ -56,7 +58,7 @@ end
 function osm2pgsql.process_relation(object)
   local tags = object.tags
   local level = tonumber(tags.admin_level)
-  if tags.boundary == 'administrative' and tags.name and level and level >= 2 and level <= 11 then
+  if not roads_only and tags.boundary == 'administrative' and tags.name and level and level >= 2 and level <= 9 then
     local geometry = object:as_multipolygon():transform(3857)
     if geometry then
       boundaries:insert({ osm_relation_id = object.id, osm_version = object.version, name = tags.name, admin_level = level, tags = tags, geometry = geometry })
@@ -65,7 +67,7 @@ function osm2pgsql.process_relation(object)
 end
 
 function osm2pgsql.process_way(object)
-  if discoverable(object.tags) then
+  if not boundaries_only and discoverable(object.tags) then
     local geometry = object:as_linestring():transform(3857)
     if geometry then
       roads:insert({ osm_way_id = object.id, road_type = road_type(object.tags), tags = object.tags, geometry = geometry })
