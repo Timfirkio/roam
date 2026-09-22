@@ -1,9 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import maplibregl, { type Map } from 'maplibre-gl';
 import { bbox } from '@turf/turf';
 import { MagnifyingGlass, X } from '@phosphor-icons/react';
 import { areaApiBase, calculateArea, loadArea, searchLocations, type LocationSearchResult } from './area-client';
-import { exploredAreaTotals } from './area-geometry';
 import type { AreaRecord, AreaTotals } from './area-types';
 import type { DiscoveredSegment } from './discovery';
 import { installNetworkSource, NETWORK_SOURCE } from './network-source';
@@ -25,11 +24,12 @@ const DISCOVERED_LAYER = 'roam-progress-discovered-network-line';
 const distance = (meters: number) => `${(meters / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 })} km`;
 const message = (error: unknown) => error instanceof Error ? error.message : 'Could not load area coverage. Try again.';
 
-export function AreaCoverageCard({ record, discoveries, onUpdate }: { record: AreaRecord; discoveries: DiscoveredSegment[]; onUpdate: (record: AreaRecord) => void }) {
+export function AreaCoverageCard({ record, discoveries, onUpdate, onExplored }: { record: AreaRecord; discoveries: DiscoveredSegment[]; onUpdate: (record: AreaRecord) => void; onExplored: (areaId: string, totals: AreaTotals) => void }) {
   const { area, job } = record;
   const [requesting, setRequesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const explored = useMemo(() => area.geometry ? exploredAreaTotals(discoveries, area.geometry) : null, [discoveries, area.geometry]);
+  const explored = useExploredAreaTotals(discoveries, area.geometry);
+  useEffect(() => { if (explored) onExplored(area.id, explored); }, [area.id, explored, onExplored]);
   const ready = job?.status === 'ready' && job.totals;
   const percentage = ready && explored && ready.lengthMeters > 0 ? explored.lengthMeters / ready.lengthMeters * 100 : null;
   const inconsistent = percentage !== null && percentage > 100.1;
@@ -45,24 +45,41 @@ export function AreaCoverageCard({ record, discoveries, onUpdate }: { record: Ar
   return <Item variant="outline" className="area-progress-card">
     <ItemContent className="district-progress-content">
       <div className="district-progress-top"><div className="district-progress-title">{area.name}</div><div className="district-progress-percent">{percentage !== null && !inconsistent ? `${Math.min(100, percentage).toFixed(1)}%` : '—'}</div></div>
-      <ItemDescription className="district-progress-description">{explored ? `${distance(explored.lengthMeters)} / ` : ''}{ready ? distance(ready.lengthMeters) : 'Coverage not calculated'}</ItemDescription>
+      <ItemDescription className="district-progress-description">{explored ? `${distance(explored.lengthMeters)} / ` : ''}{ready ? distance(ready.lengthMeters) : explored === undefined ? 'Calculating your progress…' : 'Coverage not calculated'}</ItemDescription>
       <div className="progress-bar" aria-label={percentage !== null ? `${area.name}: ${Math.min(100, percentage).toFixed(1)} percent explored` : `${area.name}: coverage not calculated`}><i className="progress-bar__discovered"><em className="progress-bar__paved-roads" style={{ width: `${segmentWidth('paved-road')}%` }} /><em className="progress-bar__paved-cycleways" style={{ width: `${segmentWidth('cycleway')}%` }} /><em className="progress-bar__unpaved" style={{ width: `${segmentWidth('unpaved-path')}%` }} /></i></div>
-      <div role="status" className="area-progress-status">{pending && <span className="inline-flex items-center gap-2"><Spinner />{job.status === 'queued' ? 'Queued' : `Calculating · ${job.completedTiles} of ${job.totalTiles} tiles`}</span>}{job?.status === 'failed' && <span>{job.error ?? 'Calculation failed. Retry to resume.'}</span>}{ready && ready.lengthMeters === 0 && 'No eligible roads in this map snapshot.'}{inconsistent && 'The saved discoveries and current map differ. Coverage needs reconciliation.'}{error && <span>{error}</span>}</div>
+      <div role="status" className="area-progress-status">{pending && <span className="inline-flex items-center gap-2"><Spinner />{job.status === 'queued' ? 'Queued' : `Calculating · ${job.completedTiles} of ${job.totalTiles} tiles`}</span>}{job?.status === 'failed' && <span>{job.error ?? 'Calculation failed. Retry to resume.'}</span>}{ready && explored === undefined && <span className="inline-flex items-center gap-2"><Spinner />Calculating your progress</span>}{ready && ready.lengthMeters === 0 && 'No eligible roads in this map snapshot.'}{inconsistent && 'The saved discoveries and current map differ. Coverage needs reconciliation.'}{error && <span>{error}</span>}</div>
       {!ready && <ItemActions className="area-progress-actions"><Button variant="secondary" size="small" disabled={pending || requesting} onClick={() => void calculate()}>{requesting ? <Spinner /> : null}{job?.status === 'failed' ? 'Retry calculation' : 'Calculate coverage'}</Button></ItemActions>}
     </ItemContent>
   </Item>;
+}
+
+function useExploredAreaTotals(discoveries: DiscoveredSegment[], geometry: AreaRecord['area']['geometry']) {
+  const workerRef = useRef<Worker | null>(null);
+  const requestId = useRef(0);
+  const [totals, setTotals] = useState<AreaTotals | null | undefined>(null);
+  useEffect(() => {
+    if (!geometry) { setTotals(null); return; }
+    const worker = workerRef.current ?? (workerRef.current = new Worker(new URL('./area-progress-worker.ts', import.meta.url), { type: 'module' }));
+    const id = ++requestId.current;
+    setTotals(undefined);
+    const receive = ({ data }: MessageEvent<{ id: number; totals: AreaTotals }>) => { if (data.id === id) setTotals(data.totals); };
+    worker.addEventListener('message', receive);
+    worker.postMessage({ id, discoveries, geometry });
+    return () => worker.removeEventListener('message', receive);
+  }, [discoveries, geometry]);
+  useEffect(() => () => workerRef.current?.terminate(), []);
+  return totals;
 }
 
 function hierarchyLevel(zoom: number) {
   if (zoom < 5) return 2;
   if (zoom < 7) return 4;
   if (zoom < 8) return 6;
-  // Municipal borders remain useful at a regional view, so keep them visible
-  // well below city scale. Stockholm's municipal regions then take over
-  // before neighbourhood districts are useful to distinguish individually.
+  // Municipal borders remain useful at a regional view. Level 9 is the most
+  // granular reliable OSM tier we show; neighbourhood-level boundaries vary
+  // too much between municipalities to make a coherent county-wide map.
   if (zoom < 12) return 7;
-  if (zoom < 13) return 9;
-  return 10;
+  return 9;
 }
 
 type HoveredArea = { id: string; name: string; adminLevel: number };
@@ -153,9 +170,10 @@ function LocationSearch({ onSelect }: { onSelect: (result: LocationSearchResult)
 }
 
 export function AreaProgressView({ location, discoveries }: { location: { lng: number; lat: number }; discoveries: DiscoveredSegment[] }) {
-  const [centre, setCentre] = useState<[number, number]>([location.lng, location.lat]); const [records, setRecords] = useState<AreaRecord[]>([]); const [selected, setSelected] = useState<AreaRecord | null>(null); const [hovered, setHovered] = useState<HoveredArea | null>(null); const [error, setError] = useState<string | null>(null); const recordsRef = useRef(records); recordsRef.current = records;
+  const [centre, setCentre] = useState<[number, number]>([location.lng, location.lat]); const [records, setRecords] = useState<AreaRecord[]>([]); const [selected, setSelected] = useState<AreaRecord | null>(null); const [hovered, setHovered] = useState<HoveredArea | null>(null); const [error, setError] = useState<string | null>(null); const [exploredByArea, setExploredByArea] = useState<Record<string, AreaTotals>>({}); const recordsRef = useRef(records); recordsRef.current = records;
   useEffect(() => { const controller = new AbortController(); let timer: ReturnType<typeof setTimeout>; const poll = async () => { const pending = recordsRef.current.filter(record => record.job?.status === 'queued' || record.job?.status === 'running'); if (pending.length) { try { const updates = await Promise.all(pending.map(record => loadArea(record.area.id, controller.signal, true))); if (!controller.signal.aborted) { setRecords(current => current.map(record => updates.find(update => update.area.id === record.area.id) ?? record)); setSelected(current => updates.find(update => update.area.id === current?.area.id) ?? current); } } catch {} } if (!controller.signal.aborted) timer = setTimeout(() => void poll(), 3000); }; timer = setTimeout(() => void poll(), 3000); return () => { controller.abort(); clearTimeout(timer); }; }, []);
   const updateRecord = (updated: AreaRecord) => { setRecords(current => current.map(record => record.area.id === updated.area.id ? updated : record)); setSelected(current => current?.area.id === updated.area.id ? updated : current); };
+  const saveExplored = useCallback((areaId: string, totals: AreaTotals) => { setExploredByArea(current => current[areaId] === totals ? current : { ...current, [areaId]: totals }); }, []);
   const select = (id: string) => {
     setError(null);
     void loadArea(id, undefined, true).then(record => {
@@ -164,8 +182,10 @@ export function AreaProgressView({ location, discoveries }: { location: { lng: n
     }).catch(cause => setError(message(cause)));
   };
   const hoveredRecord = hovered ? records.find(record => record.area.id === hovered.id) : null;
-  const hoveredProgress = hoveredRecord?.area.geometry ? exploredAreaTotals(discoveries, hoveredRecord.area.geometry) : null;
+  // Hover stays lightweight: values are reused after an area has been selected
+  // and calculated in the card's Web Worker, never in a mouse-move handler.
+  const hoveredProgress = hovered ? exploredByArea[hovered.id] ?? null : null;
   const hoveredTotal = hoveredRecord?.job?.status === 'ready' ? hoveredRecord.job.totals?.lengthMeters ?? null : null;
   const hoveredPercentage = hoveredProgress && hoveredTotal && hoveredTotal > 0 ? Math.min(100, hoveredProgress.lengthMeters / hoveredTotal * 100) : null;
-  return <section className="progress-map-view"><ProgressMap centre={centre} discoveries={discoveries} selected={selected} onSelectId={select} onHover={setHovered} /><LocationSearch onSelect={result => { setCentre([result.lng, result.lat]); select(result.id); }} />{hovered && <div className="progress-map-hover" role="status"><strong>{hovered.name}</strong><span>{hoveredPercentage === null ? '—' : `${hoveredPercentage.toFixed(1)}%`}</span></div>}{selected && <div className="progress-map-overlay"><AreaCoverageCard record={selected} discoveries={discoveries} onUpdate={updateRecord} /></div>}{error && <div className="progress-map-message" role="alert">{error}</div>}</section>;
+  return <section className="progress-map-view"><ProgressMap centre={centre} discoveries={discoveries} selected={selected} onSelectId={select} onHover={setHovered} /><LocationSearch onSelect={result => { setCentre([result.lng, result.lat]); select(result.id); }} />{hovered && <div className="progress-map-hover" role="status"><strong>{hovered.name}</strong><span>{hoveredPercentage === null ? '—' : `${hoveredPercentage.toFixed(1)}%`}</span></div>}{selected && <div className="progress-map-overlay"><AreaCoverageCard record={selected} discoveries={discoveries} onUpdate={updateRecord} onExplored={saveExplored} /></div>}{error && <div className="progress-map-message" role="alert">{error}</div>}</section>;
 }
