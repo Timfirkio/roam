@@ -48,7 +48,7 @@ function cachedExploredTotals(key: string) {
   } catch { return undefined; }
 }
 
-export function AreaCoverageCard({ record, discoveries, onUpdate, onExplored }: { record: AreaRecord; discoveries: DiscoveredSegment[]; onUpdate: (record: AreaRecord) => void; onExplored: (areaId: string, totals: AreaTotals) => void }) {
+export function AreaCoverageCard({ record, discoveries, onUpdate, onExplored, className, onClick }: { record: AreaRecord; discoveries: DiscoveredSegment[]; onUpdate: (record: AreaRecord) => void; onExplored: (areaId: string, totals: AreaTotals) => void; className?: string; onClick?: () => void }) {
   const { area, job } = record;
   const [requesting, setRequesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -66,13 +66,13 @@ export function AreaCoverageCard({ record, discoveries, onUpdate, onExplored }: 
     try { onUpdate(await calculateArea(area.id)); } catch (cause) { setError(message(cause)); }
     finally { setRequesting(false); }
   }
-  return <Item variant="outline" className="area-progress-card">
+  return <Item variant="outline" className={`area-progress-card ${className ?? ''}`} role={onClick ? 'button' : undefined} tabIndex={onClick ? 0 : undefined} onClick={onClick} onKeyDown={event => { if (onClick && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); onClick(); } }}>
     <ItemContent className="district-progress-content">
-      <div className="district-progress-top"><div className="district-progress-title">{area.name}</div><div className="district-progress-percent">{percentage !== null && !inconsistent ? `${Math.min(100, percentage).toFixed(1)}%` : '—'}</div></div>
+      <div className="district-progress-top"><div className="district-progress-title">{area.name}</div><div className="district-progress-percent">{ready && explored === undefined ? <Spinner className="size-4" /> : percentage !== null && !inconsistent ? `${Math.min(100, percentage).toFixed(1)}%` : '—'}</div></div>
       <ItemDescription className="district-progress-description">{explored ? `${distance(explored.lengthMeters)} / ` : ''}{ready ? distance(ready.lengthMeters) : explored === undefined ? 'Calculating your progress…' : 'Coverage not calculated'}</ItemDescription>
       <div className="progress-bar" aria-label={percentage !== null ? `${area.name}: ${Math.min(100, percentage).toFixed(1)} percent explored` : `${area.name}: coverage not calculated`}><i className="progress-bar__discovered"><em className="progress-bar__paved-roads" style={{ width: `${segmentWidth('paved-road')}%` }} /><em className="progress-bar__paved-cycleways" style={{ width: `${segmentWidth('cycleway')}%` }} /><em className="progress-bar__unpaved" style={{ width: `${segmentWidth('unpaved-path')}%` }} /></i></div>
-      <div role="status" className="area-progress-status">{pending && <span className="inline-flex items-center gap-2"><Spinner />{job.status === 'queued' ? 'Queued' : `Calculating · ${job.completedTiles} of ${job.totalTiles} tiles`}</span>}{job?.status === 'failed' && <span>{job.error ?? 'Calculation failed. Retry to resume.'}</span>}{ready && explored === undefined && <span className="inline-flex items-center gap-2"><Spinner />Calculating your progress</span>}{ready && ready.lengthMeters === 0 && 'No eligible roads in this map snapshot.'}{inconsistent && 'The saved discoveries and current map differ. Coverage needs reconciliation.'}{error && <span>{error}</span>}</div>
-      {!ready && <ItemActions className="area-progress-actions"><Button variant="secondary" size="small" disabled={pending || requesting} onClick={() => void calculate()}>{requesting ? <Spinner /> : null}{job?.status === 'failed' ? 'Retry calculation' : 'Calculate coverage'}</Button></ItemActions>}
+      <div role="status" className="area-progress-status">{pending && <span>{job.status === 'queued' ? 'Queued' : `Calculating · ${job.completedTiles} of ${job.totalTiles} tiles`}</span>}{job?.status === 'failed' && <span>{job.error ?? 'Calculation failed. Retry to resume.'}</span>}{ready && ready.lengthMeters === 0 && 'No eligible roads in this map snapshot.'}{inconsistent && 'The saved discoveries and current map differ. Coverage needs reconciliation.'}{error && <span>{error}</span>}</div>
+      {!ready && <ItemActions className="area-progress-actions"><Button variant="secondary" size="small" disabled={pending || requesting} onClick={event => { event.stopPropagation(); void calculate(); }}>{requesting ? <Spinner /> : null}{job?.status === 'failed' ? 'Retry calculation' : 'Calculate coverage'}</Button></ItemActions>}
     </ItemContent>
   </Item>;
 }
@@ -110,7 +110,7 @@ function hierarchyLevel(zoom: number) {
   // Municipal borders remain useful at a regional view. Level 9 is the most
   // granular reliable OSM tier we show; neighbourhood-level boundaries vary
   // too much between municipalities to make a coherent county-wide map.
-  if (zoom < 12) return 7;
+  if (zoom < 10) return 7;
   return 9;
 }
 

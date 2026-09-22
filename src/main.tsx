@@ -1,7 +1,8 @@
 import { StrictMode, useCallback, useEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { AreaProgressView } from './area-progress-view';
-import { areaApiBase } from './area-client';
+import { AreaCoverageCard, AreaProgressView } from './area-progress-view';
+import { areaApiBase, loadArea, lookupAreas } from './area-client';
+import type { AreaRecord, AreaTotals } from './area-types';
 import maplibregl, { type Map } from 'maplibre-gl';
 import { circle } from '@turf/turf';
 import 'maplibre-gl/dist/maplibre-gl.css';
@@ -79,6 +80,8 @@ const PLAYER_DISCOVERY_SOURCE = 'roam-player-discovery-radius';
 const PLAYER_DISCOVERY_FILL = 'roam-player-discovery-radius-fill';
 const PLAYER_DISCOVERY_LINE = 'roam-player-discovery-radius-line';
 const SESSION_THUMBNAIL_STYLE_VERSION = 3;
+const mapAreaCache = new globalThis.Map<string, AreaRecord>();
+const ignoreMapAreaExplored = (_areaId: string, _totals: AreaTotals) => {};
 
 const surfaceColor = (pavedColor: string, unpavedColor: string) =>
   ['match', ['get', 'surface'], UNPAVED_SURFACES, unpavedColor, pavedColor] as any;
@@ -206,7 +209,7 @@ function mapBoundaryLevel(zoom: number) {
   if (zoom < 5) return 2;
   if (zoom < 7) return 4;
   if (zoom < 8) return 6;
-  return zoom < 12 ? 7 : 9;
+  return zoom < 10 ? 7 : 9;
 }
 
 function refreshMapBoundaryLevel(map: Map) {
@@ -727,8 +730,10 @@ function MapView({ onOpenProgress, onRequestLocation, onLocationUpdate, sessionA
   const [activeRotationFollow, setActiveRotationFollow] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
   const [location, setLocation] = useState<LocationState>(DEFAULT_LOCATION);
+  const [currentArea, setCurrentArea] = useState<AreaRecord | null>(null);
   const [sessionDockHeight, setSessionDockHeight] = useState(76);
   const mapRef = useRef<Map | null>(null);
+  const currentAreaIdRef = useRef<string | null>(null);
   const sessionDockRef = useRef<HTMLDivElement | null>(null);
   const wakeLockStatus = useScreenWakeLock(sessionActive);
   useEffect(() => {
@@ -753,12 +758,35 @@ function MapView({ onOpenProgress, onRequestLocation, onLocationUpdate, sessionA
     while (adjustedBearing - previousBearing < -180) adjustedBearing += 360;
     return adjustedBearing;
   });
-  const currentDistrict = findStockholmDistrict([location.lng, location.lat]);
-  const currentDistrictDiscoveries = discoveries.filter(segment => segment.regionId === currentDistrict?.id);
-  const discoveredMeters = currentDistrictDiscoveries.reduce((total, segment) => total + segment.lengthMeters, 0);
-  const discoveredBikeableMeters = bikeableDiscoveredMeters(currentDistrictDiscoveries);
-  const currentDistrictStats = currentDistrict ? progressStatsForDistrict(currentDistrict.id, discoveries) : CURRENT_PROGRESS;
-  const currentDistrictDenominator = currentDistrict ? STOCKHOLM_ROAD_NETWORK_BY_DISTRICT.get(currentDistrict.id)?.denominators : undefined;
+  useEffect(() => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      void lookupAreas(location.lng, location.lat, controller.signal).then(async ({ areas }) => {
+        const candidate = areas
+          .filter(record => record.area.adminLevel >= 7 && record.area.adminLevel <= 9)
+          .sort((left, right) => right.area.adminLevel - left.area.adminLevel)[0];
+        if (!candidate) {
+          currentAreaIdRef.current = null;
+          setCurrentArea(null);
+          return;
+        }
+        if (candidate.area.id === currentAreaIdRef.current) return;
+        const cached = mapAreaCache.get(candidate.area.id);
+        const record = cached ?? await loadArea(candidate.area.id, controller.signal, true);
+        if (controller.signal.aborted) return;
+        mapAreaCache.set(record.area.id, record);
+        currentAreaIdRef.current = record.area.id;
+        setCurrentArea(record);
+      }).catch(error => {
+        if (error instanceof DOMException && error.name === 'AbortError') return;
+      });
+    }, 350);
+    return () => { controller.abort(); window.clearTimeout(timer); };
+  }, [location.lat, location.lng]);
+  const updateCurrentArea = useCallback((record: AreaRecord) => {
+    mapAreaCache.set(record.area.id, record);
+    setCurrentArea(current => current?.area.id === record.area.id ? record : current);
+  }, []);
   const sessionDockOffset = `calc(${sessionDockHeight}px + var(--spacing-map-edge) + var(--spacing-map-edge))`;
   const centerOnPlayer = () => {
     if (!playerLocation) {
@@ -784,7 +812,7 @@ function MapView({ onOpenProgress, onRequestLocation, onLocationUpdate, sessionA
   const locationControlClass = activeRotationFollow ? 'map-ui-surface location-control location-control--following location-control--active' : isFollowingPlayer ? 'map-ui-surface location-control location-control--following' : 'map-ui-surface location-control';
   const locationControlLabel = activeRotationFollow ? 'Active heading follow' : isFollowingPlayer ? 'Following your location' : 'Follow your location';
   return <section className="map-view map-view--has-session-dock"><MapCanvas mapRef={mapRef} showDiscovered={showDiscovered} is3D={is3D} showBuildings3D={showBuildings3D} showTerrain3D={showTerrain3D} playerLocation={playerLocation} followPlayer={followPlayer} activeRotationFollow={activeRotationFollow} discoveries={discoveries} onDiscoveries={onDiscoveries} onLocationChange={handleLocationChange} onBearingChange={handleBearingChange} onZoomChange={setZoom} onPitchChange={setPitch} onFollowPlayerChange={handleFollowChange} />{!isFollowingPlayer && <div className="map-center-crosshair" aria-hidden="true"><span /></div>}
-    <header className="map-header"><span className="map-header-spacer" aria-hidden="true" /><ShadcnButton variant="secondary" className="location-summary map-ui-surface" onClick={() => onOpenProgress(location)}><DistrictProgressContent title={<><span className="district-progress-title-context">{formatItemText(location.city)} / </span><span className="district-progress-title-active">{currentDistrict ? formatItemText(currentDistrict.name) : 'No district'}</span></>} distance={currentDistrictDenominator ? `${formatDistance(discoveredBikeableMeters)} / ${formatDistance(bikeableLengthMeters(currentDistrictDenominator))}` : 'No district selected'} percentage={currentDistrictDenominator ? `${currentDistrictStats.discovered.toFixed(1)}%` : '—'} stats={currentDistrictStats} /></ShadcnButton></header>
+    <header className="map-header"><span className="map-header-spacer" aria-hidden="true" />{currentArea && <div className="location-summary map-ui-surface"><AreaCoverageCard record={currentArea} discoveries={discoveries} onUpdate={updateCurrentArea} onExplored={ignoreMapAreaExplored} className="min-h-0 border-0 bg-transparent p-0" onClick={() => onOpenProgress(location)} /></div>}</header>
     <div className="map-controls" style={{ bottom: sessionDockOffset }} aria-label="Map controls"><div className="map-compass"><ShadcnButton variant="secondary" size="icon" className="map-ui-surface" aria-label="Reset compass north" onClick={resetCompass}><span className="compass-rotor" style={{ transform: `rotate(${-bearing}deg)` }}><i className="compass-needle"><b className="compass-north">▲</b><b className="compass-south">▼</b></i></span></ShadcnButton></div><ShadcnButton variant="secondary" size="icon" className={locationControlClass} aria-label={locationControlLabel} aria-pressed={isFollowingPlayer} onClick={centerOnPlayer}><CrosshairSimple weight="regular" aria-hidden="true" /></ShadcnButton><ShadcnButton variant="secondary" size="sm" className="map-ui-surface map-mode-toggle" aria-label={`Switch to ${is3D ? '2D' : '3D'} view`} onClick={() => setIs3D(!is3D)}>{is3D ? '3D' : '2D'}</ShadcnButton><ButtonGroup orientation="vertical" className="zoom-group map-ui-surface"><ShadcnButton variant="ghost" size="icon" aria-label="Zoom in" onClick={() => mapRef.current?.zoomIn()}><Plus weight="regular" aria-hidden="true" /></ShadcnButton><ShadcnButton variant="ghost" size="icon" aria-label="Zoom out" onClick={() => mapRef.current?.zoomOut()}><Minus weight="regular" aria-hidden="true" /></ShadcnButton></ButtonGroup></div><div ref={sessionDockRef} className="session-dock map-ui-surface"><div className="min-w-0"><span className="dock-label font-sans text-body-lg font-semibold tracking-normal text-text">{sessionActive ? 'Session active' : 'Ready to roam'}</span>{sessionActive ? <div className="session-dock-stats font-mono text-label"><span>{formatSessionTime(sessionElapsedSeconds)} • {formatDistance(sessionDistanceMeters)} ({formatDistance(sessionDiscoveredMeters)} new)</span></div> : <strong className="block font-mono text-label font-normal tracking-normal text-text-subtle">Start a recording</strong>}</div><ShadcnButton variant={sessionActive ? 'destructive' : 'primary'} onClick={() => onSessionChange(!sessionActive)}>{sessionActive ? 'Stop' : 'Record'}</ShadcnButton></div>
     {showDebugMenu && <div className="map-debug" style={{ bottom: sessionDockOffset }}><ShadcnButton variant="secondary" size="icon" className="map-ui-surface debug-icon" aria-label="Open debug settings" aria-expanded={debugOpen} onClick={() => setDebugOpen(!debugOpen)}><Bug weight="regular" aria-hidden="true" /></ShadcnButton>{debugOpen && <div className="debug-menu map-ui-surface"><p>DEBUG SETTINGS</p><label><span>DISCOVERED LAYER</span><Switch checked={showDiscovered} onCheckedChange={setShowDiscovered} aria-label="Discovered layer" /></label><label><span>BUILDINGS 3D</span><Switch checked={showBuildings3D} onCheckedChange={setShowBuildings3D} aria-label="Buildings 3D" /></label><label><span>TERRAIN 3D</span><Switch checked={showTerrain3D} onCheckedChange={setShowTerrain3D} aria-label="Terrain 3D" /></label><div><span>ZOOM LEVEL</span><b className="debug-value">{zoom.toFixed(1)}</b></div><div><span>CAMERA PITCH</span><b className="debug-value">{pitch.toFixed(0)}°</b></div></div>}</div>}
   </section>;

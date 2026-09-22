@@ -9,11 +9,12 @@ import { PostgisAreaService } from './postgis-area-service.mjs';
 
 export function areaHttpServer(service, { authenticate = async () => true, origin } = {}) {
   const budgets = new Map();
+  const allowedOrigins = new Set(String(origin ?? '').split(',').map(value => value.trim()).filter(Boolean));
   return createServer(async (req, res) => {
     const send = (status, body) => { res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(body)); };
     const sendTile = tile => { res.writeHead(200, { 'Content-Type': 'application/vnd.mapbox-vector-tile', 'Cache-Control': 'public, max-age=300' }); res.end(tile); };
-    if (origin && req.headers.origin === origin) {
-      res.setHeader('Access-Control-Allow-Origin', origin);
+    if (req.headers.origin && allowedOrigins.has(req.headers.origin)) {
+      res.setHeader('Access-Control-Allow-Origin', req.headers.origin);
       res.setHeader('Vary', 'Origin');
       res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -23,7 +24,7 @@ export function areaHttpServer(service, { authenticate = async () => true, origi
       const url = new URL(req.url, 'http://localhost');
       if (req.headers.origin) {
         const caller = new URL(req.headers.origin);
-        const allowed = origin ? req.headers.origin === origin : ['localhost', '127.0.0.1', '[::1]'].includes(caller.hostname);
+        const allowed = allowedOrigins.size ? allowedOrigins.has(req.headers.origin) : ['localhost', '127.0.0.1', '[::1]'].includes(caller.hostname);
         if (!allowed) { send(403, { error: 'Origin not allowed.' }); return; }
       }
       const tile = /^\/api\/areas\/tiles\/(\d+)\/(\d+)\/(\d+)\.mvt$/.exec(url.pathname);

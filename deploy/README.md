@@ -9,8 +9,10 @@ published to the host; only Caddy exposes ports 80 and 443.
 1. Point an `A` record for `areas.your-domain.example` to the server IPv4 and,
    if used, an `AAAA` record to its IPv6. Confirm both records have propagated.
 2. Copy `.env.areas.production.example` to `.env.areas.production` and replace
-   every placeholder. `AREA_ALLOWED_ORIGIN` must exactly match the frontend's
-   public origin. Do not use a Supabase service-role key here.
+   every placeholder. `AREA_ALLOWED_ORIGIN` is a comma-separated allowlist of
+   frontend origins. Include the public web origin and, for the Android app,
+   `http://localhost,capacitor://localhost`. Do not use a Supabase service-role
+   key here.
 3. Start the catalog:
 
    ```bash

@@ -139,6 +139,20 @@ describe('area API', () => {
       await new Promise(resolve => server.close(resolve));
     }
   });
+  it('allows configured web and Capacitor origins', async () => {
+    const service = setup(async () => new Response(tile()));
+    const server = areaHttpServer(service, { authenticate: async header => header === 'Bearer test', origin: 'https://roam-pied.vercel.app,http://localhost,capacitor://localhost' });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const base = `http://127.0.0.1:${server.address().port}/api/areas/${area.id}`;
+    try {
+      const response = await fetch(base, { headers: { Authorization: 'Bearer test', Origin: 'http://localhost' } });
+      expect(response.status).toBe(200);
+      expect(response.headers.get('access-control-allow-origin')).toBe('http://localhost');
+    } finally {
+      await service.close();
+      await new Promise(resolve => server.close(resolve));
+    }
+  });
 });
 
 describe('network tile ownership', () => {
