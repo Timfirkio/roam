@@ -1,6 +1,7 @@
 import { StrictMode, useCallback, useEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef, type CSSProperties, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AnimatedProgressValue, AreaCoverageCard, ScrambleText } from './area-progress-view';
+import { calculateExploredAreaTotals, exploredTotalsKey } from './area-progress-calculation';
 import { areaApiBase, loadArea, lookupAreas } from './area-client';
 import type { AreaRecord, AreaTotals } from './area-types';
 import maplibregl, { type Map } from 'maplibre-gl';
@@ -80,7 +81,6 @@ const REGION_BOUNDARY_COLOR = '#d59c67';
 const CURRENT_AREA_SOURCE = 'roam-current-area';
 const CURRENT_AREA_FILL = 'roam-current-area-fill';
 const CURRENT_AREA_LINE = 'roam-current-area-line';
-const PROGRESS_REGION_BADGE_PREFIX = 'roam-progress-region-badge';
 const PLAYER_DISCOVERY_SOURCE = 'roam-player-discovery-radius';
 const PLAYER_DISCOVERY_FILL = 'roam-player-discovery-radius-fill';
 const PLAYER_DISCOVERY_LINE = 'roam-player-discovery-radius-line';
@@ -247,8 +247,8 @@ function mapBoundaryLevel(zoom: number) {
   return zoom < 10 ? 7 : 9;
 }
 
-function refreshMapBoundaryLevel(map: Map, focusRegions = false) {
-  const level = focusRegions ? 9 : mapBoundaryLevel(map.getZoom());
+function refreshMapBoundaryLevel(map: Map) {
+  const level = mapBoundaryLevel(map.getZoom());
   const filter = level === 9
     ? ['==', ['to-number', ['get', 'display_level'], ['to-number', ['get', 'admin_level'], 0]], 9]
     : ['==', ['to-number', ['get', 'admin_level'], 0], level];
@@ -341,12 +341,15 @@ function styleRoamMap(map: Map, showDiscovered: boolean, showRegionProgress: boo
   }
   if (import.meta.env.VITE_AREA_CATALOG !== 'false') {
     if (!map.getSource(REGION_BOUNDARIES_SOURCE)) map.addSource(REGION_BOUNDARIES_SOURCE, { type: 'vector', scheme: 'xyz', tiles: [`${areaApiBase}/tiles/{z}/{x}/{y}.mvt?v=2`], minzoom: 0, maxzoom: 22, promoteId: { boundaries: 'id' } });
-    if (!map.getLayer(REGION_BOUNDARIES_FILL)) map.addLayer({ id: REGION_BOUNDARIES_FILL, type: 'fill', source: REGION_BOUNDARIES_SOURCE, 'source-layer': 'boundaries', layout: { visibility: showRegionProgress ? 'visible' : 'none' }, paint: { 'fill-color': REGION_BOUNDARY_COLOR, 'fill-opacity': 0.035 } } as any, firstRoadLayer);
-    if (!map.getLayer(REGION_BOUNDARIES_LINE)) map.addLayer({ id: REGION_BOUNDARIES_LINE, type: 'line', source: REGION_BOUNDARIES_SOURCE, 'source-layer': 'boundaries', layout: { visibility: showRegionProgress ? 'visible' : 'none', 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': REGION_BOUNDARY_COLOR, 'line-opacity': 1, 'line-dasharray': [1, 2.2], 'line-width': ['interpolate', ['linear'], ['zoom'], 6, 1.2, 12, 1.8, 18, 2.8] } } as any);
+    if (!map.getLayer(REGION_BOUNDARIES_FILL)) map.addLayer({ id: REGION_BOUNDARIES_FILL, type: 'fill', source: REGION_BOUNDARIES_SOURCE, 'source-layer': 'boundaries', layout: { visibility: showRegionProgress ? 'visible' : 'none' }, paint: { 'fill-color': REGION_BOUNDARY_COLOR, 'fill-opacity': 0 } } as any, firstRoadLayer);
+    if (!map.getLayer(REGION_BOUNDARIES_LINE)) map.addLayer({ id: REGION_BOUNDARIES_LINE, type: 'line', source: REGION_BOUNDARIES_SOURCE, 'source-layer': 'boundaries', layout: { visibility: showRegionProgress ? 'visible' : 'none', 'line-cap': 'butt', 'line-join': 'miter' }, paint: { 'line-color': REGION_BOUNDARY_COLOR, 'line-opacity': 0.9, 'line-width': ['interpolate', ['linear'], ['zoom'], 6, 0.65, 12, 0.85, 18, 1] } } as any);
     map.setPaintProperty(REGION_BOUNDARIES_FILL, 'fill-color', REGION_BOUNDARY_COLOR);
+    map.setPaintProperty(REGION_BOUNDARIES_FILL, 'fill-opacity', 0);
     map.setPaintProperty(REGION_BOUNDARIES_LINE, 'line-color', REGION_BOUNDARY_COLOR);
-    map.setPaintProperty(REGION_BOUNDARIES_LINE, 'line-opacity', 1);
-    refreshMapBoundaryLevel(map, progressMode);
+    map.setPaintProperty(REGION_BOUNDARIES_LINE, 'line-opacity', 0.9);
+    map.setPaintProperty(REGION_BOUNDARIES_LINE, 'line-dasharray', null);
+    map.setPaintProperty(REGION_BOUNDARIES_LINE, 'line-width', ['interpolate', ['linear'], ['zoom'], 6, 0.65, 12, 0.85, 18, 1]);
+    refreshMapBoundaryLevel(map);
   }
   if (!map.getSource(DISCOVERED_SOURCE)) {
     map.addSource(DISCOVERED_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
@@ -599,8 +602,6 @@ function MapCanvas({ mapRef, viewportBottomInset, showDiscovered, showRegionProg
   const onFollowPlayerChangeRef = useRef(onFollowPlayerChange);
   const onDiscoveriesRef = useRef(onDiscoveries);
   const cameraFrameRef = useRef<number | null>(null);
-  const progressModeRef = useRef(progressMode);
-  progressModeRef.current = progressMode;
   const discoveriesRef = useRef(discoveries);
   const initialCenterRef = useRef<[number, number]>(loadCachedMapCenter() ?? [18.0649, 59.3326]);
   const hasCenteredOnFirstLiveLocationRef = useRef(false);
@@ -642,7 +643,7 @@ function MapCanvas({ mapRef, viewportBottomInset, showDiscovered, showRegionProg
     map.on('rotate', scheduleCameraState);
     map.on('zoom', scheduleCameraState);
     map.on('pitch', scheduleCameraState);
-    map.on('zoomend', () => refreshMapBoundaryLevel(map, progressModeRef.current));
+    map.on('zoomend', () => refreshMapBoundaryLevel(map));
     map.on('moveend', () => {
       const center = map.getCenter();
       onLocationChange(center.lng, center.lat, findMapLocality(map));
@@ -792,6 +793,9 @@ function MapView({ onRequestLocation, sessionActive, onSessionChange, activityDr
   const [location, setLocation] = useState<LocationState>(DEFAULT_LOCATION);
   const [currentArea, setCurrentArea] = useState<AreaRecord | null>(null);
   const [currentParentAreaName, setCurrentParentAreaName] = useState<string | null>(null);
+  const [selectedProgressArea, setSelectedProgressArea] = useState<AreaRecord | null>(null);
+  const [selectedParentAreaName, setSelectedParentAreaName] = useState<string | null>(null);
+  const [regionBadgeData, setRegionBadgeData] = useState<Record<string, { areaId: string; percentage: number | null }>>({});
   const mapRef = useRef<Map | null>(null);
   const mapViewRef = useRef<HTMLElement | null>(null);
   const mapHeaderRef = useRef<HTMLElement | null>(null);
@@ -846,7 +850,8 @@ function MapView({ onRequestLocation, sessionActive, onSessionChange, activityDr
   const updateCurrentArea = useCallback((record: AreaRecord) => {
     mapAreaCache.set(record.area.id, record);
     setCurrentArea(current => current?.area.id === record.area.id ? record : current);
-  }, [sessionActive]);
+    setSelectedProgressArea(current => current?.area.id === record.area.id ? record : current);
+  }, []);
   const fitAreaInProgressMode = useCallback((record: AreaRecord) => {
     if (!record.area.geometry || !mapRef.current) return;
     const [west, south, east, north] = bbox(record.area.geometry as any);
@@ -867,14 +872,23 @@ function MapView({ onRequestLocation, sessionActive, onSessionChange, activityDr
       try {
         const record = mapAreaCache.get(id) ?? await loadArea(id, controller.signal, true);
         if (controller.signal.aborted) return;
-        currentAreaIdRef.current = record.area.id;
-        updateCurrentArea(record);
+        mapAreaCache.set(record.area.id, record);
+        setSelectedProgressArea(record);
+        setSelectedParentAreaName(null);
         fitAreaInProgressMode(record);
+        if (record.area.geometry) {
+          const point = pointOnFeature({ type: 'Feature', properties: {}, geometry: record.area.geometry } as any).geometry.coordinates;
+          const { areas } = await lookupAreas(point[0], point[1], controller.signal);
+          if (!controller.signal.aborted) {
+            const parent = areas.filter(area => area.area.countryCode === record.area.countryCode && area.area.adminLevel >= 4 && area.area.adminLevel < record.area.adminLevel).sort((left, right) => right.area.adminLevel - left.area.adminLevel)[0];
+            setSelectedParentAreaName(parent?.area.name ?? null);
+          }
+        }
       } catch (error) {
         if (!(error instanceof DOMException && error.name === 'AbortError')) console.warn('Could not open region progress:', error);
       }
     })();
-  }, [fitAreaInProgressMode, updateCurrentArea]);
+  }, [fitAreaInProgressMode]);
   const focusAreaAt = useCallback((lng: number, lat: number) => {
     progressAreaControllerRef.current?.abort();
     const controller = new AbortController();
@@ -898,7 +912,7 @@ function MapView({ onRequestLocation, sessionActive, onSessionChange, activityDr
     observer.observe(header);
     window.addEventListener('resize', updateInset);
     return () => { observer.disconnect(); window.removeEventListener('resize', updateInset); };
-  }, [currentArea, currentParentAreaName, progressMode]);
+  }, [currentArea, currentParentAreaName, selectedProgressArea, selectedParentAreaName, progressMode]);
   useEffect(() => {
     if (progressMode && pendingProgressFitRef.current && currentArea?.area.geometry && progressMapReady) {
       pendingProgressFitRef.current = false;
@@ -929,6 +943,32 @@ function MapView({ onRequestLocation, sessionActive, onSessionChange, activityDr
     };
   }, [focusAreaById, progressMapReady, progressMode]);
   useEffect(() => {
+    if (!progressMode) return;
+    const controller = new AbortController();
+    for (const region of STOCKHOLM_REGIONS) {
+      const polygons = region.districts.flatMap(district => district.geometry.type === 'Polygon' ? [district.geometry.coordinates] : district.geometry.coordinates);
+      const point = pointOnFeature({ type: 'Feature', properties: {}, geometry: { type: 'MultiPolygon', coordinates: polygons } } as any).geometry.coordinates;
+      void (async () => {
+        try {
+          const { areas } = await lookupAreas(point[0], point[1], controller.signal);
+          const candidate = areas.filter(record => record.area.adminLevel === 9).sort((left, right) => Number(right.area.name.toLocaleLowerCase('sv').includes(region.name.toLocaleLowerCase('sv'))) - Number(left.area.name.toLocaleLowerCase('sv').includes(region.name.toLocaleLowerCase('sv'))))[0];
+          if (!candidate || controller.signal.aborted) return;
+          const record = mapAreaCache.get(candidate.area.id) ?? await loadArea(candidate.area.id, controller.signal, true);
+          if (controller.signal.aborted) return;
+          mapAreaCache.set(record.area.id, record);
+          const ready = record.job?.status === 'ready' ? record.job.totals : null;
+          const totals = record.area.geometry ? await calculateExploredAreaTotals(discoveries, record.area.geometry, exploredTotalsKey(discoveries, `${record.area.id}:${record.area.boundaryVersion}`)) : null;
+          if (controller.signal.aborted) return;
+          const rawPercentage = ready && totals && ready.lengthMeters > 0 ? totals.lengthMeters / ready.lengthMeters * 100 : null;
+          setRegionBadgeData(previous => ({ ...previous, [region.id]: { areaId: record.area.id, percentage: rawPercentage !== null && rawPercentage <= 100.1 ? Math.min(100, rawPercentage) : null } }));
+        } catch (error) {
+          if (!(error instanceof DOMException && error.name === 'AbortError')) console.warn(`Could not calculate ${region.name} progress:`, error);
+        }
+      })();
+    }
+    return () => controller.abort();
+  }, [discoveries, progressMode]);
+  useEffect(() => {
     const map = mapRef.current;
     if (!map || !progressMapReady || !progressMode) {
       progressMarkersRef.current.forEach(marker => marker.remove());
@@ -939,19 +979,15 @@ function MapView({ onRequestLocation, sessionActive, onSessionChange, activityDr
       const regionPolygons = region.districts.flatMap(district => district.geometry.type === 'Polygon' ? [district.geometry.coordinates] : district.geometry.coordinates);
       const geometry = { type: 'MultiPolygon', coordinates: regionPolygons };
       const point = pointOnFeature({ type: 'Feature', properties: {}, geometry } as any).geometry.coordinates as [number, number];
-      const districtIds = region.districts.map(district => district.id);
-      const regionDiscoveries = discoveries.filter(segment => segment.regionId !== undefined && districtIds.includes(segment.regionId));
-      const denominator = aggregateDenominators(districtIds);
-      const percentage = progressStatsForDenominator(denominator, regionDiscoveries).discovered.toFixed(0);
-      const centerDistrict = findStockholmDistrict(point);
-      const centerRegionId = centerDistrict ? STOCKHOLM_REGION_BY_DISTRICT.get(centerDistrict.id)?.id : null;
+      const badge = regionBadgeData[region.id];
+      const percentage = badge?.percentage === null || badge?.percentage === undefined ? '—' : `${badge.percentage.toFixed(1)}%`;
       const button = document.createElement('button');
       button.type = 'button';
-      button.className = `progress-region-badge${centerRegionId === region.id ? ' progress-region-badge--current' : ''}`;
-      button.textContent = `${percentage}%`;
-      button.setAttribute('aria-label', `${region.name}, ${percentage}% explored. Focus region`);
+      button.className = `progress-region-badge${badge?.areaId === (selectedProgressArea ?? currentArea)?.area.id ? ' progress-region-badge--current' : ''}`;
+      button.textContent = percentage;
+      button.setAttribute('aria-label', `${region.name}, ${percentage === '—' ? 'progress unavailable' : `${percentage} explored`}. Focus region`);
       button.addEventListener('pointerdown', event => event.stopPropagation());
-      button.addEventListener('click', event => { event.stopPropagation(); focusAreaAt(point[0], point[1]); });
+      button.addEventListener('click', event => { event.stopPropagation(); if (badge?.areaId) focusAreaById(badge.areaId); else focusAreaAt(point[0], point[1]); });
       return new maplibregl.Marker({ element: button, anchor: 'center' }).setLngLat(point).addTo(map);
     });
     progressMarkersRef.current = markers;
@@ -959,23 +995,29 @@ function MapView({ onRequestLocation, sessionActive, onSessionChange, activityDr
       markers.forEach(marker => marker.remove());
       progressMarkersRef.current = [];
     };
-  }, [discoveries, focusAreaAt, progressMapReady, progressMode]);
+  }, [currentArea, focusAreaAt, focusAreaById, progressMapReady, progressMode, regionBadgeData, selectedProgressArea]);
+  const displayedArea = progressMode ? selectedProgressArea ?? currentArea : currentArea;
+  const displayedParentAreaName = progressMode ? selectedParentAreaName : currentParentAreaName;
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !currentArea?.area.geometry) return;
-    if (!map.getSource(CURRENT_AREA_SOURCE)) map.addSource(CURRENT_AREA_SOURCE, { type: 'geojson', data: currentArea.area.geometry as any });
-    else (map.getSource(CURRENT_AREA_SOURCE) as maplibregl.GeoJSONSource).setData(currentArea.area.geometry as any);
+    if (!map) return;
+    if (!displayedArea?.area.geometry) {
+      for (const id of [CURRENT_AREA_FILL, CURRENT_AREA_LINE]) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', 'none');
+      return;
+    }
+    if (!map.getSource(CURRENT_AREA_SOURCE)) map.addSource(CURRENT_AREA_SOURCE, { type: 'geojson', data: displayedArea.area.geometry as any });
+    else (map.getSource(CURRENT_AREA_SOURCE) as maplibregl.GeoJSONSource).setData(displayedArea.area.geometry as any);
     if (!map.getLayer(CURRENT_AREA_FILL)) map.addLayer({ id: CURRENT_AREA_FILL, type: 'fill', source: CURRENT_AREA_SOURCE, paint: { 'fill-color': REGION_BOUNDARY_COLOR, 'fill-opacity': 0.11 } } as any);
-    if (!map.getLayer(CURRENT_AREA_LINE)) map.addLayer({ id: CURRENT_AREA_LINE, type: 'line', source: CURRENT_AREA_SOURCE, layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': REGION_BOUNDARY_COLOR, 'line-opacity': 1, 'line-dasharray': [1, 2.2], 'line-width': ['interpolate', ['linear'], ['zoom'], 6, 1.8, 12, 2.4, 18, 3.2] } } as any);
+    if (!map.getLayer(CURRENT_AREA_LINE)) map.addLayer({ id: CURRENT_AREA_LINE, type: 'line', source: CURRENT_AREA_SOURCE, layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': REGION_BOUNDARY_COLOR, 'line-opacity': 1, 'line-width': ['interpolate', ['linear'], ['zoom'], 6, 1.4, 12, 1.8, 18, 2.2] } } as any);
     map.setPaintProperty(CURRENT_AREA_FILL, 'fill-color', REGION_BOUNDARY_COLOR);
     map.setPaintProperty(CURRENT_AREA_LINE, 'line-color', REGION_BOUNDARY_COLOR);
-    map.setPaintProperty(CURRENT_AREA_LINE, 'line-dasharray', [1, 2.2]);
-    map.setLayoutProperty(CURRENT_AREA_FILL, 'visibility', showRegionProgress ? 'visible' : 'none');
-    map.setLayoutProperty(CURRENT_AREA_LINE, 'visibility', showRegionProgress ? 'visible' : 'none');
+    map.setPaintProperty(CURRENT_AREA_LINE, 'line-dasharray', null);
+    map.setLayoutProperty(CURRENT_AREA_FILL, 'visibility', progressMode ? 'visible' : 'none');
+    map.setLayoutProperty(CURRENT_AREA_LINE, 'visibility', progressMode ? 'visible' : 'none');
     for (const id of [REGION_BOUNDARIES_FILL, CURRENT_AREA_FILL, REGION_BOUNDARIES_LINE, CURRENT_AREA_LINE]) {
       if (map.getLayer(id)) map.moveLayer(id);
     }
-  }, [currentArea, showRegionProgress]);
+  }, [displayedArea, progressMode]);
   useEffect(() => { mapRef.current?.resize(); }, [activityDrawerHeight]);
   const sessionDockOffset = sessionActive ? 'var(--spacing-map-edge)' : 'calc(var(--spacing-map-edge) + 44px + var(--map-control-gap))';
   const centerOnPlayer = () => {
@@ -1009,6 +1051,8 @@ function MapView({ onRequestLocation, sessionActive, onSessionChange, activityDr
     const next = !progressMode;
     setProgressMode(next);
     if (next) {
+      setSelectedProgressArea(currentArea);
+      setSelectedParentAreaName(currentParentAreaName);
       pendingProgressFitRef.current = true;
     } else {
       pendingProgressFitRef.current = false;
@@ -1016,8 +1060,9 @@ function MapView({ onRequestLocation, sessionActive, onSessionChange, activityDr
     }
   };
   return <section ref={mapViewRef} className="map-view"><MapCanvas mapRef={mapRef} viewportBottomInset={0} showDiscovered={showDiscovered} showRegionProgress={boundariesVisible} progressMode={progressMode} is3D={is3D} showBuildings3D={showBuildings3D} showTerrain3D={showTerrain3D} playerLocation={playerLocation} followPlayer={followPlayer} activeRotationFollow={activeRotationFollow} discoveries={discoveries} onDiscoveries={onDiscoveries} onLocationChange={handleLocationChange} onBearingChange={handleBearingChange} onZoomChange={() => {}} onPitchChange={() => {}} onFollowPlayerChange={handleFollowChange} onMapReady={onMapReady} />{!isFollowingPlayer && <div className="map-center-crosshair" style={{ top: topOverlayInset }} aria-hidden="true"><span /></div>}
-    <header ref={mapHeaderRef} className="map-header"><div className="map-top-right">{currentArea && <div className="location-summary map-ui-surface"><AreaCoverageCard record={currentArea} discoveries={discoveries} onUpdate={updateCurrentArea} onExplored={ignoreMapAreaExplored} parentAreaName={currentParentAreaName ?? undefined} className="min-h-0 border-0 bg-transparent p-0" /></div>}<div className="map-top-actions"><ShadcnButton variant="secondary" size="medium" className="progress-mode-toggle rounded-pill" aria-pressed={progressMode} onClick={toggleProgressMode}><MapPinSimpleArea weight="regular" aria-hidden="true" />Progress</ShadcnButton><div className={`map-compass${compassVisible ? ' map-compass--visible' : ''}`} aria-hidden={!compassVisible}><ShadcnButton variant="secondary" size="icon" className="map-ui-surface" aria-label="Reset compass north" tabIndex={compassVisible ? 0 : -1} onClick={resetCompass}><span className="compass-rotor" style={{ transform: `rotate(${-bearing}deg)` }}><i className="compass-needle"><b className="compass-north">▲</b><b className="compass-south">▼</b></i></span></ShadcnButton></div></div></div></header>
+    <header ref={mapHeaderRef} className="map-header"><div className="map-top-right">{displayedArea && <div className="location-summary map-ui-surface"><AreaCoverageCard record={displayedArea} discoveries={discoveries} onUpdate={updateCurrentArea} onExplored={ignoreMapAreaExplored} parentAreaName={displayedParentAreaName ?? undefined} className="min-h-0 border-0 bg-transparent p-0" /></div>}<div className="map-top-actions"><div className={`map-compass${compassVisible ? ' map-compass--visible' : ''}`} aria-hidden={!compassVisible}><ShadcnButton variant="secondary" size="icon" className="map-ui-surface" aria-label="Reset compass north" tabIndex={compassVisible ? 0 : -1} onClick={resetCompass}><span className="compass-rotor" style={{ transform: `rotate(${-bearing}deg)` }}><i className="compass-needle"><b className="compass-north">▲</b><b className="compass-south">▼</b></i></span></ShadcnButton></div></div></div></header>
     <div className="map-controls" style={{ bottom: sessionDockOffset }} aria-label="Map controls"><ShadcnButton variant="secondary" size="icon" className="map-ui-surface layers-control" aria-label={`Open layers panel, ${activeLayerCount} active`} aria-expanded={debugOpen} onClick={() => setDebugOpen(!debugOpen)}><Stack weight="regular" aria-hidden="true" />{activeLayerCount > 0 && <span className="layers-control__count" aria-hidden="true">{activeLayerCount}</span>}</ShadcnButton><ShadcnButton variant="secondary" size="icon" className={locationControlClass} aria-label={locationControlLabel} aria-pressed={isFollowingPlayer} onClick={centerOnPlayer}><CrosshairSimple weight="regular" aria-hidden="true" /></ShadcnButton><ShadcnButton variant="secondary" size="icon" className="map-ui-surface map-mode-toggle" aria-label={`Switch to ${is3D ? '2D' : '3D'} view`} onClick={() => setIs3D(!is3D)}>{is3D ? '3D' : '2D'}</ShadcnButton></div>{!sessionActive && <ShadcnButton variant="secondary" className="record-fab map-ui-surface" onClick={() => onSessionChange(true)}><Record weight="fill" aria-hidden="true" />Record</ShadcnButton>}
+    <ShadcnButton variant="secondary" size="medium" className="progress-mode-toggle map-ui-surface rounded-pill" aria-pressed={progressMode} onClick={toggleProgressMode}><MapPinSimpleArea weight="regular" aria-hidden="true" />Progress</ShadcnButton>
     {showDebugMenu && debugOpen && <div className="map-layers-panel map-ui-surface" style={{ bottom: sessionDockOffset }}><p>LAYERS</p><label><span><strong>Region boundaries</strong><small>Administrative area outlines</small></span><Switch checked={boundariesVisible} disabled={progressMode} onCheckedChange={setShowRegionProgress} aria-label="Region boundaries" /></label><label><span><strong>3D buildings</strong><small>Building massing</small></span><Switch checked={showBuildings3D} onCheckedChange={setShowBuildings3D} aria-label="3D buildings" /></label><label><span><strong>3D terrain</strong><small>Elevation and shading</small></span><Switch checked={showTerrain3D} onCheckedChange={setShowTerrain3D} aria-label="3D terrain" /></label></div>}
   </section>;
 }

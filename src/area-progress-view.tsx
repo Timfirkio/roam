@@ -11,6 +11,7 @@ import { applyRoamBaseStyle, ROAM_MAP_STYLE } from './roam-map-style';
 import { Button } from './components/ui/button';
 import { Item, ItemActions, ItemContent, ItemDescription, ItemTitle } from './components/ui/item';
 import { Spinner } from './components/ui/spinner';
+import { cachedExploredTotals, calculateExploredAreaTotals, exploredTotalsKey } from './area-progress-calculation';
 
 const MAP_STYLE = ROAM_MAP_STYLE;
 const AREA_SOURCE = 'roam-progress-areas';
@@ -23,8 +24,6 @@ const DISCOVERED_SOURCE = 'roam-progress-discovered-network';
 const DISCOVERED_LAYER = 'roam-progress-discovered-network-line';
 const distance = (meters: number) => `${(meters / 1000).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} km`;
 const message = (error: unknown) => error instanceof Error ? error.message : 'Could not load area coverage. Try again.';
-const exploredTotalsCache = new Map<string, AreaTotals>();
-const discoveryVersions = new WeakMap<DiscoveredSegment[], string>();
 
 export function AnimatedProgressValue({ value, label, className = 'area-progress-percent' }: { value: number | null; label: string; className?: string }) {
   const initial = { label, value };
@@ -90,28 +89,6 @@ function AnimatedPercentage({ value, white = false }: { value: number | null; wh
   return <AnimatedProgressValue value={value} label={value === null ? '—' : `${Math.min(100, value).toFixed(1)}%`} className={className} />;
 }
 
-function discoveryVersion(discoveries: DiscoveredSegment[]) {
-  const cached = discoveryVersions.get(discoveries);
-  if (cached) return cached;
-  const latest = discoveries.at(-1);
-  const version = `${discoveries.length}:${latest?.id ?? ''}:${latest?.discoveredAt ?? 0}`;
-  discoveryVersions.set(discoveries, version);
-  return version;
-}
-
-function cachedExploredTotals(key: string) {
-  const memory = exploredTotalsCache.get(key);
-  if (memory) return memory;
-  try {
-    const stored = localStorage.getItem(`roam.area-progress.${key}`);
-    if (!stored) return undefined;
-    const totals = JSON.parse(stored) as AreaTotals;
-    if (!Number.isFinite(totals.lengthMeters)) return undefined;
-    exploredTotalsCache.set(key, totals);
-    return totals;
-  } catch { return undefined; }
-}
-
 export function AreaCoverageCard({ record, discoveries, onUpdate, onExplored, parentAreaName, className, onClick }: { record: AreaRecord; discoveries: DiscoveredSegment[]; onUpdate: (record: AreaRecord) => void; onExplored: (areaId: string, totals: AreaTotals) => void; parentAreaName?: string; className?: string; onClick?: () => void }) {
   const { area, job } = record;
   const [requesting, setRequesting] = useState(false);
@@ -143,11 +120,9 @@ export function AreaCoverageCard({ record, discoveries, onUpdate, onExplored, pa
 }
 
 function useExploredAreaTotals(discoveries: DiscoveredSegment[], geometry: AreaRecord['area']['geometry'], areaKey: string) {
-  const workerRef = useRef<Worker | null>(null);
-  const requestId = useRef(0);
   const [result, setResult] = useState<{ key: string; totals: AreaTotals } | null>(null);
   const [calculationError, setCalculationError] = useState<string | null>(null);
-  const key = geometry ? `${areaKey}:${discoveryVersion(discoveries)}` : null;
+  const key = geometry ? exploredTotalsKey(discoveries, areaKey) : null;
   const cached = key ? cachedExploredTotals(key) : undefined;
   // Keep the previously rendered measurement on screen while the worker
   // calculates the selected area's next value. Besides avoiding an empty bar,
@@ -158,23 +133,13 @@ function useExploredAreaTotals(discoveries: DiscoveredSegment[], geometry: AreaR
   useEffect(() => {
     if (!geometry || !key) return;
     if (cached) { setResult({ key, totals: cached }); return; }
-    const worker = workerRef.current ?? (workerRef.current = new Worker(new URL('./area-progress-worker.ts', import.meta.url), { type: 'module' }));
-    const id = ++requestId.current;
+    let active = true;
     setCalculationError(null);
-    const receive = ({ data }: MessageEvent<{ id: number; totals?: AreaTotals; error?: string }>) => {
-      if (data.id !== id) return;
-      if (data.error || !data.totals) { setCalculationError(data.error ?? 'Could not calculate area progress.'); return; }
-      exploredTotalsCache.set(key, data.totals);
-      try { localStorage.setItem(`roam.area-progress.${key}`, JSON.stringify(data.totals)); } catch {}
-      setResult({ key, totals: data.totals });
-    };
-    const fail = () => setCalculationError('Could not calculate area progress.');
-    worker.addEventListener('message', receive);
-    worker.addEventListener('error', fail);
-    worker.postMessage({ id, discoveries, geometry });
-    return () => { worker.removeEventListener('message', receive); worker.removeEventListener('error', fail); };
+    void calculateExploredAreaTotals(discoveries, geometry, key).then(totals => {
+      if (active) setResult({ key, totals });
+    }).catch(error => { if (active) setCalculationError(error instanceof Error ? error.message : 'Could not calculate area progress.'); });
+    return () => { active = false; };
   }, [cached, discoveries, geometry, key]);
-  useEffect(() => () => workerRef.current?.terminate(), []);
   return { totals, refreshing, calculationError, isCurrent };
 }
 
