@@ -31,4 +31,12 @@ describe('PostGIS area catalog', () => {
     expect(pool.calls[0].sql).toContain('osm.boundary_tile');
     await service.close();
   });
+
+  it('finds catalog names when the search omits Swedish diacritics', async () => {
+    const pool = catalog(() => [{ id: 'relation/99', name: 'Södermalm', admin_level: 10, lng: '18.06', lat: '59.32' }]);
+    const service = new PostgisAreaService('postgres://unused', { pool });
+    await expect(service.search('Sodermalm')).resolves.toEqual([{ id: 'relation/99', name: 'Södermalm', lng: 18.06, lat: 59.32, type: 'Administrative level 10' }]);
+    expect(pool.calls[0].values).toEqual(['%sodermalm%']);
+    await service.close();
+  });
 });

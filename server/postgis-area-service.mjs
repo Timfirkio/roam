@@ -92,10 +92,12 @@ export class PostgisAreaService {
     const normalized = String(query ?? '').trim().replace(/\s+/g, ' ');
     if (normalized.length < 2) return [];
     if (normalized.length > 120) throw new Error('Use a shorter location search.');
+    const folded = normalized.toLocaleLowerCase('sv-SE').normalize('NFD').replace(/\p{Diacritic}/gu, '');
     const { rows } = await this.pool.query(`
       select id, name, admin_level, gis.ST_X(gis.ST_PointOnSurface(geometry)) as lng, gis.ST_Y(gis.ST_PointOnSurface(geometry)) as lat
-      from osm.boundaries where name ilike $1
-      order by admin_level desc, name asc limit 8`, [`%${normalized}%`]);
+      from osm.boundaries
+      where translate(lower(name), 'åäöéüáàâæø', 'aaoeuaaaeo') like $1
+      order by admin_level desc, name asc limit 8`, [`%${folded}%`]);
     return rows.map(row => ({ id: row.id, name: row.name, lng: Number(row.lng), lat: Number(row.lat), type: `Administrative level ${row.admin_level}` }));
   }
 
