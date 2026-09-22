@@ -139,14 +139,21 @@ export class PostgisAreaService {
         update osm.coverage_jobs set status = 'running', updated_at = now()
         where id = (select id from osm.coverage_jobs where status = 'queued' order by created_at limit 1 for update skip locked)
         returning *`);
-      const job = rows[0];
-      if (!job) return;
+        const job = rows[0];
+        if (!job) return;
       try {
         const measurements = await this.pool.query(`
-          with clipped as (
+          with target as (select geometry_3857 from osm.boundaries where id = $1),
+          candidate_roads as (
+            -- County extracts overlap at their edges. Every source stores the
+            -- original OSM way ID, so choose one copy before clipping it.
+            select distinct on (r.osm_way_id) r.osm_way_id, r.road_type, r.geometry_3857
+            from osm.roads r cross join target
+            where gis.ST_Intersects(r.geometry_3857, target.geometry_3857)
+            order by r.osm_way_id, r.source_region_id
+          ), clipped as (
             select r.road_type, gis.ST_CollectionExtract(gis.ST_Intersection(r.geometry_3857, b.geometry_3857), 2) as geometry
-            from osm.roads r join osm.boundaries b on b.id = $1
-            where r.source_region_id = b.source_region_id and gis.ST_Intersects(r.geometry_3857, b.geometry_3857)
+            from candidate_roads r join osm.boundaries b on b.id = $1
           )
           select road_type, coalesce(sum(gis.ST_Length(geometry)), 0) as length_meters
           from clipped where not gis.ST_IsEmpty(geometry) group by road_type`, [job.area_id]);

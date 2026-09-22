@@ -1,6 +1,6 @@
 FROM iboates/osm2pgsql@sha256:6548a1e2492e08fa0d5ce987d382ad57c4b21c8a94ff00017c6109770a061b79
 
-RUN apk add --no-cache ca-certificates nodejs npm osmium-tool \
+RUN apk add --no-cache ca-certificates nodejs npm \
   && npm install --global corepack@0.34.3 \
   && corepack enable \
   && adduser -D -u 10001 roam

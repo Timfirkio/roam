@@ -1,7 +1,5 @@
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import pg from 'pg';
 import { RULES_VERSION } from '../server/area-network.mjs';
 
@@ -12,21 +10,6 @@ if (!databaseUrl) throw new Error('AREA_DATABASE_URL is required.');
 
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const pool = new pg.Pool({ connectionString: databaseUrl });
-
-function toPoly(geometry, name) {
-  const polygons = geometry.type === 'Polygon' ? [geometry.coordinates] : geometry.coordinates;
-  const lines = [name.replace(/[^A-Za-z0-9_-]/g, '-') || 'sweden-batch'];
-  let index = 1;
-  for (const polygon of polygons) {
-    polygon.forEach((ring, ringIndex) => {
-      lines.push(`${ringIndex === 0 ? '' : '!'}${index++}`);
-      for (const [lng, lat] of ring) lines.push(`${lng} ${lat}`);
-      lines.push('END');
-    });
-  }
-  lines.push('END', '');
-  return lines.join('\n');
-}
 
 function run(command, args, environment = {}) {
   const result = spawnSync(command, args, { stdio: 'inherit', env: { ...process.env, ...environment } });
@@ -55,11 +38,11 @@ async function queueCoverage(areaId) {
 }
 
 let batch;
-let temporaryDirectory;
 try {
   await pool.query('begin');
   const { rows } = await pool.query(`
-    select batch.area_id, batch.source_region_id, batch.name, gis.ST_AsGeoJSON(boundary.geometry)::jsonb as geometry,
+    select batch.area_id, batch.source_region_id, batch.name,
+      concat_ws(',', gis.ST_XMin(gis.ST_Envelope(boundary.geometry)), gis.ST_YMin(gis.ST_Envelope(boundary.geometry)), gis.ST_XMax(gis.ST_Envelope(boundary.geometry)), gis.ST_YMax(gis.ST_Envelope(boundary.geometry))) as bbox,
       exists(select 1 from osm.roads where source_region_id = batch.source_region_id) as has_roads
     from osm.sweden_batches batch join osm.boundaries boundary on boundary.id = batch.area_id
     where batch.status in ('pending', 'failed') ${requestedAreaId ? 'and batch.area_id = $1' : ''}
@@ -71,13 +54,12 @@ try {
   await pool.query('commit');
 
   if (!batch.has_roads) {
-    temporaryDirectory = `/tmp/roam-${batch.source_region_id}`;
-    mkdirSync(temporaryDirectory, { recursive: true });
-    const polygon = resolve(temporaryDirectory, 'boundary.poly');
-    const extract = resolve(temporaryDirectory, 'roads.osm.pbf');
-    writeFileSync(polygon, toPoly(batch.geometry, batch.source_region_id));
-    run('osmium', ['extract', '--strategy=complete_ways', '--polygon', polygon, '--output', extract, '--overwrite', pbf]);
-    run('node', ['scripts/import-osm-region.mjs', batch.source_region_id, 'SE', extract, '--roads-only'], { OSM2PGSQL_CACHE_MB: process.env.OSM2PGSQL_CACHE_MB ?? '768', OSM_DOWNLOAD_URL: 'https://download.geofabrik.de/europe/sweden-latest.osm.pbf' });
+    // osm2pgsql reads the national PBF sequentially but only materializes this
+    // county's bounding box. Trim to the exact administrative polygon below.
+    run('node', ['scripts/import-osm-region.mjs', batch.source_region_id, 'SE', pbf, '--roads-only', '--bbox', batch.bbox], { OSM2PGSQL_CACHE_MB: process.env.OSM2PGSQL_CACHE_MB ?? '768', OSM_DOWNLOAD_URL: 'https://download.geofabrik.de/europe/sweden-latest.osm.pbf' });
+    await pool.query(`delete from osm.roads road using osm.boundaries boundary
+      where road.source_region_id = $1 and boundary.id = $2
+        and not gis.ST_Intersects(road.geometry, boundary.geometry)`, [batch.source_region_id, batch.area_id]);
   }
   const count = await queueCoverage(batch.area_id);
   run('node', ['scripts/process-area-coverage.mjs', '1']);
@@ -94,6 +76,5 @@ try {
   if (batch) await pool.query(`update osm.sweden_batches set status = 'failed', error = $2, updated_at = now() where area_id = $1`, [batch.area_id, error instanceof Error ? error.message : String(error)]);
   throw error;
 } finally {
-  if (temporaryDirectory) rmSync(temporaryDirectory, { recursive: true, force: true });
   await pool.end();
 }

@@ -67,8 +67,9 @@ CPX22.
 import. It reserves 15 GB of disk, holds a host-wide lock, and runs one job at
 a time. The first job reads the Sweden PBF once but stores administrative
 boundaries only (levels 2–9); it does not import the national road network.
-Subsequent `next` jobs clip one län from that local PBF, import only its roads,
-and calculate its municipality and level-9 totals using one worker.
+Subsequent `next` jobs scan the local PBF with one län bounding box, trim roads
+to the actual administrative polygon, and calculate its municipality and
+level-9 totals using one worker.
 
 ```bash
 # Creates the nationwide boundary/search catalog and the 21-län manifest.

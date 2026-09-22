@@ -9,15 +9,18 @@ const replacementRegionIds = (process.env.IMPORT_REPLACE_REGIONS ?? '').split(',
 let downloadUrl = process.env.OSM_DOWNLOAD_URL ?? 'manual-import';
 let boundariesOnly = false;
 let roadsOnly = false;
+let bbox;
 for (let index = 0; index < flags.length; index += 1) {
   if (flags[index] === '--replace-region') replacementRegionIds.push(flags[++index]);
   else if (flags[index] === '--download-url') downloadUrl = flags[++index];
   else if (flags[index] === '--boundaries-only') boundariesOnly = true;
   else if (flags[index] === '--roads-only') roadsOnly = true;
+  else if (flags[index] === '--bbox') bbox = flags[++index];
   else throw new Error(`Unknown import option: ${flags[index]}`);
 }
-if (!regionId || !/^[a-z0-9-]+$/.test(regionId) || !countryCode || !/^[A-Z]{2}$/.test(countryCode) || !pbf || !databaseUrl || replacementRegionIds.some(id => !/^[a-z0-9-]+$/.test(id)) || !downloadUrl || (boundariesOnly && roadsOnly)) {
-  throw new Error('Usage: AREA_DATABASE_URL=... node scripts/import-osm-region.mjs <region-id> <COUNTRY-CODE> <extract.osm.pbf> [--boundaries-only|--roads-only] [--replace-region <region-id>] [--download-url <url>]');
+const bboxValues = bbox?.split(',').map(Number);
+if (!regionId || !/^[a-z0-9-]+$/.test(regionId) || !countryCode || !/^[A-Z]{2}$/.test(countryCode) || !pbf || !databaseUrl || replacementRegionIds.some(id => !/^[a-z0-9-]+$/.test(id)) || !downloadUrl || (boundariesOnly && roadsOnly) || (bbox && (!bboxValues || bboxValues.length !== 4 || bboxValues.some(value => !Number.isFinite(value)) || bboxValues[0] >= bboxValues[2] || bboxValues[1] >= bboxValues[3]))) {
+  throw new Error('Usage: AREA_DATABASE_URL=... node scripts/import-osm-region.mjs <region-id> <COUNTRY-CODE> <extract.osm.pbf> [--boundaries-only|--roads-only] [--bbox west,south,east,north] [--replace-region <region-id>] [--download-url <url>]');
 }
 const input = resolve(pbf);
 if (!existsSync(input)) throw new Error(`OSM extract not found: ${input}`);
@@ -32,7 +35,10 @@ try {
   // schema path rather than exposing the extension in `public`.
   const cacheMb = Number(process.env.OSM2PGSQL_CACHE_MB ?? 768);
   if (!Number.isInteger(cacheMb) || cacheMb < 128 || cacheMb > 2048) throw new Error('OSM2PGSQL_CACHE_MB must be an integer between 128 and 2048.');
-  const imported = spawnSync('osm2pgsql', ['--create', '--slim', `--cache=${cacheMb}`, '--output=flex', '--style', style, '--database', databaseUrl, input], {
+  const osm2pgsqlArgs = ['--create', '--slim', `--cache=${cacheMb}`, '--output=flex', '--style', style, '--database', databaseUrl];
+  if (bbox) osm2pgsqlArgs.push(`--bbox=${bbox}`);
+  osm2pgsqlArgs.push(input);
+  const imported = spawnSync('osm2pgsql', osm2pgsqlArgs, {
     stdio: 'inherit',
     env: { ...process.env, ROAM_IMPORT_BOUNDARIES_ONLY: boundariesOnly ? '1' : '0', ROAM_IMPORT_ROADS_ONLY: roadsOnly ? '1' : '0', PGOPTIONS: `${process.env.PGOPTIONS ?? ''} -c search_path=gis,public` },
   });
