@@ -1,11 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { clipLineToArea, exploredAreaTotals, uniqueLineMeters } from './area-geometry';
+import { clipLineToArea, discoveriesNearArea, exploredAreaTotals, uniqueLineMeters } from './area-geometry';
 import { administrativeLabel, type AreaGeometry, type Position } from './area-types';
 
 const square: Position[] = [[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]];
 const geometry: AreaGeometry = { type: 'Polygon', coordinates: [square] };
 
 describe('boundary coverage', () => {
+  it('skips distant discoveries while retaining roads that cross the area', () => {
+    const segments = [
+      { id: 'far', roadType: 'cycleway' as const, geometry: { type: 'LineString' as const, coordinates: [[2, 2], [3, 3]] as Position[] } },
+      { id: 'crossing', roadType: 'cycleway' as const, geometry: { type: 'LineString' as const, coordinates: [[-1, 0.5], [2, 0.5]] as Position[] } },
+    ];
+    expect(discoveriesNearArea(segments, geometry).map(segment => segment.id)).toEqual(['crossing']);
+  });
   it('counts only the road portion inside a boundary', () => {
     expect(clipLineToArea([[-1, 0.5], [2, 0.5]], geometry)).toEqual([[[0, 0.5], [1, 0.5]]]);
   });

@@ -93,9 +93,9 @@ export function AreaCoverageCard({ record, discoveries, onUpdate, onExplored, pa
   const { area, job } = record;
   const [requesting, setRequesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { totals: explored, refreshing, calculationError, isCurrent } = useExploredAreaTotals(discoveries, area.geometry, `${area.id}:${area.boundaryVersion}`);
-  useEffect(() => { if (explored && isCurrent) onExplored(area.id, explored); }, [area.id, explored, isCurrent, onExplored]);
   const ready = job?.status === 'ready' && job.totals;
+  const { totals: explored, refreshing, calculationError, isCurrent } = useExploredAreaTotals(discoveries, area.geometry, `${area.id}:${area.boundaryVersion}`, Boolean(ready));
+  useEffect(() => { if (explored && isCurrent) onExplored(area.id, explored); }, [area.id, explored, isCurrent, onExplored]);
   const percentage = ready && explored && ready.lengthMeters > 0 ? explored.lengthMeters / ready.lengthMeters * 100 : null;
   const inconsistent = percentage !== null && percentage > 100.1;
   const pending = job?.status === 'queued' || job?.status === 'running';
@@ -125,15 +125,15 @@ export function AreaCoverageCard({ record, discoveries, onUpdate, onExplored, pa
   </Item>;
 }
 
-function useExploredAreaTotals(discoveries: DiscoveredSegment[], geometry: AreaRecord['area']['geometry'], areaKey: string) {
+function useExploredAreaTotals(discoveries: DiscoveredSegment[], geometry: AreaRecord['area']['geometry'], areaKey: string, enabled: boolean) {
   const [result, setResult] = useState<{ key: string; totals: AreaTotals } | null>(null);
   const [calculationError, setCalculationError] = useState<string | null>(null);
-  const key = geometry ? exploredTotalsKey(discoveries, areaKey) : null;
+  const key = enabled && geometry ? exploredTotalsKey(discoveries, areaKey) : null;
   const cached = key ? cachedExploredTotals(key) : undefined;
   // Do not combine a previous area's explored totals with the new area's
   // denominator while its measurement is still running.
   const totals = key === null ? null : result?.key === key ? result.totals : cached ?? null;
-  const refreshing = key !== null && result?.key !== key && !cached;
+  const refreshing = key !== null && result?.key !== key && !cached && !calculationError;
   const isCurrent = key !== null && (result?.key === key || Boolean(cached));
   useEffect(() => {
     if (!geometry || !key) return;

@@ -5,7 +5,7 @@ import { calculateExploredAreaTotals, exploredTotalsKey } from './area-progress-
 import { areaTileUrlTemplate, loadArea, lookupAreas } from './area-client';
 import type { AreaRecord, AreaTotals } from './area-types';
 import maplibregl, { type Map } from 'maplibre-gl';
-import { bbox, circle, pointOnFeature } from '@turf/turf';
+import { area, bbox, booleanPointInPolygon, centerOfMass, circle, pointOnFeature } from '@turf/turf';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import './styles.css';
 import { installNetworkSource, NETWORK_SOURCE } from './network-source';
@@ -23,6 +23,7 @@ import { deleteSession, loadSessions, saveSession, type RideSession } from './se
 import { reconcileSessionRoute, synchronizeDiscoveredSegmentRoadTypes } from './session-route-reconciliation';
 import { generateSessionThumbnail } from './session-thumbnail';
 import { applyRoamBaseStyle } from './roam-map-style';
+import { boundaryMatchesLevel, mapBoundaryLevel } from './map-boundary-level';
 import { isDiscoverableProperties, legacyRoadTypeForProperties, roadTypeForProperties, stableRoadCandidateId } from './road-rules';
 import { STOCKHOLM_ROAD_NETWORK_BY_DISTRICT } from './road-network-catalog';
 import { Button as ShadcnButton } from '@/components/ui/button';
@@ -241,11 +242,12 @@ function AccordionSummary({ title, percentage }: { title: ReactNode; percentage:
   return <div className="accordion-summary"><div className="accordion-summary-title">{title}</div><div className="accordion-summary-end"><span className="district-progress-percent">{percentage}</span><span className="accordion-chevron" aria-hidden="true" /></div></div>;
 }
 
-function mapBoundaryLevel(zoom: number) {
-  if (zoom < 5) return 2;
-  if (zoom < 7) return 4;
-  if (zoom < 8) return 6;
-  return zoom < 10 ? 7 : 9;
+function areaLabelPoint(geometry: NonNullable<AreaRecord['area']['geometry']>): [number, number] {
+  const polygons = geometry.type === 'Polygon' ? [geometry.coordinates] : geometry.coordinates;
+  const largest = polygons.reduce((best, coordinates) => area({ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates } } as any) > area({ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: best } } as any) ? coordinates : best);
+  const feature = { type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: largest } } as any;
+  const centre = centerOfMass(feature).geometry.coordinates as [number, number];
+  return booleanPointInPolygon(centre, feature) ? centre : pointOnFeature(feature).geometry.coordinates as [number, number];
 }
 
 function refreshMapBoundaryLevel(map: Map) {
@@ -835,7 +837,8 @@ function MapView({ onRequestLocation, sessionActive, onSessionChange, activityDr
   const [currentParentAreaName, setCurrentParentAreaName] = useState<string | null>(null);
   const [selectedProgressArea, setSelectedProgressArea] = useState<AreaRecord | null>(null);
   const [selectedParentAreaName, setSelectedParentAreaName] = useState<string | null>(null);
-  const [regionBadgeData, setRegionBadgeData] = useState<Record<string, { areaId: string; percentage: number | null }>>({});
+  const [visibleBadgeAreas, setVisibleBadgeAreas] = useState<{ id: string; name: string }[]>([]);
+  const [regionBadgeData, setRegionBadgeData] = useState<Record<string, { point: [number, number]; percentage: number | null }>>({});
   const mapRef = useRef<Map | null>(null);
   const mapViewRef = useRef<HTMLElement | null>(null);
   const mapHeaderRef = useRef<HTMLElement | null>(null);
@@ -1006,31 +1009,51 @@ function MapView({ onRequestLocation, sessionActive, onSessionChange, activityDr
     };
   }, [focusAreaById, progressMapReady, progressMode]);
   useEffect(() => {
-    if (!progressMode) return;
+    const map = mapRef.current;
+    if (!map || !progressMapReady || !progressMode) { setVisibleBadgeAreas([]); return; }
+    let timer: number | undefined;
+    const update = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        if (!map.getLayer(REGION_BOUNDARIES_FILL)) return;
+        const level = mapBoundaryLevel(map.getZoom());
+        const areas = new globalThis.Map<string, { id: string; name: string }>();
+        for (const feature of map.queryRenderedFeatures({ layers: [REGION_BOUNDARIES_FILL] })) {
+          const properties = feature.properties as Record<string, unknown> | null;
+          if (!properties || !boundaryMatchesLevel(properties, level)) continue;
+          const id = String(properties.id ?? '');
+          if (id.startsWith('relation/')) areas.set(id, { id, name: String(properties.name ?? 'Area') });
+        }
+        const next = [...areas.values()].sort((a, b) => a.id.localeCompare(b.id));
+        setVisibleBadgeAreas(previous => previous.length === next.length && previous.every((value, index) => value.id === next[index].id) ? previous : next);
+      }, 80);
+    };
+    map.on('idle', update);
+    map.on('moveend', update);
+    update();
+    return () => { window.clearTimeout(timer); map.off('idle', update); map.off('moveend', update); };
+  }, [progressMapReady, progressMode]);
+  useEffect(() => {
+    if (!progressMode || !visibleBadgeAreas.length) return;
     const controller = new AbortController();
-    for (const region of STOCKHOLM_REGIONS) {
-      const polygons = region.districts.flatMap(district => district.geometry.type === 'Polygon' ? [district.geometry.coordinates] : district.geometry.coordinates);
-      const point = pointOnFeature({ type: 'Feature', properties: {}, geometry: { type: 'MultiPolygon', coordinates: polygons } } as any).geometry.coordinates;
+    for (const visible of visibleBadgeAreas) {
       void (async () => {
         try {
-          const { areas } = await lookupAreas(point[0], point[1], controller.signal);
-          const candidate = areas.filter(record => record.area.adminLevel === 9).sort((left, right) => Number(right.area.name.toLocaleLowerCase('sv').includes(region.name.toLocaleLowerCase('sv'))) - Number(left.area.name.toLocaleLowerCase('sv').includes(region.name.toLocaleLowerCase('sv'))))[0];
-          if (!candidate || controller.signal.aborted) return;
-          const record = mapAreaCache.get(candidate.area.id) ?? await loadArea(candidate.area.id, controller.signal, true);
-          if (controller.signal.aborted) return;
+          const record = mapAreaCache.get(visible.id) ?? await loadArea(visible.id, controller.signal, true);
+          if (controller.signal.aborted || !record.area.geometry) return;
           mapAreaCache.set(record.area.id, record);
           const ready = record.job?.status === 'ready' ? record.job.totals : null;
-          const totals = record.area.geometry ? await calculateExploredAreaTotals(discoveries, record.area.geometry, exploredTotalsKey(discoveries, `${record.area.id}:${record.area.boundaryVersion}`)) : null;
+          const totals = ready && ready.lengthMeters > 0 ? await calculateExploredAreaTotals(discoveries, record.area.geometry, exploredTotalsKey(discoveries, `${record.area.id}:${record.area.boundaryVersion}`)) : null;
           if (controller.signal.aborted) return;
-          const rawPercentage = ready && totals && ready.lengthMeters > 0 ? totals.lengthMeters / ready.lengthMeters * 100 : null;
-          setRegionBadgeData(previous => ({ ...previous, [region.id]: { areaId: record.area.id, percentage: rawPercentage !== null && rawPercentage <= 100.1 ? Math.min(100, rawPercentage) : null } }));
+          const rawPercentage = ready && totals ? totals.lengthMeters / ready.lengthMeters * 100 : null;
+          setRegionBadgeData(previous => ({ ...previous, [visible.id]: { point: areaLabelPoint(record.area.geometry!), percentage: rawPercentage !== null && rawPercentage <= 100.1 ? Math.min(100, rawPercentage) : null } }));
         } catch (error) {
-          if (!(error instanceof DOMException && error.name === 'AbortError')) console.warn(`Could not calculate ${region.name} progress:`, error);
+          if (!(error instanceof DOMException && error.name === 'AbortError')) console.warn(`Could not calculate ${visible.name} progress:`, error);
         }
       })();
     }
     return () => controller.abort();
-  }, [discoveries, progressMode]);
+  }, [discoveries, progressMode, visibleBadgeAreas]);
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !progressMapReady || !progressMode) {
@@ -1038,29 +1061,42 @@ function MapView({ onRequestLocation, sessionActive, onSessionChange, activityDr
       progressMarkersRef.current = [];
       return;
     }
-    const markers = STOCKHOLM_REGIONS.map(region => {
-      const regionPolygons = region.districts.flatMap(district => district.geometry.type === 'Polygon' ? [district.geometry.coordinates] : district.geometry.coordinates);
-      const geometry = { type: 'MultiPolygon', coordinates: regionPolygons };
-      const point = pointOnFeature({ type: 'Feature', properties: {}, geometry } as any).geometry.coordinates as [number, number];
-      const badge = regionBadgeData[region.id];
+    const markers = visibleBadgeAreas.flatMap(visible => {
+      const badge = regionBadgeData[visible.id];
+      if (!badge) return [];
       const percentage = badge?.percentage === null || badge?.percentage === undefined ? '—' : `${badge.percentage.toFixed(1)}%`;
       const button = document.createElement('button');
       button.type = 'button';
-      button.className = `progress-region-badge${badge?.areaId === (selectedProgressArea ?? currentArea)?.area.id ? ' progress-region-badge--current' : ''}`;
+      button.className = `progress-region-badge${visible.id === (selectedProgressArea ?? currentArea)?.area.id ? ' progress-region-badge--current' : ''}`;
       button.textContent = percentage;
-      button.setAttribute('aria-label', `${region.name}, ${percentage === '—' ? 'progress unavailable' : `${percentage} explored`}. Focus region`);
+      button.setAttribute('aria-label', `${visible.name}, ${percentage === '—' ? 'progress unavailable' : `${percentage} explored`}. Focus region`);
       button.addEventListener('pointerdown', event => event.stopPropagation());
-      button.addEventListener('click', event => { event.stopPropagation(); if (badge?.areaId) focusAreaById(badge.areaId); else focusAreaAt(point[0], point[1]); });
-      return new maplibregl.Marker({ element: button, anchor: 'center' }).setLngLat(point).addTo(map);
+      button.addEventListener('click', event => { event.stopPropagation(); focusAreaById(visible.id); });
+      return [new maplibregl.Marker({ element: button, anchor: 'center' }).setLngLat(badge.point).addTo(map)];
     });
     progressMarkersRef.current = markers;
     return () => {
       markers.forEach(marker => marker.remove());
       progressMarkersRef.current = [];
     };
-  }, [currentArea, focusAreaAt, focusAreaById, progressMapReady, progressMode, regionBadgeData, selectedProgressArea]);
+  }, [currentArea, focusAreaById, progressMapReady, progressMode, regionBadgeData, selectedProgressArea, visibleBadgeAreas]);
   const displayedArea = progressMode ? selectedProgressArea ?? currentArea : currentArea;
   const displayedParentAreaName = progressMode ? selectedParentAreaName : currentParentAreaName;
+  useEffect(() => {
+    if (displayedArea?.job?.status !== 'queued' && displayedArea?.job?.status !== 'running') return;
+    const controller = new AbortController();
+    let busy = false;
+    const timer = window.setInterval(() => {
+      if (busy) return;
+      busy = true;
+      void loadArea(displayedArea.area.id, controller.signal, true).then(record => {
+        if (!controller.signal.aborted) updateCurrentArea(record);
+      }).catch(error => {
+        if (!(error instanceof DOMException && error.name === 'AbortError')) console.warn('Could not refresh area coverage:', error);
+      }).finally(() => { busy = false; });
+    }, 3000);
+    return () => { controller.abort(); window.clearInterval(timer); };
+  }, [displayedArea?.area.id, displayedArea?.job?.status, updateCurrentArea]);
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -1075,11 +1111,20 @@ function MapView({ onRequestLocation, sessionActive, onSessionChange, activityDr
     map.setPaintProperty(CURRENT_AREA_FILL, 'fill-color', REGION_BOUNDARY_COLOR);
     map.setPaintProperty(CURRENT_AREA_LINE, 'line-color', REGION_BOUNDARY_COLOR);
     map.setPaintProperty(CURRENT_AREA_LINE, 'line-dasharray', null);
-    map.setLayoutProperty(CURRENT_AREA_FILL, 'visibility', progressMode ? 'visible' : 'none');
-    map.setLayoutProperty(CURRENT_AREA_LINE, 'visibility', progressMode ? 'visible' : 'none');
+    const updateVisibility = () => {
+      const level = mapBoundaryLevel(map.getZoom());
+      const promotedMunicipality = level === 9 && displayedArea.area.adminLevel === 7 && map.queryRenderedFeatures({ layers: [REGION_BOUNDARIES_FILL] }).some(feature => String(feature.properties?.id) === displayedArea.area.id && boundaryMatchesLevel(feature.properties as Record<string, unknown>, 9));
+      const visible = progressMode && (displayedArea.area.adminLevel === level || promotedMunicipality);
+      map.setLayoutProperty(CURRENT_AREA_FILL, 'visibility', visible ? 'visible' : 'none');
+      map.setLayoutProperty(CURRENT_AREA_LINE, 'visibility', visible ? 'visible' : 'none');
+    };
+    updateVisibility();
+    map.on('zoomend', updateVisibility);
+    map.on('idle', updateVisibility);
     for (const id of [REGION_BOUNDARIES_FILL, CURRENT_AREA_FILL, REGION_BOUNDARIES_LINE, CURRENT_AREA_LINE]) {
       if (map.getLayer(id)) map.moveLayer(id);
     }
+    return () => { map.off('zoomend', updateVisibility); map.off('idle', updateVisibility); };
   }, [displayedArea, progressMode]);
   useEffect(() => { mapRef.current?.resize(); }, [activityDrawerHeight]);
   const sessionDockOffset = sessionActive ? 'var(--spacing-map-edge)' : 'calc(var(--spacing-map-edge) + 44px + var(--map-control-gap))';

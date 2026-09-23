@@ -1,5 +1,6 @@
 import type { AreaGeometry, AreaTotals } from './area-types';
 import type { DiscoveredSegment } from './discovery';
+import { discoveriesNearArea, emptyAreaTotals } from './area-geometry';
 
 const totalsCache = new Map<string, AreaTotals>();
 const pending = new Map<string, Promise<AreaTotals>>();
@@ -39,6 +40,13 @@ export function calculateExploredAreaTotals(discoveries: DiscoveredSegment[], ge
   if (cached) return Promise.resolve(cached);
   const inFlight = pending.get(key);
   if (inFlight) return inFlight;
+  const nearby = discoveriesNearArea(discoveries, geometry);
+  if (!nearby.length) {
+    const totals = emptyAreaTotals();
+    totalsCache.set(key, totals);
+    try { localStorage.setItem(`roam.area-progress.${key}`, JSON.stringify(totals)); } catch {}
+    return Promise.resolve(totals);
+  }
   if (!worker) {
     worker = new Worker(new URL('./area-progress-worker.ts', import.meta.url), { type: 'module' });
     worker.addEventListener('message', ({ data }: MessageEvent<{ id: number; totals?: AreaTotals; error?: string }>) => {
@@ -58,7 +66,7 @@ export function calculateExploredAreaTotals(discoveries: DiscoveredSegment[], ge
   const id = ++nextRequestId;
   const result = new Promise<AreaTotals>((resolve, reject) => {
     requests.set(id, { resolve, reject });
-    worker?.postMessage({ id, discoveries, geometry });
+    worker?.postMessage({ id, discoveries: nearby, geometry });
   }).then(totals => {
     totalsCache.set(key, totals);
     try { localStorage.setItem(`roam.area-progress.${key}`, JSON.stringify(totals)); } catch {}
