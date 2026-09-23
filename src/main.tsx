@@ -60,6 +60,7 @@ const TERRAIN_EXAGGERATION = 1.05;
 const ROAD_MIN_ZOOM = 6;
 const ROAD_MAX_ZOOM = 24;
 const DEFAULT_MAP_ZOOM = 15;
+const RECORDING_MAP_ZOOM = 16;
 const DEFAULT_3D_PITCH = 60;
 const MAX_MAP_PITCH = 64;
 const UNPAVED_SURFACES = ['gravel', 'fine_gravel', 'dirt', 'earth', 'ground', 'unpaved', 'mud', 'sand', 'grass', 'woodchips', 'pebblestone', 'compacted'];
@@ -610,9 +611,10 @@ function loadCachedMapCenter(): [number, number] | null {
   }
 }
 
-function MapCanvas({ mapRef, viewportBottomInset, crosshairTopInset, showDiscovered, showRegionProgress, progressMode, is3D, showBuildings3D, showTerrain3D, playerLocation, followPlayer, activeRotationFollow, discoveries, onDiscoveries, onLocationChange, onBearingChange, onZoomChange, onPitchChange, onFollowPlayerChange, onMapReady }: { mapRef: React.MutableRefObject<Map | null>; viewportBottomInset: number; crosshairTopInset: number; showDiscovered: boolean; showRegionProgress: boolean; progressMode: boolean; is3D: boolean; showBuildings3D: boolean; showTerrain3D: boolean; playerLocation: PlayerLocation | null; followPlayer: boolean; activeRotationFollow: boolean; discoveries: DiscoveredSegment[]; onDiscoveries: (segments: DiscoveredSegment[]) => void; onLocationChange: (lng: number, lat: number, locality?: { city?: string; region?: string }) => void; onBearingChange: (bearing: number) => void; onZoomChange: (zoom: number) => void; onPitchChange: (pitch: number) => void; onFollowPlayerChange: (following: boolean) => void; onMapReady: () => void }) {
+function MapCanvas({ mapRef, viewportBottomInset, crosshairTopInset, showDiscovered, showRegionProgress, progressMode, is3D, showBuildings3D, showTerrain3D, sessionActive, playerLocation, followPlayer, activeRotationFollow, discoveries, onDiscoveries, onLocationChange, onBearingChange, onZoomChange, onPitchChange, onFollowPlayerChange, onMapReady }: { mapRef: React.MutableRefObject<Map | null>; viewportBottomInset: number; crosshairTopInset: number; showDiscovered: boolean; showRegionProgress: boolean; progressMode: boolean; is3D: boolean; showBuildings3D: boolean; showTerrain3D: boolean; sessionActive: boolean; playerLocation: PlayerLocation | null; followPlayer: boolean; activeRotationFollow: boolean; discoveries: DiscoveredSegment[]; onDiscoveries: (segments: DiscoveredSegment[]) => void; onLocationChange: (lng: number, lat: number, locality?: { city?: string; region?: string }) => void; onBearingChange: (bearing: number) => void; onZoomChange: (zoom: number) => void; onPitchChange: (pitch: number) => void; onFollowPlayerChange: (following: boolean) => void; onMapReady: () => void }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const playerMarkerRef = useRef<maplibregl.Marker | null>(null);
+  const lastMarkerLocationRef = useRef<PlayerLocation | null>(null);
   const hasCenteredOnFirstLiveLocationRef = useRef(false);
   const followCameraInsetRef = useRef<number | null>(null);
   const markerAnimationFrameRef = useRef<number | null>(null);
@@ -744,12 +746,13 @@ function MapCanvas({ mapRef, viewportBottomInset, crosshairTopInset, showDiscove
       markerRotationRef.current = 0;
       playerMarkerRef.current?.remove();
       playerMarkerRef.current = null;
+      lastMarkerLocationRef.current = null;
       return;
     }
     let markerWasCreated = false;
     if (!playerMarkerRef.current) {
       const element = document.createElement('div');
-      element.className = 'player-marker player-marker--stationary';
+      element.className = 'player-marker';
       element.setAttribute('aria-label', 'Your current location');
       element.innerHTML = '<svg class="player-marker__arrow" viewBox="0 0 32 40" aria-hidden="true"><path d="M16 1 31 35 16 29 1 35Z" /></svg>';
       // addTo immediately projects the marker, so coordinates must exist first.
@@ -759,13 +762,13 @@ function MapCanvas({ mapRef, viewportBottomInset, crosshairTopInset, showDiscove
       markerWasCreated = true;
     }
     const marker = playerMarkerRef.current;
-    if (!markerWasCreated) {
+    if (!markerWasCreated && lastMarkerLocationRef.current !== playerLocation) {
       if (markerAnimationFrameRef.current !== null) cancelAnimationFrame(markerAnimationFrameRef.current);
       const start = marker.getLngLat();
       const destination: [number, number] = [playerLocation.lng, playerLocation.lat];
       const startedAt = performance.now();
       const animateMarker = (now: number) => {
-        const progress = Math.min((now - startedAt) / 650, 1);
+        const progress = Math.min((now - startedAt) / (followPlayer ? 850 : 650), 1);
         const eased = 1 - (1 - progress) ** 3;
         marker.setLngLat([start.lng + (destination[0] - start.lng) * eased, start.lat + (destination[1] - start.lat) * eased]);
         if (progress < 1) markerAnimationFrameRef.current = requestAnimationFrame(animateMarker);
@@ -773,6 +776,7 @@ function MapCanvas({ mapRef, viewportBottomInset, crosshairTopInset, showDiscove
       };
       markerAnimationFrameRef.current = requestAnimationFrame(animateMarker);
     }
+    lastMarkerLocationRef.current = playerLocation;
     const targetRotation = playerLocation.travelHeading ?? 0;
     if (markerWasCreated) {
       markerRotationRef.current = targetRotation;
@@ -794,23 +798,25 @@ function MapCanvas({ mapRef, viewportBottomInset, crosshairTopInset, showDiscove
       };
       markerRotationFrameRef.current = requestAnimationFrame(animateRotation);
     }
-    marker.getElement().classList.toggle('player-marker--moving', playerLocation.isMoving);
-    marker.getElement().classList.toggle('player-marker--stationary', !playerLocation.isMoving);
+    marker.getElement().classList.toggle('player-marker--recording', sessionActive);
     if (followPlayer) {
       const map = mapRef.current;
       const camera = {
         center: [playerLocation.lng, playerLocation.lat] as [number, number],
         offset: crosshairOffset(map, crosshairTopInset),
-        ...(activeRotationFollow && playerLocation.isMoving && playerLocation.travelHeading !== null ? { bearing: playerLocation.travelHeading } : {}),
+        // A GPS update can arrive during the 2D/3D animation. Carry its target
+        // pitch into the new camera movement so the transition still finishes.
+        pitch: is3D ? DEFAULT_3D_PITCH : 0,
+        ...(!activeRotationFollow ? { bearing: 0 } : playerLocation.isMoving && playerLocation.travelHeading !== null ? { bearing: playerLocation.travelHeading } : {}),
       };
       const firstFix = !hasCenteredOnFirstLiveLocationRef.current;
       const actionableAreaChanged = followCameraInsetRef.current !== null && followCameraInsetRef.current !== crosshairTopInset;
       if (firstFix || actionableAreaChanged) map.jumpTo(camera);
-      else map.easeTo({ ...camera, duration: 850 });
+      else map.easeTo({ ...camera, duration: 850, easing: progress => 1 - (1 - progress) ** 3 });
       hasCenteredOnFirstLiveLocationRef.current = true;
       followCameraInsetRef.current = crosshairTopInset;
     }
-  }, [activeRotationFollow, crosshairTopInset, followPlayer, mapReady, mapRef, playerLocation]);
+  }, [activeRotationFollow, crosshairTopInset, followPlayer, is3D, mapReady, mapRef, playerLocation, sessionActive]);
   return <div className="map-canvas" style={{ bottom: viewportBottomInset }}><div ref={containerRef} className={mapReady ? 'maplibre-container maplibre-container--ready' : 'maplibre-container'} /><div className={is3D ? 'map-depth-fade' : 'map-depth-fade map-depth-fade--hidden'} aria-hidden="true" />
     {!mapReady && <div className="map-loading">LOADING ROAD DATA…</div>}
   </div>;
@@ -837,10 +843,29 @@ function MapView({ onRequestLocation, sessionActive, onSessionChange, activityDr
   const progressMarkersRef = useRef<maplibregl.Marker[]>([]);
   const progressAreaControllerRef = useRef<AbortController | null>(null);
   const pendingProgressFitRef = useRef(false);
+  const previousSessionActiveRef = useRef(false);
   const currentAreaIdRef = useRef<string | null>(null);
   const wakeLockStatus = useScreenWakeLock(sessionActive);
   const onMapReady = useCallback(() => setProgressMapReady(true), []);
-  useEffect(() => { if (!playerLocation) setActiveRotationFollow(false); }, [playerLocation]);
+  useEffect(() => { if (!playerLocation && !sessionActive) setActiveRotationFollow(false); }, [playerLocation, sessionActive]);
+  useEffect(() => {
+    if (previousSessionActiveRef.current === sessionActive) return;
+    previousSessionActiveRef.current = sessionActive;
+    if (sessionActive) {
+      progressAreaControllerRef.current?.abort();
+      pendingProgressFitRef.current = false;
+      setProgressMode(false);
+      setFollowPlayer(true);
+      setActiveRotationFollow(true);
+      setIs3D(true);
+      // Set the ride scale before follow starts its camera animation.
+      mapRef.current?.jumpTo({ zoom: RECORDING_MAP_ZOOM });
+    } else {
+      setActiveRotationFollow(false);
+      setIs3D(false);
+      mapRef.current?.jumpTo({ bearing: 0 });
+    }
+  }, [sessionActive, setIs3D]);
   const handleLocationChange = (lng: number, lat: number, locality?: { city?: string; region?: string }) => {
     const district = findStockholmDistrict([lng, lat]);
     setLocation(current => ({ ...current, lng, lat, city: locality?.city?.toUpperCase() || current.city, region: district?.name.toUpperCase() ?? '' }));
@@ -1059,6 +1084,11 @@ function MapView({ onRequestLocation, sessionActive, onSessionChange, activityDr
   useEffect(() => { mapRef.current?.resize(); }, [activityDrawerHeight]);
   const sessionDockOffset = sessionActive ? 'var(--spacing-map-edge)' : 'calc(var(--spacing-map-edge) + 44px + var(--map-control-gap))';
   const centerOnPlayer = () => {
+    if (progressMode) {
+      setProgressMode(false);
+      pendingProgressFitRef.current = false;
+      progressAreaControllerRef.current?.abort();
+    }
     if (!playerLocation) {
       setFollowPlayer(true);
       setActiveRotationFollow(false);
@@ -1076,7 +1106,7 @@ function MapView({ onRequestLocation, sessionActive, onSessionChange, activityDr
     }
     setActiveRotationFollow(false);
   };
-  const isFollowingPlayer = followPlayer && Boolean(playerLocation);
+  const isFollowingPlayer = !progressMode && followPlayer && Boolean(playerLocation);
   const handleFollowChange = (following: boolean) => { setFollowPlayer(following); if (!following) setActiveRotationFollow(false); };
   const resetCompass = () => { setActiveRotationFollow(false); mapRef.current?.easeTo({ bearing: 0, duration: 450 }); };
   const normalizedBearing = (bearing % 360 + 360) % 360;
@@ -1090,6 +1120,8 @@ function MapView({ onRequestLocation, sessionActive, onSessionChange, activityDr
     const next = !progressMode;
     setProgressMode(next);
     if (next) {
+      setFollowPlayer(false);
+      setActiveRotationFollow(false);
       setIs3D(false);
       setSelectedProgressArea(currentArea);
       setSelectedParentAreaName(currentParentAreaName);
@@ -1099,7 +1131,7 @@ function MapView({ onRequestLocation, sessionActive, onSessionChange, activityDr
       progressAreaControllerRef.current?.abort();
     }
   };
-  return <section ref={mapViewRef} className="map-view"><MapCanvas mapRef={mapRef} viewportBottomInset={0} crosshairTopInset={topOverlayInset} showDiscovered={showDiscovered} showRegionProgress={boundariesVisible} progressMode={progressMode} is3D={is3D} showBuildings3D={showBuildings3D} showTerrain3D={showTerrain3D} playerLocation={playerLocation} followPlayer={followPlayer} activeRotationFollow={activeRotationFollow} discoveries={discoveries} onDiscoveries={onDiscoveries} onLocationChange={handleLocationChange} onBearingChange={handleBearingChange} onZoomChange={() => {}} onPitchChange={() => {}} onFollowPlayerChange={handleFollowChange} onMapReady={onMapReady} />{!isFollowingPlayer && <div className="map-center-crosshair" style={{ top: topOverlayInset }} aria-hidden="true"><span /></div>}
+  return <section ref={mapViewRef} className="map-view"><MapCanvas mapRef={mapRef} viewportBottomInset={0} crosshairTopInset={topOverlayInset} showDiscovered={showDiscovered} showRegionProgress={boundariesVisible} progressMode={progressMode} is3D={is3D} showBuildings3D={showBuildings3D} showTerrain3D={showTerrain3D} sessionActive={sessionActive} playerLocation={playerLocation} followPlayer={!progressMode && followPlayer} activeRotationFollow={activeRotationFollow} discoveries={discoveries} onDiscoveries={onDiscoveries} onLocationChange={handleLocationChange} onBearingChange={handleBearingChange} onZoomChange={() => {}} onPitchChange={() => {}} onFollowPlayerChange={handleFollowChange} onMapReady={onMapReady} />{!isFollowingPlayer && <div className="map-center-crosshair" style={{ top: topOverlayInset }} aria-hidden="true"><span /></div>}
     <header ref={mapHeaderRef} className="map-header"><div className="map-top-right">{displayedArea && <div ref={progressCardRef} className="location-summary map-ui-surface"><AreaCoverageCard record={displayedArea} discoveries={discoveries} onUpdate={updateCurrentArea} onExplored={ignoreMapAreaExplored} parentAreaName={displayedParentAreaName ?? undefined} reserveParentArea showActions={false} className="min-h-0 border-0 bg-transparent p-0" /></div>}<div className="map-top-actions"><div className={`map-compass${compassVisible ? ' map-compass--visible' : ''}`} aria-hidden={!compassVisible}><ShadcnButton variant="secondary" size="icon" className="map-ui-surface" aria-label="Reset compass north" tabIndex={compassVisible ? 0 : -1} onClick={resetCompass}><span className="compass-rotor" style={{ transform: `rotate(${-bearing}deg)` }}><i className="compass-needle"><b className="compass-north">▲</b><b className="compass-south">▼</b></i></span></ShadcnButton></div></div></div></header>
     <div className="map-controls" style={{ bottom: sessionDockOffset }} aria-label="Map controls"><ShadcnButton variant="secondary" size="icon" className="map-ui-surface layers-control" aria-label={`Open layers panel, ${activeLayerCount} active`} aria-expanded={debugOpen} onClick={() => setDebugOpen(!debugOpen)}><Stack weight="regular" aria-hidden="true" />{activeLayerCount > 0 && <span className="layers-control__count" aria-hidden="true">{activeLayerCount}</span>}</ShadcnButton><ShadcnButton variant="secondary" size="icon" className={locationControlClass} aria-label={locationControlLabel} aria-pressed={isFollowingPlayer} onClick={centerOnPlayer}><LocationIcon weight={activeRotationFollow ? 'fill' : 'regular'} aria-hidden="true" /></ShadcnButton><ShadcnButton variant="secondary" size="icon" className="map-ui-surface map-mode-toggle" aria-label={`Switch to ${is3D ? '2D' : '3D'} view`} onClick={() => setIs3D(!is3D)}>{is3D ? '3D' : '2D'}</ShadcnButton></div>{!sessionActive && <ShadcnButton variant="secondary" className="record-fab map-ui-surface" onClick={() => onSessionChange(true)}><LineSegments weight="regular" aria-hidden="true" />Record</ShadcnButton>}
     <ShadcnButton variant="secondary" size="medium" className="progress-mode-toggle map-ui-surface rounded-pill" aria-pressed={progressMode} onClick={toggleProgressMode}><Percent weight="regular" aria-hidden="true" />Progress</ShadcnButton>
@@ -1916,7 +1948,8 @@ function App() {
       };
       void finishSession().catch(() => {});
     }
-    handleGpsChange(active, active);
+    if (active) handleGpsChange(true, true);
+    else if (Capacitor.isNativePlatform()) void RideTracking.stop().catch(() => {});
   };
   const handleGpxExport = (session: RideSession) => {
     const exportRoute = async () => {
