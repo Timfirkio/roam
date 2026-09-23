@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import maplibregl, { type Map as MapLibreMap } from 'maplibre-gl';
 import { bbox } from '@turf/turf';
 import { MagnifyingGlass, X } from '@phosphor-icons/react';
@@ -11,7 +11,7 @@ import { applyRoamBaseStyle, ROAM_MAP_STYLE } from './roam-map-style';
 import { Button } from './components/ui/button';
 import { Item, ItemActions, ItemContent, ItemDescription, ItemTitle } from './components/ui/item';
 import { Spinner } from './components/ui/spinner';
-import { cachedExploredTotals, calculateExploredAreaTotals, exploredTotalsKey } from './area-progress-calculation';
+import { cachedExploredTotals, calculateExploredAreaTotals, exploredTotalsKey, previousExploredAreaTotals, rememberExploredAreaTotals } from './area-progress-calculation';
 
 const MAP_STYLE = ROAM_MAP_STYLE;
 const AREA_SOURCE = 'roam-progress-areas';
@@ -48,7 +48,7 @@ export function AnimatedProgressValue({ value, label, className = 'area-progress
   const increasing = previous !== null && value !== null && previous.value !== null && value > previous.value;
   return <span className={`${className}${previous ? ' area-progress-percent--changing' : ''}${increasing ? ' area-progress-percent--increasing' : ''}`} aria-live="polite" aria-atomic="true">
     {previous && <span className="area-progress-percent__previous" aria-hidden="true">{previous.label}</span>}
-    <span className="area-progress-percent__current">{current.label}</span>
+    <span key={current.label} className="area-progress-percent__current">{current.label}</span>
   </span>;
 }
 
@@ -99,13 +99,18 @@ export function AreaCoverageCard({ record, discoveries, onUpdate, onExplored, pa
   const percentage = ready && explored && ready.lengthMeters > 0 ? explored.lengthMeters / ready.lengthMeters * 100 : null;
   const inconsistent = percentage !== null && percentage > 100.1;
   const pending = job?.status === 'queued' || job?.status === 'running';
-  const loading = refreshing || pending || requesting;
+  const loading = !explored && (refreshing || pending || requesting);
   const previousSegmentWidthsRef = useRef<Partial<Record<keyof AreaTotals['byRoadType'], number>>>({});
+  const previousAreaKeyRef = useRef(`${area.id}:${area.boundaryVersion}`);
+  if (previousAreaKeyRef.current !== `${area.id}:${area.boundaryVersion}`) {
+    previousAreaKeyRef.current = `${area.id}:${area.boundaryVersion}`;
+    previousSegmentWidthsRef.current = {};
+  }
   useEffect(() => {
     if (!ready || !explored || !isCurrent) return;
     previousSegmentWidthsRef.current = Object.fromEntries(Object.entries(explored.byRoadType).map(([type, meters]) => [type, ready.lengthMeters > 0 ? Math.min(100, meters / ready.lengthMeters * 100) : 0]));
   }, [explored, isCurrent, ready]);
-  const segmentWidth = (type: keyof AreaTotals['byRoadType']) => ready && explored && isCurrent
+  const segmentWidth = (type: keyof AreaTotals['byRoadType']) => ready && explored
     ? ready.lengthMeters > 0 ? Math.min(100, explored.byRoadType[type] / ready.lengthMeters * 100) : 0
     : previousSegmentWidthsRef.current[type] ?? 0;
   async function calculate() {
@@ -126,25 +131,29 @@ export function AreaCoverageCard({ record, discoveries, onUpdate, onExplored, pa
 }
 
 function useExploredAreaTotals(discoveries: DiscoveredSegment[], geometry: AreaRecord['area']['geometry'], areaKey: string, enabled: boolean) {
-  const [result, setResult] = useState<{ key: string; totals: AreaTotals } | null>(null);
-  const [calculationError, setCalculationError] = useState<string | null>(null);
-  const key = enabled && geometry ? exploredTotalsKey(discoveries, areaKey) : null;
+  const [result, setResult] = useState<{ key: string; areaKey: string; totals: AreaTotals } | null>(null);
+  const [error, setError] = useState<{ key: string; message: string } | null>(null);
+  const key = useMemo(() => enabled && geometry ? exploredTotalsKey(discoveries, areaKey, geometry) : null, [areaKey, discoveries, enabled, geometry]);
   const cached = key ? cachedExploredTotals(key) : undefined;
-  // Do not combine a previous area's explored totals with the new area's
-  // denominator while its measurement is still running.
-  const totals = key === null ? null : result?.key === key ? result.totals : cached ?? null;
-  const refreshing = key !== null && result?.key !== key && !cached && !calculationError;
+  // Keep the previous value while this same area's latest discoveries are measured.
+  // Never pair another area's numerator with the current denominator.
+  const totals = key === null ? null : cached ?? (result?.areaKey === areaKey ? result.totals : geometry ? previousExploredAreaTotals(areaKey, discoveries, geometry) ?? null : null);
+  const calculationError = error?.key === key ? error.message : null;
+  const refreshing = key !== null && !totals && !calculationError;
   const isCurrent = key !== null && (result?.key === key || Boolean(cached));
   useEffect(() => {
     if (!geometry || !key) return;
-    if (cached) { setResult({ key, totals: cached }); return; }
+    if (cached) {
+      rememberExploredAreaTotals(areaKey, discoveries, geometry, cached);
+      setResult(current => current?.key === key ? current : { key, areaKey, totals: cached });
+      return;
+    }
     let active = true;
-    setCalculationError(null);
-    void calculateExploredAreaTotals(discoveries, geometry, key).then(totals => {
-      if (active) setResult({ key, totals });
-    }).catch(error => { if (active) setCalculationError(error instanceof Error ? error.message : 'Could not calculate area progress.'); });
+    void calculateExploredAreaTotals(discoveries, geometry, key, areaKey).then(totals => {
+      if (active) { setError(null); setResult({ key, areaKey, totals }); }
+    }).catch(cause => { if (active) setError({ key, message: cause instanceof Error ? cause.message : 'Could not calculate area progress.' }); });
     return () => { active = false; };
-  }, [cached, discoveries, geometry, key]);
+  }, [areaKey, cached, discoveries, geometry, key]);
   return { totals, refreshing, calculationError, isCurrent };
 }
 

@@ -4,22 +4,32 @@ import { discoveriesNearArea, emptyAreaTotals } from './area-geometry';
 
 const totalsCache = new Map<string, AreaTotals>();
 const pending = new Map<string, Promise<AreaTotals>>();
-const discoveryVersions = new WeakMap<DiscoveredSegment[], string>();
+const recentAreaTotals = new Map<string, { totals: AreaTotals; discoveryIds: Set<string> }>();
 let worker: Worker | null = null;
 let nextRequestId = 0;
 const requests = new Map<number, { resolve: (totals: AreaTotals) => void; reject: (error: Error) => void }>();
 
-function discoveryVersion(discoveries: DiscoveredSegment[]) {
-  const cached = discoveryVersions.get(discoveries);
-  if (cached) return cached;
-  const latest = discoveries.at(-1);
-  const version = `${discoveries.length}:${latest?.id ?? ''}:${latest?.discoveredAt ?? 0}`;
-  discoveryVersions.set(discoveries, version);
-  return version;
+export function exploredTotalsKey(discoveries: DiscoveredSegment[], areaKey: string, geometry: AreaGeometry) {
+  const nearby = discoveriesNearArea(discoveries, geometry);
+  let hash = 2166136261;
+  for (const segment of nearby) {
+    for (const character of `${segment.id}:${segment.roadType}:${segment.discoveredAt};`) {
+      hash = Math.imul(hash ^ character.charCodeAt(0), 16777619);
+    }
+  }
+  return `${areaKey}:v2:${nearby.length}:${(hash >>> 0).toString(36)}`;
 }
 
-export function exploredTotalsKey(discoveries: DiscoveredSegment[], areaKey: string) {
-  return `${areaKey}:${discoveryVersion(discoveries)}`;
+export function rememberExploredAreaTotals(areaKey: string, discoveries: DiscoveredSegment[], geometry: AreaGeometry, totals: AreaTotals) {
+  recentAreaTotals.set(areaKey, { totals, discoveryIds: new Set(discoveriesNearArea(discoveries, geometry).map(segment => segment.id)) });
+}
+
+/** Reuse the last result while additional discoveries for the same area are measured. */
+export function previousExploredAreaTotals(areaKey: string, discoveries: DiscoveredSegment[], geometry: AreaGeometry) {
+  const recent = recentAreaTotals.get(areaKey);
+  if (!recent) return undefined;
+  const currentIds = new Set(discoveriesNearArea(discoveries, geometry).map(segment => segment.id));
+  return [...recent.discoveryIds].every(id => currentIds.has(id)) ? recent.totals : undefined;
 }
 
 export function cachedExploredTotals(key: string) {
@@ -35,15 +45,16 @@ export function cachedExploredTotals(key: string) {
   } catch { return undefined; }
 }
 
-export function calculateExploredAreaTotals(discoveries: DiscoveredSegment[], geometry: AreaGeometry, key: string): Promise<AreaTotals> {
+export function calculateExploredAreaTotals(discoveries: DiscoveredSegment[], geometry: AreaGeometry, key: string, areaKey: string): Promise<AreaTotals> {
   const cached = cachedExploredTotals(key);
-  if (cached) return Promise.resolve(cached);
+  if (cached) { rememberExploredAreaTotals(areaKey, discoveries, geometry, cached); return Promise.resolve(cached); }
   const inFlight = pending.get(key);
   if (inFlight) return inFlight;
   const nearby = discoveriesNearArea(discoveries, geometry);
   if (!nearby.length) {
     const totals = emptyAreaTotals();
     totalsCache.set(key, totals);
+    rememberExploredAreaTotals(areaKey, discoveries, geometry, totals);
     try { localStorage.setItem(`roam.area-progress.${key}`, JSON.stringify(totals)); } catch {}
     return Promise.resolve(totals);
   }
@@ -69,6 +80,7 @@ export function calculateExploredAreaTotals(discoveries: DiscoveredSegment[], ge
     worker?.postMessage({ id, discoveries: nearby, geometry });
   }).then(totals => {
     totalsCache.set(key, totals);
+    rememberExploredAreaTotals(areaKey, discoveries, geometry, totals);
     try { localStorage.setItem(`roam.area-progress.${key}`, JSON.stringify(totals)); } catch {}
     return totals;
   }).finally(() => pending.delete(key));

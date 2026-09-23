@@ -1043,7 +1043,7 @@ function MapView({ onRequestLocation, sessionActive, onSessionChange, activityDr
           if (controller.signal.aborted || !record.area.geometry) return;
           mapAreaCache.set(record.area.id, record);
           const ready = record.job?.status === 'ready' ? record.job.totals : null;
-          const totals = ready && ready.lengthMeters > 0 ? await calculateExploredAreaTotals(discoveries, record.area.geometry, exploredTotalsKey(discoveries, `${record.area.id}:${record.area.boundaryVersion}`)) : null;
+          const totals = ready && ready.lengthMeters > 0 ? await calculateExploredAreaTotals(discoveries, record.area.geometry, exploredTotalsKey(discoveries, `${record.area.id}:${record.area.boundaryVersion}`, record.area.geometry), `${record.area.id}:${record.area.boundaryVersion}`) : null;
           if (controller.signal.aborted) return;
           const rawPercentage = ready && totals ? totals.lengthMeters / ready.lengthMeters * 100 : null;
           setRegionBadgeData(previous => ({ ...previous, [visible.id]: { point: areaLabelPoint(record.area.geometry!), percentage: rawPercentage !== null && rawPercentage <= 100.1 ? Math.min(100, rawPercentage) : null } }));

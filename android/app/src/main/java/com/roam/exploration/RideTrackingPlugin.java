@@ -9,7 +9,6 @@ import androidx.core.content.ContextCompat;
 import androidx.core.content.FileProvider;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
-import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
@@ -20,18 +19,18 @@ public class RideTrackingPlugin extends Plugin {
   @PluginMethod public void start(PluginCall call) { ContextCompat.startForegroundService(getContext(), new Intent(getContext(), RideTrackingService.class).setAction(RideTrackingService.START)); call.resolve(); }
   @PluginMethod public void stop(PluginCall call) { getContext().startService(new Intent(getContext(), RideTrackingService.class).setAction(RideTrackingService.STOP)); call.resolve(); }
   @PluginMethod public void drainPoints(PluginCall call) {
-    android.content.SharedPreferences preferences=getContext().getSharedPreferences("ride_tracking", android.content.Context.MODE_PRIVATE);
-    JSObject result=new JSObject();
-    try { result.put("points",new JSArray(preferences.getString("points","[]"))); preferences.edit().putString("points","[]").apply(); }
-    catch(Exception error) { result.put("points",new JSArray()); }
-    call.resolve(result);
+    try {
+      JSObject result=new JSObject();
+      result.put("points",RidePointStore.get(getContext()).drain());
+      call.resolve(result);
+    } catch(Exception error) { call.reject("Unable to drain ride points",error); }
   }
   @PluginMethod public void getRecordedRoute(PluginCall call) {
-    android.content.SharedPreferences preferences=getContext().getSharedPreferences("ride_tracking", android.content.Context.MODE_PRIVATE);
-    JSObject result=new JSObject();
-    try { result.put("points",new JSArray(preferences.getString("route","[]"))); }
-    catch(Exception error) { result.put("points",new JSArray()); }
-    call.resolve(result);
+    try {
+      JSObject result=new JSObject();
+      result.put("points",RidePointStore.get(getContext()).route());
+      call.resolve(result);
+    } catch(Exception error) { call.reject("Unable to read recorded ride",error); }
   }
   @PluginMethod public void shareGpx(PluginCall call) {
     try {
