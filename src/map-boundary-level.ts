@@ -12,3 +12,14 @@ export function boundaryMatchesLevel(properties: Record<string, unknown>, level:
     ? Number(properties.display_level ?? adminLevel) === 9
     : adminLevel === level;
 }
+
+/** Show only the outline tier that matches the current zoom. */
+export function boundaryLineOpacity(level: 2 | 4 | 7 | 9) {
+  const stops = {
+    2: [0.9, 5, 0],
+    4: [0, 5, 0.9, 8, 0],
+    7: [0, 8, 0.9, 10, 0],
+    9: [0, 10, 0.9],
+  }[level];
+  return ['step', ['zoom'], ...stops];
+}

@@ -134,7 +134,7 @@ function useExploredAreaTotals(discoveries: DiscoveredSegment[], geometry: AreaR
   const [result, setResult] = useState<{ key: string; areaKey: string; totals: AreaTotals } | null>(null);
   const [error, setError] = useState<{ key: string; message: string } | null>(null);
   const key = useMemo(() => enabled && geometry ? exploredTotalsKey(discoveries, areaKey, geometry) : null, [areaKey, discoveries, enabled, geometry]);
-  const cached = key ? cachedExploredTotals(key) : undefined;
+  const cached = key ? cachedExploredTotals(key, areaKey) : undefined;
   // Keep the previous value while this same area's latest discoveries are measured.
   // Never pair another area's numerator with the current denominator.
   const totals = key === null ? null : cached ?? (result?.areaKey === areaKey ? result.totals : geometry ? previousExploredAreaTotals(areaKey, discoveries, geometry) ?? null : null);

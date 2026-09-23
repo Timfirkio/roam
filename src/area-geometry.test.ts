@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clipLineToArea, discoveriesNearArea, exploredAreaTotals, uniqueLineMeters } from './area-geometry';
+import { clipLineToArea, createExploredAreaAccumulator, discoveriesNearArea, exploredAreaTotals, uniqueLineMeters } from './area-geometry';
 import { administrativeLabel, type AreaGeometry, type Position } from './area-types';
 
 const square: Position[] = [[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]];
@@ -30,6 +30,15 @@ describe('boundary coverage', () => {
     expect(uniqueLineMeters([line, [...line].reverse(), [[0.2, 0.5], [0.7, 0.5]]])).toBeCloseTo(uniqueLineMeters([line]), 5);
     const discoveries = [line, [...line].reverse()].map((coordinates, i) => ({ id: `old-${i}`, roadType: 'cycleway' as const, geometry: { type: 'LineString' as const, coordinates } }));
     expect(exploredAreaTotals(discoveries, geometry).lengthMeters).toBeCloseTo(uniqueLineMeters([line]), 5);
+  });
+  it('incrementally adds discoveries without double counting overlapping road pieces', () => {
+    const first = { id: 'first', roadType: 'cycleway' as const, geometry: { type: 'LineString' as const, coordinates: [[-1, 0.5], [0.7, 0.5]] as Position[] } };
+    const second = { id: 'second', roadType: 'cycleway' as const, geometry: { type: 'LineString' as const, coordinates: [[0.5, 0.5], [2, 0.5]] as Position[] } };
+    const accumulator = createExploredAreaAccumulator(geometry);
+    accumulator.add([first]);
+    accumulator.add([second]);
+    accumulator.add([first]);
+    expect(accumulator.totals()).toEqual(exploredAreaTotals([first, second], geometry));
   });
   it('includes border roads and keeps nearby parallel paths separate', () => {
     expect(clipLineToArea([[0, 0], [1, 0]], geometry)).toHaveLength(1);

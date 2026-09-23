@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { boundaryMatchesLevel, mapBoundaryLevel } from './map-boundary-level';
+import { boundaryLineOpacity, boundaryMatchesLevel, mapBoundaryLevel } from './map-boundary-level';
 
 describe('map boundary levels', () => {
   it('switches directly from municipality to county boundaries', () => {
@@ -16,5 +16,9 @@ describe('map boundary levels', () => {
     expect(boundaryMatchesLevel(municipality, 9)).toBe(true);
     expect(boundaryMatchesLevel({ admin_level: 7, display_level: 7 }, 9)).toBe(false);
     expect(boundaryMatchesLevel({ admin_level: 9 }, 7)).toBe(false);
+  });
+  it('switches county and municipality outlines at the same threshold', () => {
+    expect(boundaryLineOpacity(4)).toEqual(['step', ['zoom'], 0, 5, 0.9, 8, 0]);
+    expect(boundaryLineOpacity(7)).toEqual(['step', ['zoom'], 0, 8, 0.9, 10, 0]);
   });
 });

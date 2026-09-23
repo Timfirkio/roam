@@ -1,5 +1,10 @@
 import { booleanPointInPolygon, distance, lineIntersect, lineString } from '@turf/turf';
 import type { AreaDiscovery, AreaGeometry, AreaTotals, Position } from './area-types';
+import type { DiscoveredSegment } from './discovery';
+
+export function areaDiscoverySignature(segment: DiscoveredSegment) {
+  return `${segment.id}:${segment.roadType}:${segment.discoveredAt}:${JSON.stringify(segment.geometry.coordinates)}`;
+}
 
 export function emptyAreaTotals(): AreaTotals {
   return { lengthMeters: 0, byRoadType: { 'paved-road': 0, cycleway: 0, 'unpaved-path': 0 } };
@@ -98,20 +103,33 @@ export function uniqueLineMeters(lines: Position[][]): number {
   return total;
 }
 
-export function exploredAreaTotals(discoveries: AreaDiscovery[], geometry: AreaGeometry): AreaTotals {
-  const totals = emptyAreaTotals();
+/** Retain clipped lines so new discoveries do not reclip the whole ride history. */
+export function createExploredAreaAccumulator(geometry: AreaGeometry) {
   const lines: Record<string, Position[][]> = { 'paved-road': [], cycleway: [], 'unpaved-path': [] };
   const seen = new Set<string>();
   const context = areaClipContext(geometry);
-  for (const segment of discoveries) {
-    if (seen.has(segment.id)) continue;
-    seen.add(segment.id);
-    const type = segment.roadType === 'unpaved-path' ? 'unpaved-path' : segment.roadType === 'paved-road' ? 'paved-road' : 'cycleway';
-    lines[type].push(...clipLineToAreaWithContext(segment.geometry.coordinates, context));
-  }
-  for (const type of Object.keys(totals.byRoadType) as Array<keyof typeof totals.byRoadType>) {
-    totals.byRoadType[type] = uniqueLineMeters(lines[type]);
-  }
-  totals.lengthMeters = uniqueLineMeters(Object.values(lines).flat());
-  return totals;
+  return {
+    add(discoveries: AreaDiscovery[]) {
+      for (const segment of discoveries) {
+        if (seen.has(segment.id)) continue;
+        seen.add(segment.id);
+        const type = segment.roadType === 'unpaved-path' ? 'unpaved-path' : segment.roadType === 'paved-road' ? 'paved-road' : 'cycleway';
+        lines[type].push(...clipLineToAreaWithContext(segment.geometry.coordinates, context));
+      }
+    },
+    totals(): AreaTotals {
+      const totals = emptyAreaTotals();
+      for (const type of Object.keys(totals.byRoadType) as Array<keyof typeof totals.byRoadType>) {
+        totals.byRoadType[type] = uniqueLineMeters(lines[type]);
+      }
+      totals.lengthMeters = uniqueLineMeters(Object.values(lines).flat());
+      return totals;
+    },
+  };
+}
+
+export function exploredAreaTotals(discoveries: AreaDiscovery[], geometry: AreaGeometry): AreaTotals {
+  const accumulator = createExploredAreaAccumulator(geometry);
+  accumulator.add(discoveries);
+  return accumulator.totals();
 }

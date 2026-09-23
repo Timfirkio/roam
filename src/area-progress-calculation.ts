@@ -1,6 +1,6 @@
 import type { AreaGeometry, AreaTotals } from './area-types';
 import type { DiscoveredSegment } from './discovery';
-import { discoveriesNearArea, emptyAreaTotals } from './area-geometry';
+import { areaDiscoverySignature, discoveriesNearArea, emptyAreaTotals } from './area-geometry';
 
 const totalsCache = new Map<string, AreaTotals>();
 const pending = new Map<string, Promise<AreaTotals>>();
@@ -8,12 +8,20 @@ const recentAreaTotals = new Map<string, { totals: AreaTotals; discoveryIds: Set
 let worker: Worker | null = null;
 let nextRequestId = 0;
 const requests = new Map<number, { resolve: (totals: AreaTotals) => void; reject: (error: Error) => void }>();
+const storageKey = (areaKey: string) => `roam.area-progress.current.${areaKey}`;
+
+function persistTotals(key: string, areaKey: string, totals: AreaTotals) {
+  try {
+    localStorage.setItem(storageKey(areaKey), JSON.stringify({ key, totals }));
+    return true;
+  } catch { return false; }
+}
 
 export function exploredTotalsKey(discoveries: DiscoveredSegment[], areaKey: string, geometry: AreaGeometry) {
   const nearby = discoveriesNearArea(discoveries, geometry);
   let hash = 2166136261;
-  for (const segment of nearby) {
-    for (const character of `${segment.id}:${segment.roadType}:${segment.discoveredAt};`) {
+  for (const segment of [...nearby].sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0)) {
+    for (const character of `${areaDiscoverySignature(segment)};`) {
       hash = Math.imul(hash ^ character.charCodeAt(0), 16777619);
     }
   }
@@ -32,21 +40,26 @@ export function previousExploredAreaTotals(areaKey: string, discoveries: Discove
   return [...recent.discoveryIds].every(id => currentIds.has(id)) ? recent.totals : undefined;
 }
 
-export function cachedExploredTotals(key: string) {
+export function cachedExploredTotals(key: string, areaKey: string) {
   const memory = totalsCache.get(key);
   if (memory) return memory;
   try {
-    const stored = localStorage.getItem(`roam.area-progress.${key}`);
-    if (!stored) return undefined;
-    const totals = JSON.parse(stored) as AreaTotals;
+    const current = localStorage.getItem(storageKey(areaKey));
+    const entry = current ? JSON.parse(current) as { key: string; totals: AreaTotals } : null;
+    const legacy = entry?.key === key ? null : localStorage.getItem(`roam.area-progress.${key}`);
+    const totals = entry?.key === key ? entry.totals : legacy ? JSON.parse(legacy) as AreaTotals : null;
+    if (!totals) return undefined;
     if (!Number.isFinite(totals.lengthMeters)) return undefined;
     totalsCache.set(key, totals);
+    if (legacy && persistTotals(key, areaKey, totals)) {
+      localStorage.removeItem(`roam.area-progress.${key}`);
+    }
     return totals;
   } catch { return undefined; }
 }
 
 export function calculateExploredAreaTotals(discoveries: DiscoveredSegment[], geometry: AreaGeometry, key: string, areaKey: string): Promise<AreaTotals> {
-  const cached = cachedExploredTotals(key);
+  const cached = cachedExploredTotals(key, areaKey);
   if (cached) { rememberExploredAreaTotals(areaKey, discoveries, geometry, cached); return Promise.resolve(cached); }
   const inFlight = pending.get(key);
   if (inFlight) return inFlight;
@@ -55,7 +68,7 @@ export function calculateExploredAreaTotals(discoveries: DiscoveredSegment[], ge
     const totals = emptyAreaTotals();
     totalsCache.set(key, totals);
     rememberExploredAreaTotals(areaKey, discoveries, geometry, totals);
-    try { localStorage.setItem(`roam.area-progress.${key}`, JSON.stringify(totals)); } catch {}
+    persistTotals(key, areaKey, totals);
     return Promise.resolve(totals);
   }
   if (!worker) {
@@ -77,11 +90,11 @@ export function calculateExploredAreaTotals(discoveries: DiscoveredSegment[], ge
   const id = ++nextRequestId;
   const result = new Promise<AreaTotals>((resolve, reject) => {
     requests.set(id, { resolve, reject });
-    worker?.postMessage({ id, discoveries: nearby, geometry });
+    worker?.postMessage({ id, areaKey, discoveries: nearby, geometry });
   }).then(totals => {
     totalsCache.set(key, totals);
     rememberExploredAreaTotals(areaKey, discoveries, geometry, totals);
-    try { localStorage.setItem(`roam.area-progress.${key}`, JSON.stringify(totals)); } catch {}
+    persistTotals(key, areaKey, totals);
     return totals;
   }).finally(() => pending.delete(key));
   pending.set(key, result);

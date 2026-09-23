@@ -1,7 +1,7 @@
 import { StrictMode, useCallback, useEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef, type CSSProperties, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AnimatedProgressValue, AreaCoverageCard, ScrambleText } from './area-progress-view';
-import { calculateExploredAreaTotals, exploredTotalsKey } from './area-progress-calculation';
+import { cachedExploredTotals, calculateExploredAreaTotals, exploredTotalsKey } from './area-progress-calculation';
 import { areaTileUrlTemplate, loadArea, lookupAreas } from './area-client';
 import type { AreaRecord, AreaTotals } from './area-types';
 import maplibregl, { type Map } from 'maplibre-gl';
@@ -23,7 +23,7 @@ import { deleteSession, loadSessions, saveSession, type RideSession } from './se
 import { reconcileSessionRoute, synchronizeDiscoveredSegmentRoadTypes } from './session-route-reconciliation';
 import { generateSessionThumbnail } from './session-thumbnail';
 import { applyRoamBaseStyle } from './roam-map-style';
-import { boundaryMatchesLevel, mapBoundaryLevel } from './map-boundary-level';
+import { boundaryLineOpacity, boundaryMatchesLevel, mapBoundaryLevel } from './map-boundary-level';
 import { isDiscoverableProperties, legacyRoadTypeForProperties, roadTypeForProperties, stableRoadCandidateId } from './road-rules';
 import { STOCKHOLM_ROAD_NETWORK_BY_DISTRICT } from './road-network-catalog';
 import { Button as ShadcnButton } from '@/components/ui/button';
@@ -79,6 +79,9 @@ const DISCOVERED_SOURCE = 'roam-discovered-network';
 const REGION_BOUNDARIES_SOURCE = 'roam-catalog-boundaries';
 const REGION_BOUNDARIES_FILL = 'roam-catalog-boundaries-fill';
 const REGION_BOUNDARIES_LINE = 'roam-catalog-boundaries-line';
+const REGION_BOUNDARY_LEVELS = [2, 4, 7, 9] as const;
+const regionBoundaryLineId = (level: typeof REGION_BOUNDARY_LEVELS[number]) => level === 9 ? REGION_BOUNDARIES_LINE : `${REGION_BOUNDARIES_LINE}-${level}`;
+const REGION_BOUNDARIES_LINES = REGION_BOUNDARY_LEVELS.map(regionBoundaryLineId);
 const REGION_BOUNDARY_COLOR = '#d59c67';
 const CURRENT_AREA_SOURCE = 'roam-current-area';
 const CURRENT_AREA_FILL = 'roam-current-area-fill';
@@ -255,9 +258,7 @@ function refreshMapBoundaryLevel(map: Map) {
   const filter = level === 9
     ? ['==', ['to-number', ['get', 'display_level'], ['to-number', ['get', 'admin_level'], 0]], 9]
     : ['==', ['to-number', ['get', 'admin_level'], 0], level];
-  for (const id of [REGION_BOUNDARIES_FILL, REGION_BOUNDARIES_LINE]) {
-    if (map.getLayer(id)) map.setFilter(id, filter as any);
-  }
+  if (map.getLayer(REGION_BOUNDARIES_FILL)) map.setFilter(REGION_BOUNDARIES_FILL, filter as any);
 }
 
 function styleRoamMap(map: Map, showDiscovered: boolean, showRegionProgress: boolean, progressMode: boolean, is3D: boolean, showBuildings3D: boolean, showTerrain3D: boolean) {
@@ -345,13 +346,17 @@ function styleRoamMap(map: Map, showDiscovered: boolean, showRegionProgress: boo
   if (import.meta.env.VITE_AREA_CATALOG !== 'false') {
     if (!map.getSource(REGION_BOUNDARIES_SOURCE)) map.addSource(REGION_BOUNDARIES_SOURCE, { type: 'vector', scheme: 'xyz', tiles: [areaTileUrlTemplate()], minzoom: 0, maxzoom: 22, promoteId: { boundaries: 'id' } });
     if (!map.getLayer(REGION_BOUNDARIES_FILL)) map.addLayer({ id: REGION_BOUNDARIES_FILL, type: 'fill', source: REGION_BOUNDARIES_SOURCE, 'source-layer': 'boundaries', layout: { visibility: showRegionProgress ? 'visible' : 'none' }, paint: { 'fill-color': REGION_BOUNDARY_COLOR, 'fill-opacity': 0 } } as any, firstRoadLayer);
-    if (!map.getLayer(REGION_BOUNDARIES_LINE)) map.addLayer({ id: REGION_BOUNDARIES_LINE, type: 'line', source: REGION_BOUNDARIES_SOURCE, 'source-layer': 'boundaries', layout: { visibility: showRegionProgress ? 'visible' : 'none', 'line-cap': 'butt', 'line-join': 'miter' }, paint: { 'line-color': REGION_BOUNDARY_COLOR, 'line-opacity': 0.9, 'line-width': ['interpolate', ['linear'], ['zoom'], 6, 0.65, 12, 0.85, 18, 1] } } as any);
     map.setPaintProperty(REGION_BOUNDARIES_FILL, 'fill-color', REGION_BOUNDARY_COLOR);
     map.setPaintProperty(REGION_BOUNDARIES_FILL, 'fill-opacity', 0);
-    map.setPaintProperty(REGION_BOUNDARIES_LINE, 'line-color', REGION_BOUNDARY_COLOR);
-    map.setPaintProperty(REGION_BOUNDARIES_LINE, 'line-opacity', 0.9);
-    map.setPaintProperty(REGION_BOUNDARIES_LINE, 'line-dasharray', null);
-    map.setPaintProperty(REGION_BOUNDARIES_LINE, 'line-width', ['interpolate', ['linear'], ['zoom'], 6, 0.65, 12, 0.85, 18, 1]);
+    for (const level of REGION_BOUNDARY_LEVELS) {
+      const id = regionBoundaryLineId(level);
+      if (!map.getLayer(id)) map.addLayer({ id, type: 'line', source: REGION_BOUNDARIES_SOURCE, 'source-layer': 'boundaries', layout: { visibility: showRegionProgress ? 'visible' : 'none', 'line-cap': 'butt', 'line-join': 'miter' }, paint: { 'line-color': REGION_BOUNDARY_COLOR, 'line-opacity': boundaryLineOpacity(level), 'line-width': ['interpolate', ['linear'], ['zoom'], 6, 0.65, 12, 0.85, 18, 1] } } as any);
+      map.setFilter(id, (level === 9 ? ['==', ['to-number', ['get', 'display_level'], ['to-number', ['get', 'admin_level'], 0]], 9] : ['==', ['to-number', ['get', 'admin_level'], 0], level]) as any);
+      map.setPaintProperty(id, 'line-color', REGION_BOUNDARY_COLOR);
+      map.setPaintProperty(id, 'line-opacity', boundaryLineOpacity(level) as any);
+      map.setPaintProperty(id, 'line-dasharray', null);
+      map.setPaintProperty(id, 'line-width', ['interpolate', ['linear'], ['zoom'], 6, 0.65, 12, 0.85, 18, 1]);
+    }
     refreshMapBoundaryLevel(map);
   }
   if (!map.getSource(DISCOVERED_SOURCE)) {
@@ -489,17 +494,17 @@ function styleRoamMap(map: Map, showDiscovered: boolean, showRegionProgress: boo
     }
   }
   if (map.getLayer(REGION_BOUNDARIES_FILL)) map.moveLayer(REGION_BOUNDARIES_FILL);
-  if (map.getLayer(REGION_BOUNDARIES_LINE)) map.moveLayer(REGION_BOUNDARIES_LINE);
+  for (const id of REGION_BOUNDARIES_LINES) if (map.getLayer(id)) map.moveLayer(id);
   if (map.getLayer(REGION_BOUNDARIES_FILL)) map.setLayoutProperty(REGION_BOUNDARIES_FILL, 'visibility', showRegionProgress ? 'visible' : 'none');
-  if (map.getLayer(REGION_BOUNDARIES_LINE)) map.setLayoutProperty(REGION_BOUNDARIES_LINE, 'visibility', showRegionProgress ? 'visible' : 'none');
-  for (const id of [REGION_BOUNDARIES_FILL, CURRENT_AREA_FILL, REGION_BOUNDARIES_LINE, CURRENT_AREA_LINE]) {
+  for (const lineId of REGION_BOUNDARIES_LINES) if (map.getLayer(lineId)) map.setLayoutProperty(lineId, 'visibility', showRegionProgress ? 'visible' : 'none');
+  for (const id of [REGION_BOUNDARIES_FILL, CURRENT_AREA_FILL, ...REGION_BOUNDARIES_LINES, CURRENT_AREA_LINE]) {
     if (map.getLayer(id)) map.moveLayer(id);
   }
   // The shared base-map treatment hides any style layer with “boundary” in
   // its id. Reassert catalog visibility after the final layer-order pass so
   // sibling/admin-level features cannot be left hidden behind the active area.
   if (map.getLayer(REGION_BOUNDARIES_FILL)) map.setLayoutProperty(REGION_BOUNDARIES_FILL, 'visibility', showRegionProgress ? 'visible' : 'none');
-  if (map.getLayer(REGION_BOUNDARIES_LINE)) map.setLayoutProperty(REGION_BOUNDARIES_LINE, 'visibility', showRegionProgress ? 'visible' : 'none');
+  for (const lineId of REGION_BOUNDARIES_LINES) if (map.getLayer(lineId)) map.setLayoutProperty(lineId, 'visibility', showRegionProgress ? 'visible' : 'none');
 }
 
 function roadTypeForFeature(properties: Record<string, unknown>) {
@@ -837,13 +842,13 @@ function MapView({ onRequestLocation, sessionActive, onSessionChange, activityDr
   const [currentParentAreaName, setCurrentParentAreaName] = useState<string | null>(null);
   const [selectedProgressArea, setSelectedProgressArea] = useState<AreaRecord | null>(null);
   const [selectedParentAreaName, setSelectedParentAreaName] = useState<string | null>(null);
-  const [visibleBadgeAreas, setVisibleBadgeAreas] = useState<{ id: string; name: string }[]>([]);
-  const [regionBadgeData, setRegionBadgeData] = useState<Record<string, { point: [number, number]; percentage: number | null }>>({});
+  const [visibleBadgeAreas, setVisibleBadgeAreas] = useState<{ id: string; name: string; point: [number, number] }[]>([]);
+  const [regionBadgeData, setRegionBadgeData] = useState<Record<string, { point: [number, number]; percentage: number | null; loading: boolean }>>({});
   const mapRef = useRef<Map | null>(null);
   const mapViewRef = useRef<HTMLElement | null>(null);
   const mapHeaderRef = useRef<HTMLElement | null>(null);
   const progressCardRef = useRef<HTMLDivElement | null>(null);
-  const progressMarkersRef = useRef<maplibregl.Marker[]>([]);
+  const progressMarkersRef = useRef(new globalThis.Map<string, { marker: maplibregl.Marker; button: HTMLButtonElement }>());
   const progressAreaControllerRef = useRef<AbortController | null>(null);
   const pendingProgressFitRef = useRef(false);
   const previousSessionActiveRef = useRef(false);
@@ -1017,14 +1022,19 @@ function MapView({ onRequestLocation, sessionActive, onSessionChange, activityDr
       timer = window.setTimeout(() => {
         if (!map.getLayer(REGION_BOUNDARIES_FILL)) return;
         const level = mapBoundaryLevel(map.getZoom());
-        const areas = new globalThis.Map<string, { id: string; name: string }>();
+        const areas = new globalThis.Map<string, { id: string; name: string; point: [number, number]; size: number }>();
         for (const feature of map.queryRenderedFeatures({ layers: [REGION_BOUNDARIES_FILL] })) {
           const properties = feature.properties as Record<string, unknown> | null;
           if (!properties || !boundaryMatchesLevel(properties, level)) continue;
           const id = String(properties.id ?? '');
-          if (id.startsWith('relation/')) areas.set(id, { id, name: String(properties.name ?? 'Area') });
+          if (!id.startsWith('relation/') || (feature.geometry.type !== 'Polygon' && feature.geometry.type !== 'MultiPolygon')) continue;
+          const size = area(feature as any);
+          if (size > (areas.get(id)?.size ?? -1)) {
+            const fullGeometry = mapAreaCache.get(id)?.area.geometry;
+            areas.set(id, { id, name: String(properties.name ?? 'Area'), point: areaLabelPoint(fullGeometry ?? feature.geometry as any), size });
+          }
         }
-        const next = [...areas.values()].sort((a, b) => a.id.localeCompare(b.id));
+        const next = [...areas.values()].map(({ size: _size, ...visible }) => visible).sort((a, b) => a.id.localeCompare(b.id));
         setVisibleBadgeAreas(previous => previous.length === next.length && previous.every((value, index) => value.id === next[index].id) ? previous : next);
       }, 80);
     };
@@ -1036,19 +1046,44 @@ function MapView({ onRequestLocation, sessionActive, onSessionChange, activityDr
   useEffect(() => {
     if (!progressMode || !visibleBadgeAreas.length) return;
     const controller = new AbortController();
+    setRegionBadgeData(previous => {
+      const next = { ...previous };
+      for (const visible of visibleBadgeAreas) {
+        const percentage = previous[visible.id]?.percentage ?? null;
+        next[visible.id] = { point: previous[visible.id]?.point ?? visible.point, percentage, loading: percentage === null };
+      }
+      return next;
+    });
     for (const visible of visibleBadgeAreas) {
       void (async () => {
         try {
           const record = mapAreaCache.get(visible.id) ?? await loadArea(visible.id, controller.signal, true);
           if (controller.signal.aborted || !record.area.geometry) return;
           mapAreaCache.set(record.area.id, record);
+          const point = areaLabelPoint(record.area.geometry);
           const ready = record.job?.status === 'ready' ? record.job.totals : null;
-          const totals = ready && ready.lengthMeters > 0 ? await calculateExploredAreaTotals(discoveries, record.area.geometry, exploredTotalsKey(discoveries, `${record.area.id}:${record.area.boundaryVersion}`, record.area.geometry), `${record.area.id}:${record.area.boundaryVersion}`) : null;
+          if (!ready || ready.lengthMeters <= 0) {
+            setRegionBadgeData(previous => ({ ...previous, [visible.id]: { point, percentage: null, loading: false } }));
+            return;
+          }
+          const areaKey = `${record.area.id}:${record.area.boundaryVersion}`;
+          const key = exploredTotalsKey(discoveries, areaKey, record.area.geometry);
+          const cached = cachedExploredTotals(key, areaKey);
+          if (cached) {
+            const rawPercentage = cached.lengthMeters / ready.lengthMeters * 100;
+            setRegionBadgeData(previous => ({ ...previous, [visible.id]: { point, percentage: rawPercentage <= 100.1 ? Math.min(100, rawPercentage) : null, loading: false } }));
+            return;
+          }
+          setRegionBadgeData(previous => ({ ...previous, [visible.id]: { point, percentage: previous[visible.id]?.percentage ?? null, loading: true } }));
+          const totals = await calculateExploredAreaTotals(discoveries, record.area.geometry, key, areaKey);
           if (controller.signal.aborted) return;
-          const rawPercentage = ready && totals ? totals.lengthMeters / ready.lengthMeters * 100 : null;
-          setRegionBadgeData(previous => ({ ...previous, [visible.id]: { point: areaLabelPoint(record.area.geometry!), percentage: rawPercentage !== null && rawPercentage <= 100.1 ? Math.min(100, rawPercentage) : null } }));
+          const rawPercentage = totals.lengthMeters / ready.lengthMeters * 100;
+          setRegionBadgeData(previous => ({ ...previous, [visible.id]: { point, percentage: rawPercentage <= 100.1 ? Math.min(100, rawPercentage) : null, loading: false } }));
         } catch (error) {
-          if (!(error instanceof DOMException && error.name === 'AbortError')) console.warn(`Could not calculate ${visible.name} progress:`, error);
+          if (!(error instanceof DOMException && error.name === 'AbortError')) {
+            console.warn(`Could not calculate ${visible.name} progress:`, error);
+            setRegionBadgeData(previous => ({ ...previous, [visible.id]: { point: previous[visible.id]?.point ?? visible.point, percentage: previous[visible.id]?.percentage ?? null, loading: false } }));
+          }
         }
       })();
     }
@@ -1056,30 +1091,41 @@ function MapView({ onRequestLocation, sessionActive, onSessionChange, activityDr
   }, [discoveries, progressMode, visibleBadgeAreas]);
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !progressMapReady || !progressMode) {
-      progressMarkersRef.current.forEach(marker => marker.remove());
-      progressMarkersRef.current = [];
-      return;
-    }
-    const markers = visibleBadgeAreas.flatMap(visible => {
+    if (!map || !progressMapReady) return;
+    const entries = progressMarkersRef.current;
+    const activeIds = new Set(progressMode ? visibleBadgeAreas.map(visible => visible.id) : []);
+    for (const visible of progressMode ? visibleBadgeAreas : []) {
       const badge = regionBadgeData[visible.id];
-      if (!badge) return [];
-      const percentage = badge?.percentage === null || badge?.percentage === undefined ? '—' : `${badge.percentage.toFixed(1)}%`;
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = `progress-region-badge${visible.id === (selectedProgressArea ?? currentArea)?.area.id ? ' progress-region-badge--current' : ''}`;
-      button.textContent = percentage;
-      button.setAttribute('aria-label', `${visible.name}, ${percentage === '—' ? 'progress unavailable' : `${percentage} explored`}. Focus region`);
-      button.addEventListener('pointerdown', event => event.stopPropagation());
-      button.addEventListener('click', event => { event.stopPropagation(); focusAreaById(visible.id); });
-      return [new maplibregl.Marker({ element: button, anchor: 'center' }).setLngLat(badge.point).addTo(map)];
-    });
-    progressMarkersRef.current = markers;
-    return () => {
-      markers.forEach(marker => marker.remove());
-      progressMarkersRef.current = [];
-    };
+      const percentage = badge?.percentage === null || badge?.percentage === undefined ? badge?.loading === false ? '—' : '…' : `${badge.percentage.toFixed(1)}%`;
+      let entry = entries.get(visible.id);
+      if (!entry) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'progress-region-badge';
+        button.addEventListener('pointerdown', event => event.stopPropagation());
+        const marker = new maplibregl.Marker({ element: button, anchor: 'center' }).setLngLat(badge?.point ?? visible.point).addTo(map);
+        entry = { marker, button };
+        entries.set(visible.id, entry);
+      }
+      entry.marker.setLngLat(badge?.point ?? visible.point);
+      entry.button.textContent = percentage;
+      entry.button.classList.toggle('progress-region-badge--current', visible.id === (selectedProgressArea ?? currentArea)?.area.id);
+      entry.button.classList.toggle('progress-region-badge--loading', badge?.loading === true);
+      entry.button.setAttribute('aria-label', `${visible.name}, ${percentage === '…' ? 'calculating progress' : percentage === '—' ? 'progress unavailable' : `${percentage} explored${badge?.loading ? ', updating' : ''}`}. Focus region`);
+      entry.button.onclick = event => { event.stopPropagation(); focusAreaById(visible.id); };
+    }
+    for (const [id, entry] of entries) {
+      if (activeIds.has(id)) continue;
+      entry.marker.remove();
+      entries.delete(id);
+    }
   }, [currentArea, focusAreaById, progressMapReady, progressMode, regionBadgeData, selectedProgressArea, visibleBadgeAreas]);
+  useEffect(() => () => {
+    for (const entry of progressMarkersRef.current.values()) {
+      entry.marker.remove();
+    }
+    progressMarkersRef.current.clear();
+  }, []);
   const displayedArea = progressMode ? selectedProgressArea ?? currentArea : currentArea;
   const displayedParentAreaName = progressMode ? selectedParentAreaName : currentParentAreaName;
   useEffect(() => {
@@ -1121,7 +1167,7 @@ function MapView({ onRequestLocation, sessionActive, onSessionChange, activityDr
     updateVisibility();
     map.on('zoomend', updateVisibility);
     map.on('idle', updateVisibility);
-    for (const id of [REGION_BOUNDARIES_FILL, CURRENT_AREA_FILL, REGION_BOUNDARIES_LINE, CURRENT_AREA_LINE]) {
+    for (const id of [REGION_BOUNDARIES_FILL, CURRENT_AREA_FILL, ...REGION_BOUNDARIES_LINES, CURRENT_AREA_LINE]) {
       if (map.getLayer(id)) map.moveLayer(id);
     }
     return () => { map.off('zoomend', updateVisibility); map.off('idle', updateVisibility); };
