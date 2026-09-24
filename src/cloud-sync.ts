@@ -2,6 +2,7 @@ import type { DiscoveredSegment, RoadType } from './discovery';
 import { loadDiscoveredSegments, replaceDiscoveredSegments } from './discovery-store';
 import { loadSessions, replaceSessions, type RideSession, type SessionPoint } from './session-store';
 import { requireSupabase } from './supabase';
+import { formatDistance } from './distance-format';
 
 const POINT_BATCH_SIZE = 250;
 const DISCOVERY_BATCH_SIZE = 250;
@@ -26,7 +27,7 @@ function syncError(stage: string, error: unknown): Error {
 function normalizeRoadType(value: unknown): RoadType {
   if (value === 'paved-road' || value === 'cycleway' || value === 'unpaved-path') return value;
   if (value === 'footpath') return 'cycleway';
-  throw new Error(`Could not sync a discovery with unsupported road type “${String(value)}”.`);
+  throw new Error(`Could not sync an explored road with unsupported road type “${String(value)}”.`);
 }
 
 function toSession(row: any): RideSession {
@@ -68,7 +69,7 @@ export async function syncAccountProgress(userId: string, onProgress?: (progress
     const rows: any[] = [];
     for (let offset = 0; ; offset += CLOUD_DISCOVERY_PAGE_SIZE) {
       const { data, error } = await client.from('discoveries').select('*').eq('user_id', userId).order('discovered_at').order('segment_id').range(offset, offset + CLOUD_DISCOVERY_PAGE_SIZE - 1);
-      if (error) throw syncError('Could not load cloud discoveries', error);
+      if (error) throw syncError('Could not load explored roads from the cloud', error);
       const page = data ?? [];
       rows.push(...page);
       if (page.length < CLOUD_DISCOVERY_PAGE_SIZE) return rows;
@@ -93,15 +94,18 @@ export async function syncAccountProgress(userId: string, onProgress?: (progress
     return !cloudSession || !sameSessionDetails(session, cloudSession) || !samePoints(session.points, cloudSession.points);
   });
 
-  const discoveryBatchCount = Math.ceil(discoveriesToUpload.length / DISCOVERY_BATCH_SIZE);
+  const totalDiscoveryMeters = discoveriesToUpload.reduce((total, item) => total + item.lengthMeters, 0);
+  let uploadedDiscoveryMeters = 0;
   let changedCloudData = false;
   for (let index = 0; index < discoveriesToUpload.length; index += DISCOVERY_BATCH_SIZE) {
-    onProgress?.({ label: `Syncing discoveries ${index / DISCOVERY_BATCH_SIZE + 1} of ${discoveryBatchCount}…` });
-    const { error } = await client.from('discoveries').upsert(discoveriesToUpload.slice(index, index + DISCOVERY_BATCH_SIZE).map(segment => ({
+    onProgress?.({ label: `Syncing explored roads: ${formatDistance(uploadedDiscoveryMeters)} of ${formatDistance(totalDiscoveryMeters)}…` });
+    const batch = discoveriesToUpload.slice(index, index + DISCOVERY_BATCH_SIZE);
+    const { error } = await client.from('discoveries').upsert(batch.map(segment => ({
       user_id: userId, segment_id: segment.id, region_id: segment.regionId ?? null, region_name: segment.regionName ?? null,
       road_type: normalizeRoadType(segment.roadType), geometry: segment.geometry, length_meters: segment.lengthMeters, discovered_at: new Date(segment.discoveredAt).toISOString(),
     })), { onConflict: 'user_id,segment_id', ignoreDuplicates: true });
-    if (error) throw syncError(`Could not upload discoveries batch ${index / DISCOVERY_BATCH_SIZE + 1}`, error);
+    if (error) throw syncError('Could not upload explored roads', error);
+    uploadedDiscoveryMeters += batch.reduce((total, item) => total + item.lengthMeters, 0);
     changedCloudData = true;
   }
   for (const [sessionIndex, session] of sessionsToUpload.entries()) {
@@ -164,7 +168,7 @@ export async function syncAccountProgress(userId: string, onProgress?: (progress
     if (!initial || !sameSessionDetails(initial, item) || !samePoints(initial.points, item.points)) mergedSessions.set(item.id, item);
   });
   const syncedDiscoveries = [...mergedDiscoveries.values()];
-  const syncedSessions = [...mergedSessions.values()];
+  const syncedSessions = [...mergedSessions.values()].sort((a, b) => b.startedAt - a.startedAt);
   onProgress?.({ label: 'Updating this device…' });
   await Promise.all([replaceDiscoveredSegments(syncedDiscoveries), replaceSessions(syncedSessions)]);
   return { discoveries: syncedDiscoveries, sessions: syncedSessions };
@@ -175,10 +179,15 @@ let activeSync: Promise<Awaited<ReturnType<typeof syncAccountProgress>>> | null 
 /** Serialize manual and automatic syncs so neither replaces the other's cache. */
 export function runAccountSync(userId: string, onProgress?: (progress: SyncProgress) => void) {
   if (activeSync) return activeSync;
-  const task = syncAccountProgress(userId, onProgress).then(result => {
-    const completedAt = new Date().toISOString();
-    localStorage.setItem('roam:last-account-sync-at', completedAt);
-    window.dispatchEvent(new CustomEvent('roam:account-sync-complete', { detail: { ...result, completedAt } }));
+  const task = Promise.all([loadDiscoveredSegments(), loadSessions()]).then(async ([localDiscoveries, localSessions]) => {
+    const knownDiscoveries = new Set(localDiscoveries.map(item => item.id));
+    const knownSessions = new Set(localSessions.map(item => item.id));
+    const result = await syncAccountProgress(userId, onProgress);
+    window.dispatchEvent(new CustomEvent('roam:account-sync-complete', { detail: {
+      ...result,
+      addedDiscoveryMeters: result.discoveries.filter(item => !knownDiscoveries.has(item.id)).reduce((total, item) => total + item.lengthMeters, 0),
+      addedRides: result.sessions.filter(item => !knownSessions.has(item.id)).length,
+    } }));
     return result;
   });
   activeSync = task;

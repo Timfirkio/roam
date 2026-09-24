@@ -302,6 +302,9 @@ aside.rounded-control.border-l-2.border-accent { display: none; }
 .debug-menu label, .debug-menu button, .debug-menu div { min-height: 34px; box-sizing: border-box; }
 .location-control { color: var(--color-paper-50) !important; }
 .app-content { position: relative; flex: 0 0 calc(100svh - 76px); height: calc(100svh - 76px); min-height: 0; max-height: calc(100svh - 76px); overflow: hidden; }
+.sessions-scroll { overscroll-behavior-y: contain; }
+.sessions-pull-indicator { display: flex; align-items: center; justify-content: center; overflow: hidden; color: var(--color-accent); transition: height 180ms var(--ease-outdoor); }
+.sessions-pull-indicator svg { width: 22px; height: 22px; }
 .map-view--inactive { position: absolute; inset: 0; width: 100%; visibility: hidden; pointer-events: none; }
 .map-startup { position: absolute; z-index: 8; inset: 0; display: grid; place-items: center; background: var(--color-ink-950); }
 .map-startup__mark { position: relative; display: grid; width: 48px; height: 48px; place-items: center; }

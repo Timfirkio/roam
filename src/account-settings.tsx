@@ -11,48 +11,37 @@ import { Capacitor } from '@capacitor/core';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Browser } from '@capacitor/browser';
 import { Spinner } from '@/components/ui/spinner';
-
-const LAST_ACCOUNT_SYNC_STORAGE_KEY = 'roam:last-account-sync-at';
+import { toastManager } from '@/components/ui/toast';
+import { formatDistance } from './distance-format';
 
 export function AccountSettings() {
   const client = supabase;
   const [user, setUser] = useState<User | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
-  const [syncProgress, setSyncProgress] = useState<string | null>(null);
   const [localReady, setLocalReady] = useState(false);
   const [emailDialogOpen, setEmailDialogOpen] = useState(false);
-  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(() => localStorage.getItem(LAST_ACCOUNT_SYNC_STORAGE_KEY));
   const native = Capacitor.isNativePlatform();
 
   const sync = async (account: User) => {
     setBusy(true);
-    setMessage('');
-    setSyncProgress('Preparing local progress…');
     try {
-      const result = await runAccountSync(account.id, progress => setSyncProgress(progress.label));
-      setLastSyncedAt(localStorage.getItem(LAST_ACCOUNT_SYNC_STORAGE_KEY));
-      setMessage(`Synced ${result.discoveries.length} discoveries and ${result.sessions.length} rides.`);
+      const result = await runAccountSync(account.id);
+      const exploredMeters = result.discoveries.reduce((total, item) => total + item.lengthMeters, 0);
+      toastManager.add({ title: 'Progress synced', description: `${formatDistance(exploredMeters)} of explored roads and ${result.sessions.length} rides.`, data: { kind: 'success' } });
     } catch (error) {
       const supabaseError = error && typeof error === 'object' ? error as { message?: unknown; details?: unknown } : null;
       const message = error instanceof Error
         ? error.message
         : [supabaseError?.message, supabaseError?.details].filter((value): value is string => typeof value === 'string').join(' ');
-      setMessage(message || 'Sync failed; device progress is safe.');
+      toastManager.add({ title: 'Sync failed', description: message || 'Device progress is safe.', priority: 'high', data: { kind: 'error' } });
     } finally {
-      setSyncProgress(null);
       setBusy(false);
     }
   };
 
   useEffect(() => { void Promise.all([loadDiscoveredSegments(), loadSessions()]).finally(() => setLocalReady(true)); }, []);
-  useEffect(() => {
-    const onSync = () => setLastSyncedAt(localStorage.getItem(LAST_ACCOUNT_SYNC_STORAGE_KEY));
-    window.addEventListener('roam:account-sync-complete', onSync);
-    return () => window.removeEventListener('roam:account-sync-complete', onSync);
-  }, []);
   useEffect(() => {
     if (!client) return;
     void client.auth.getUser().then(({ data }) => setUser(data.user));
@@ -79,10 +68,10 @@ export function AccountSettings() {
           account = result.data.user;
         } else if (!error) error = new Error('The sign-in callback did not include a session. Please try again.');
         await Browser.close();
-        if (error) setMessage(error.message);
+        if (error) toastManager.add({ title: 'Sign-in failed', description: error.message, priority: 'high', data: { kind: 'error' } });
         else if (account) await sync(account);
       } catch (error) {
-        setMessage(error instanceof Error ? error.message : 'Could not complete Google sign-in.');
+        toastManager.add({ title: 'Sign-in failed', description: error instanceof Error ? error.message : 'Could not complete Google sign-in.', priority: 'high', data: { kind: 'error' } });
       } finally {
         setBusy(false);
       }
@@ -100,13 +89,13 @@ export function AccountSettings() {
       ? await client.auth.signUp({ email, password, options: { emailRedirectTo: window.location.origin } })
       : await client.auth.signInWithPassword({ email, password });
     if (result.error) {
-      setMessage(result.error.message);
+      toastManager.add({ title: 'Sign-in failed', description: result.error.message, priority: 'high', data: { kind: 'error' } });
       setBusy(false);
     } else if (result.data.user && result.data.session) {
       setEmailDialogOpen(false);
       await sync(result.data.user);
     } else {
-      setMessage('Check your email to verify, then log in.');
+      toastManager.add({ title: 'Check your email', description: 'Verify your address, then log in.', data: { kind: 'success' } });
       setEmailDialogOpen(false);
       setBusy(false);
     }
@@ -115,7 +104,7 @@ export function AccountSettings() {
     setBusy(true);
     const { data, error } = await client.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: native ? 'com.roam.exploration://auth/callback' : window.location.origin, skipBrowserRedirect: native } });
     if (error) {
-      setMessage(error.message);
+      toastManager.add({ title: 'Sign-in failed', description: error.message, priority: 'high', data: { kind: 'error' } });
       setBusy(false);
     } else if (native && data.url) {
       await Browser.open({ url: data.url });
@@ -127,16 +116,12 @@ export function AccountSettings() {
       <p className="roam-overline -mx-4 border-b border-border-muted px-4 py-3 text-accent">Account</p>
       {user ? <div className="space-y-2 py-4">
         <p className="text-body text-text-muted">Signed in as {user.email}</p>
-        <p className="text-body text-text-muted">Syncs automatically while this app is open and online. {lastSyncedAt && `Last synced ${new Date(lastSyncedAt).toLocaleString()}.`}</p>
-        <Button className="w-full" variant="secondary" disabled={busy || !localReady} onClick={() => void sync(user)}>{busy ? <><Spinner />{syncProgress ?? 'Syncing progress…'}</> : 'Sync now'}</Button>
+        <Button className="w-full" variant="secondary" disabled={busy || !localReady} onClick={() => void sync(user)}>{busy && <Spinner aria-hidden="true" />}Sync now</Button>
         <Button className="w-full" variant="ghost" disabled={busy} onClick={() => void client.auth.signOut()}>Sign out</Button>
       </div> : <div className="space-y-2 py-4">
         <Button className="w-full" size="medium" variant="secondary" disabled={busy || !localReady} onClick={() => void google()}><GoogleLogo aria-hidden="true" weight="bold" />Continue with Google</Button>
         <Button className="w-full" size="medium" variant="secondary" disabled={busy || !localReady} onClick={() => setEmailDialogOpen(true)}><EnvelopeSimple aria-hidden="true" weight="bold" />Continue with email</Button>
       </div>}
-      {!localReady && <p className="pb-4 text-body text-text-muted">Loading local progress…</p>}
-      {busy && syncProgress && <p className="pb-4 text-body text-text-muted" role="status">{syncProgress}</p>}
-      {message && <p className="pb-4 text-body text-text-muted">{message}</p>}
     </section>
     <Dialog open={emailDialogOpen} onOpenChange={setEmailDialogOpen}>
       <DialogContent>
