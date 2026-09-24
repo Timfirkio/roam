@@ -307,7 +307,8 @@ aside.rounded-control.border-l-2.border-accent { display: none; }
 .sessions-pull-indicator svg { width: 22px; height: 22px; }
 .map-view--inactive { position: absolute; inset: 0; width: 100%; visibility: hidden; pointer-events: none; }
 .map-startup { position: absolute; z-index: 8; inset: 0; display: grid; place-items: center; background: var(--color-ink-950); }
-.map-startup__mark { position: relative; display: grid; width: 48px; height: 48px; place-items: center; }
+.map-startup__mark { position: relative; display: grid; width: 48px; height: 48px; place-items: center; opacity: 0; transition: opacity 200ms var(--ease-outdoor); }
+.map-startup--centered .map-startup__mark { opacity: 1; }
 .map-startup__mark::before { position: absolute; width: 30px; height: 30px; border: 1px solid #d9f7f3aa; border-radius: 50%; background: #0b242ab8; box-shadow: 0 0 0 4px #2bb8b044, 0 0 14px #2bb8b099; content: ''; animation: roam-location-breathe 2.4s ease-in-out infinite; }
 .map-startup__mark::after { position: absolute; width: 13px; height: 13px; border: 3px solid #effffd; border-radius: 50%; background: var(--color-location-500); box-shadow: 0 0 0 3px #0b242ab8; content: ''; }
 .map-startup--revealing { pointer-events: none; animation: roam-startup-fade 450ms ease-in forwards; }
@@ -317,7 +318,7 @@ aside.rounded-control.border-l-2.border-accent { display: none; }
 @keyframes roam-location-reveal { 35% { opacity: 1; transform: scale(1.22); } 100% { opacity: 0; transform: scale(3.2); } }
 @keyframes roam-location-dot-reveal { 35% { transform: scale(1.2); } 100% { transform: scale(1); } }
 @keyframes roam-startup-fade { 0%, 38% { opacity: 1; } 100% { opacity: 0; } }
-@media (prefers-reduced-motion: reduce) { .map-startup__mark::before, .map-startup--revealing .map-startup__mark::before, .map-startup--revealing .map-startup__mark::after { animation: none; } .map-startup--revealing { animation-duration: 150ms; } }
+@media (prefers-reduced-motion: reduce) { .map-startup__mark { transition: none; } .map-startup__mark::before, .map-startup--revealing .map-startup__mark::before, .map-startup--revealing .map-startup__mark::after { animation: none; } .map-startup--revealing { animation-duration: 150ms; } }
 .app-content > section.overflow-auto { height: 100%; min-height: 0; }
 .app-content > section:not(.map-view) { padding-inline: 1rem !important; }
 .app-content > section:not(.map-view) .space-y-3 > :not([hidden]) ~ :not([hidden]) { margin-top: 1rem; }
