@@ -10,6 +10,18 @@ let nextRequestId = 0;
 const requests = new Map<number, { resolve: (totals: AreaTotals) => void; reject: (error: Error) => void }>();
 const storageKey = (areaKey: string) => `roam.area-progress.current.${areaKey}`;
 
+/** Last saved value for immediate display while account discoveries sync. */
+export function latestExploredAreaTotals(areaKey: string): AreaTotals | null {
+  try {
+    const stored = localStorage.getItem(storageKey(areaKey));
+    const entry = stored ? JSON.parse(stored) as { totals?: AreaTotals } : null;
+    const totals = entry?.totals;
+    return totals && Number.isFinite(totals.lengthMeters)
+      && ['paved-road', 'cycleway', 'unpaved-path'].every(type => Number.isFinite(totals.byRoadType?.[type as keyof AreaTotals['byRoadType']]))
+      ? totals : null;
+  } catch { return null; }
+}
+
 function persistTotals(key: string, areaKey: string, totals: AreaTotals) {
   try {
     localStorage.setItem(storageKey(areaKey), JSON.stringify({ key, totals }));

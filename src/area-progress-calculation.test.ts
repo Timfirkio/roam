@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { exploredTotalsKey, previousExploredAreaTotals, rememberExploredAreaTotals } from './area-progress-calculation';
+import { exploredTotalsKey, latestExploredAreaTotals, previousExploredAreaTotals, rememberExploredAreaTotals } from './area-progress-calculation';
 import type { AreaGeometry } from './area-types';
 import type { DiscoveredSegment } from './discovery';
 
@@ -42,6 +42,8 @@ describe('area progress cache keys', () => {
       vi.resetModules();
       const reloaded = await import('./area-progress-calculation');
       expect(reloaded.cachedExploredTotals(key, 'saved:boundary')?.lengthMeters).toBe(0);
+      expect(latestExploredAreaTotals('saved:boundary')?.lengthMeters).toBe(0);
+      expect(latestExploredAreaTotals('other:boundary')).toBeNull();
     } finally {
       vi.unstubAllGlobals();
     }
