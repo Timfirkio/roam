@@ -393,7 +393,7 @@ function styleRoamMap(map: Map, showDiscovered: boolean, showRegionProgress: boo
       id: PLAYER_DISCOVERY_LINE,
       type: 'line',
       source: PLAYER_DISCOVERY_SOURCE,
-      paint: { 'line-color': '#b9fff7', 'line-opacity': 0.72, 'line-width': 1.5, 'line-dasharray': [2, 2] },
+      paint: { 'line-color': '#b9fff7', 'line-opacity': 0.55, 'line-width': 1.5 },
     } as any, firstRoadLayer);
   }
   if (map.getSource('openmaptiles') && !map.getLayer('roam-buildings-3d')) {
@@ -727,13 +727,6 @@ function MapCanvas({ mapRef, viewportBottomInset, crosshairTopInset, showDiscove
     return () => { done = true; map.off('idle', reveal); clearTimeout(fallback); };
   }, [startupReady, mapReady, mapRef, discoveries, playerLocation, onVisualReady]);
   useEffect(() => {
-    if (!mapReady || !mapRef.current) return;
-    const source = mapRef.current.getSource(PLAYER_DISCOVERY_SOURCE) as maplibregl.GeoJSONSource | undefined;
-    source?.setData(playerLocation
-      ? circle([playerLocation.lng, playerLocation.lat], DISCOVERY_RADIUS_METERS, { units: 'meters', steps: 24 }) as any
-      : { type: 'FeatureCollection', features: [] });
-  }, [mapReady, mapRef, playerLocation]);
-  useEffect(() => {
     if (!mapReady || !mapRef.current || !playerLocation) return;
     if (discoveryTimeoutRef.current !== null) clearTimeout(discoveryTimeoutRef.current);
     // `idle` can fire repeatedly while a pan brings several tile batches in.
@@ -756,6 +749,11 @@ function MapCanvas({ mapRef, viewportBottomInset, crosshairTopInset, showDiscove
   }, [mapReady, mapRef, networkRevision, playerLocation]);
   useEffect(() => {
     if (!mapReady || !mapRef.current) return;
+    const source = mapRef.current.getSource(PLAYER_DISCOVERY_SOURCE) as maplibregl.GeoJSONSource | undefined;
+    const setMarkerPosition = (marker: maplibregl.Marker, lng: number, lat: number) => {
+      marker.setLngLat([lng, lat]);
+      source?.setData(circle([lng, lat], DISCOVERY_RADIUS_METERS, { units: 'meters', steps: 24 }) as any);
+    };
     if (!playerLocation) {
       if (markerAnimationFrameRef.current !== null) cancelAnimationFrame(markerAnimationFrameRef.current);
       if (markerRotationFrameRef.current !== null) cancelAnimationFrame(markerRotationFrameRef.current);
@@ -765,6 +763,7 @@ function MapCanvas({ mapRef, viewportBottomInset, crosshairTopInset, showDiscove
       playerMarkerRef.current?.remove();
       playerMarkerRef.current = null;
       lastMarkerLocationRef.current = null;
+      source?.setData({ type: 'FeatureCollection', features: [] });
       return;
     }
     let markerWasCreated = false;
@@ -777,6 +776,7 @@ function MapCanvas({ mapRef, viewportBottomInset, crosshairTopInset, showDiscove
       playerMarkerRef.current = new maplibregl.Marker({ element, anchor: 'center', rotationAlignment: 'map', pitchAlignment: 'map' })
         .setLngLat([playerLocation.lng, playerLocation.lat])
         .addTo(mapRef.current);
+      source?.setData(circle([playerLocation.lng, playerLocation.lat], DISCOVERY_RADIUS_METERS, { units: 'meters', steps: 24 }) as any);
       markerWasCreated = true;
     }
     const marker = playerMarkerRef.current;
@@ -788,7 +788,7 @@ function MapCanvas({ mapRef, viewportBottomInset, crosshairTopInset, showDiscove
       const animateMarker = (now: number) => {
         const progress = Math.min((now - startedAt) / (followPlayer ? 850 : 650), 1);
         const eased = 1 - (1 - progress) ** 3;
-        marker.setLngLat([start.lng + (destination[0] - start.lng) * eased, start.lat + (destination[1] - start.lat) * eased]);
+        setMarkerPosition(marker, start.lng + (destination[0] - start.lng) * eased, start.lat + (destination[1] - start.lat) * eased);
         if (progress < 1) markerAnimationFrameRef.current = requestAnimationFrame(animateMarker);
         else markerAnimationFrameRef.current = null;
       };
