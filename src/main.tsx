@@ -1159,7 +1159,7 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
     const activeIds = new Set(progressMode ? visibleBadgeAreas.map(visible => visible.id) : []);
     for (const visible of progressMode ? visibleBadgeAreas : []) {
       const badge = regionBadgeData[visible.id];
-      const percentage = badge?.percentage === null || badge?.percentage === undefined ? badge?.loading === false ? '—' : '…' : `${badge.percentage.toFixed(1)}%`;
+      const percentage = badge?.percentage === null || badge?.percentage === undefined ? '—' : `${badge.percentage.toFixed(1)}%`;
       let entry = entries.get(visible.id);
       if (!entry) {
         const button = document.createElement('button');
@@ -1174,7 +1174,7 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
       entry.button.textContent = percentage;
       entry.button.classList.toggle('progress-region-badge--current', visible.id === (selectedProgressArea ?? currentArea)?.area.id);
       entry.button.classList.toggle('progress-region-badge--loading', badge?.loading === true);
-      entry.button.setAttribute('aria-label', `${visible.name}, ${percentage === '…' ? 'calculating progress' : percentage === '—' ? 'progress unavailable' : `${percentage} explored${badge?.loading ? ', updating' : ''}`}. Focus region`);
+      entry.button.setAttribute('aria-label', `${visible.name}, ${percentage === '—' ? badge?.loading === false ? 'progress unavailable' : 'calculating progress' : `${percentage} explored${badge?.loading ? ', updating' : ''}`}. Focus region`);
       entry.button.onclick = event => { event.stopPropagation(); focusAreaById(visible.id); };
     }
     for (const [id, entry] of entries) {
