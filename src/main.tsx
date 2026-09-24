@@ -913,17 +913,20 @@ function MapCanvas({ mapRef, mapActive, viewportBottomInset, crosshairTopInset, 
   </div>;
 }
 
-function HeadingCompassBar({ bearing }: { bearing: number }) {
+function HeadingCompassBar({ bearing, visible }: { bearing: number; visible: boolean }) {
   const normalizedBearing = (bearing % 360 + 360) % 360;
   const direction = COMPASS_DIRECTIONS[Math.round(normalizedBearing / 45) % COMPASS_DIRECTIONS.length];
-  return <div className="heading-compass" role="img" aria-label={`Map heading ${Math.round(normalizedBearing)} degrees ${direction}`}>
+  return <div className={`heading-compass${visible ? ' heading-compass--visible' : ''}`} role="img" aria-hidden={!visible} aria-label={`Map heading ${Math.round(normalizedBearing)} degrees ${direction}`}>
     <div className="heading-compass__track" aria-hidden="true">
       {COMPASS_TICKS.map(degrees => {
         const difference = ((degrees - normalizedBearing + 540) % 360) - 180;
         if (Math.abs(difference) > 100) return null;
         const cardinal = degrees % 45 === 0;
         const label = cardinal ? COMPASS_DIRECTIONS[degrees / 45] : String(degrees);
-        return <span key={degrees} className={`heading-compass__tick${cardinal ? ' heading-compass__tick--cardinal' : ''}`} style={{ left: `${50 + difference * 0.55}%` }}>
+        return <span key={degrees} className={`heading-compass__tick${cardinal ? ' heading-compass__tick--cardinal' : ''}`} style={{
+          '--heading-compass-left': `${50 + difference * 0.55}%`,
+          '--heading-compass-left-compact': `calc(50% ${difference < 0 ? '-' : '+'} ${Math.abs(difference * 2.7)}px)`,
+        } as CSSProperties}>
           <span className="heading-compass__mark" />
           <span className="heading-compass__label">{label}</span>
         </span>;
@@ -1099,7 +1102,7 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
     let settleTimer: ReturnType<typeof setTimeout> | null = null;
     const updateInset = () => {
       const card = progressCardRef.current;
-      const compassBar = header.querySelector('.heading-compass');
+      const compassBar = header.querySelector('.heading-compass--visible');
       const viewBounds = view.getBoundingClientRect();
       const viewTop = viewBounds.top;
       // The full-width 3D compass also occupies the actionable map area.
@@ -1377,7 +1380,10 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
     <header ref={mapHeaderRef} className="map-header">
       <div className="map-top-right">
         <div ref={progressCardRef} className="location-summary map-ui-surface"><AreaCoverageCard record={displayedArea} discoveries={discoveries} dataReady={discoveriesLoaded} syncReady={initialSyncSettled} onUpdate={updateCurrentArea} onExplored={ignoreMapAreaExplored} parentAreaName={displayedParentAreaName ?? undefined} reserveParentArea showActions={false} className="min-h-0 border-0 bg-transparent p-0" /></div>
-        {is3D ? <HeadingCompassBar bearing={bearing} /> : <div className="map-top-actions"><div className={`map-compass${compassVisible ? ' map-compass--visible' : ''}`} aria-hidden={!compassVisible}><ShadcnButton variant="secondary" size="icon" className="map-ui-surface" aria-label="Reset compass north" tabIndex={compassVisible ? 0 : -1} onClick={resetCompass}><span className="compass-rotor" style={{ transform: `rotate(${-bearing}deg)` }}><i className="compass-needle"><b className="compass-north">▲</b><b className="compass-south">▼</b></i></span></ShadcnButton></div></div>}
+        <div className={`map-top-instrument${is3D ? ' map-top-instrument--3d' : ''}`}>
+          <HeadingCompassBar bearing={bearing} visible={is3D} />
+          <div className="map-top-actions" aria-hidden={is3D}><div className={`map-compass${compassVisible ? ' map-compass--visible' : ''}`} aria-hidden={is3D || !compassVisible}><ShadcnButton variant="secondary" size="icon" className="map-ui-surface" aria-label="Reset compass north" tabIndex={!is3D && compassVisible ? 0 : -1} onClick={resetCompass}><span className="compass-rotor" style={{ transform: `rotate(${-bearing}deg)` }}><i className="compass-needle"><b className="compass-north">▲</b><b className="compass-south">▼</b></i></span></ShadcnButton></div></div>
+        </div>
       </div>
     </header>
     <div className="map-controls" style={{ bottom: sessionDockOffset }} aria-label="Map controls"><ShadcnButton variant="secondary" size="icon" className="map-ui-surface layers-control" aria-label={`Open layers panel, ${activeLayerCount} active`} aria-expanded={debugOpen} onClick={() => setDebugOpen(!debugOpen)}><Stack weight="regular" aria-hidden="true" />{activeLayerCount > 0 && <span className="layers-control__count" aria-hidden="true">{activeLayerCount}</span>}</ShadcnButton><ShadcnButton variant="secondary" size="icon" className={locationControlClass} aria-label={locationControlLabel} aria-pressed={isFollowingPlayer} onClick={centerOnPlayer}><LocationIcon weight={activeRotationFollow ? 'fill' : 'regular'} aria-hidden="true" /></ShadcnButton><ShadcnButton variant="secondary" size="icon" className="map-ui-surface map-mode-toggle" aria-label={`Switch to ${is3D ? '2D' : '3D'} view`} onClick={() => setIs3D(!is3D)}>{is3D ? '3D' : '2D'}</ShadcnButton><ButtonGroup orientation="vertical" className="zoom-group map-ui-surface" aria-label="Map zoom"><ShadcnButton variant="secondary" size="icon" aria-label="Zoom in" onClick={() => stepZoom(1)}><Plus weight="regular" aria-hidden="true" /></ShadcnButton><ShadcnButton variant="secondary" size="icon" aria-label="Zoom out" onClick={() => stepZoom(-1)}><Minus weight="regular" aria-hidden="true" /></ShadcnButton></ButtonGroup></div>{!sessionActive && <ShadcnButton variant="secondary" className="record-fab map-ui-surface" onClick={() => onSessionChange(true)}><Path weight="regular" aria-hidden="true" />Roam</ShadcnButton>}
