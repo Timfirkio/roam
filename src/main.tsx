@@ -1306,7 +1306,7 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
     const map = mapRef.current;
     if (!map) return;
     map.easeTo({
-      zoom: Math.max(map.getMinZoom(), Math.min(map.getMaxZoom(), map.getZoom() + direction * 0.25)),
+      zoom: Math.max(map.getMinZoom(), Math.min(map.getMaxZoom(), map.getZoom() + direction * 0.5)),
       ...(isFollowingPlayer && playerLocation ? {
         center: [playerLocation.lng, playerLocation.lat] as [number, number],
         offset: crosshairOffset(map, topOverlayInset),
