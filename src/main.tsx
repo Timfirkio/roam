@@ -146,7 +146,7 @@ function ProgressTransitionPreview() {
   return <div>
     <p className="mb-3 font-mono text-label font-semibold tracking-[0.14em] text-text-subtle">DISTRICT PROGRESS CARD</p>
     <Surface className="space-y-4 p-4">
-      <p className="text-body text-text-muted">Map card for the active district. The parent region is contextual, the bar stays visible during recalculation, and both distance and completion readings roll with their values.</p>
+      <p className="text-body text-text-muted">Map card for the active district. The parent region is contextual, the bar stays visible during recalculation without a loading spinner, and both distance and completion readings roll with their values.</p>
       <div className="district-progress-content map-district-progress-preview rounded-control border border-border-muted bg-surface p-4">
         <div className="district-progress-parent roam-overline-sm"><ScrambleText text="Stockholms kommun" /></div>
         <div className="district-progress-top"><div className="district-progress-title"><ScrambleText text={regions[regionIndex].name} /></div></div>
