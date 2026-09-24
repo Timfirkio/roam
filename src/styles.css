@@ -310,9 +310,9 @@ aside.rounded-control.border-l-2.border-accent { display: none; }
 .map-startup__mark { position: relative; display: grid; width: 48px; height: 48px; place-items: center; }
 .map-startup__mark::before { position: absolute; width: 30px; height: 30px; border: 1px solid #d9f7f3aa; border-radius: 50%; background: #0b242ab8; box-shadow: 0 0 0 4px #2bb8b044, 0 0 14px #2bb8b099; content: ''; animation: roam-location-breathe 2.4s ease-in-out infinite; }
 .map-startup__mark::after { position: absolute; width: 13px; height: 13px; border: 3px solid #effffd; border-radius: 50%; background: var(--color-location-500); box-shadow: 0 0 0 3px #0b242ab8; content: ''; }
-.map-startup--revealing { pointer-events: none; animation: roam-startup-fade 800ms ease-in forwards; }
-.map-startup--revealing .map-startup__mark::before { animation: roam-location-reveal 700ms var(--ease-outdoor) forwards; }
-.map-startup--revealing .map-startup__mark::after { animation: roam-location-dot-reveal 700ms var(--ease-outdoor) forwards; }
+.map-startup--revealing { pointer-events: none; animation: roam-startup-fade 450ms ease-in forwards; }
+.map-startup--revealing .map-startup__mark::before { animation: roam-location-reveal 450ms var(--ease-outdoor) forwards; }
+.map-startup--revealing .map-startup__mark::after { animation: roam-location-dot-reveal 450ms var(--ease-outdoor) forwards; }
 @keyframes roam-location-breathe { 50% { opacity: .72; transform: scale(1.12); } }
 @keyframes roam-location-reveal { 35% { opacity: 1; transform: scale(1.22); } 100% { opacity: 0; transform: scale(3.2); } }
 @keyframes roam-location-dot-reveal { 35% { transform: scale(1.2); } 100% { transform: scale(1); } }
