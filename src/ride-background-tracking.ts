@@ -1,4 +1,4 @@
-import { registerPlugin } from '@capacitor/core';
+import { registerPlugin, type PluginListenerHandle } from '@capacitor/core';
 
 export type RideTrackingPoint = {
   lat: number;
@@ -10,6 +10,9 @@ export type RideTrackingPoint = {
 };
 
 export interface RideTrackingPlugin {
+  startOrientation(): Promise<void>;
+  stopOrientation(): Promise<void>;
+  addListener(eventName: 'orientation', listener: (reading: { heading: number; pitch: number; roll: number }) => void): Promise<PluginListenerHandle>;
   start(): Promise<void>;
   stop(): Promise<void>;
   /** Atomically returns fixes collected while the WebView was asleep. */

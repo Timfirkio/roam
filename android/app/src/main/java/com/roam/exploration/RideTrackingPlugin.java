@@ -2,6 +2,11 @@ package com.roam.exploration;
 
 import android.content.Intent;
 import android.content.ClipData;
+import android.content.Context;
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
+import android.hardware.SensorManager;
 import android.net.Uri;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -15,7 +20,49 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 import org.json.JSONObject;
 
 @CapacitorPlugin(name = "RideTracking")
-public class RideTrackingPlugin extends Plugin {
+public class RideTrackingPlugin extends Plugin implements SensorEventListener {
+  private SensorManager sensorManager;
+  private Sensor rotationSensor;
+  private final float[] rotationMatrix = new float[9];
+  private final float[] orientation = new float[3];
+  private long lastOrientationEventMs;
+
+  @PluginMethod public void startOrientation(PluginCall call) {
+    sensorManager = (SensorManager)getContext().getSystemService(Context.SENSOR_SERVICE);
+    rotationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR);
+    if (rotationSensor == null) { call.reject("Rotation sensor unavailable"); return; }
+    sensorManager.unregisterListener(this);
+    if (!sensorManager.registerListener(this, rotationSensor, SensorManager.SENSOR_DELAY_GAME)) {
+      call.reject("Unable to start rotation sensor"); return;
+    }
+    call.resolve();
+  }
+
+  @PluginMethod public void stopOrientation(PluginCall call) {
+    if (sensorManager != null) sensorManager.unregisterListener(this);
+    call.resolve();
+  }
+
+  @Override public void onSensorChanged(SensorEvent event) {
+    if (event.sensor.getType() != Sensor.TYPE_ROTATION_VECTOR || event.accuracy == SensorManager.SENSOR_STATUS_UNRELIABLE) return;
+    long now = android.os.SystemClock.elapsedRealtime();
+    if (now - lastOrientationEventMs < 50) return;
+    lastOrientationEventMs = now;
+    SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values);
+    SensorManager.getOrientation(rotationMatrix, orientation);
+    JSObject reading = new JSObject();
+    reading.put("heading", (Math.toDegrees(orientation[0]) + 360) % 360);
+    reading.put("pitch", Math.toDegrees(orientation[1]));
+    reading.put("roll", Math.toDegrees(orientation[2]));
+    notifyListeners("orientation", reading);
+  }
+
+  @Override public void onAccuracyChanged(Sensor sensor, int accuracy) {}
+
+  @Override protected void handleOnDestroy() {
+    if (sensorManager != null) sensorManager.unregisterListener(this);
+    super.handleOnDestroy();
+  }
   @PluginMethod public void start(PluginCall call) { ContextCompat.startForegroundService(getContext(), new Intent(getContext(), RideTrackingService.class).setAction(RideTrackingService.START)); call.resolve(); }
   @PluginMethod public void stop(PluginCall call) { getContext().startService(new Intent(getContext(), RideTrackingService.class).setAction(RideTrackingService.STOP)); call.resolve(); }
   @PluginMethod public void drainPoints(PluginCall call) {
