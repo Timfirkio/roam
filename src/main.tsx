@@ -47,7 +47,7 @@ import { AccountSettings } from './account-settings';
 import { runAccountSync } from './cloud-sync';
 import { formatDistance } from './distance-format';
 import { supabase } from './supabase';
-import { ArrowsClockwise, CheckCircle, Compass, CrosshairSimple, Cube, DotsThreeOutline, DownloadSimple, Gear, Gps, GpsFix, MapTrifold, NavigationArrow, Path, PencilSimple, Percent, Stack, Trash, UploadSimple } from '@phosphor-icons/react';
+import { ArrowsClockwise, CheckCircle, Compass, CrosshairSimple, Cube, DotsThreeOutline, DownloadSimple, Gear, Gps, GpsFix, MapTrifold, Minus, NavigationArrow, Path, PencilSimple, Percent, Plus, Stack, Trash, UploadSimple } from '@phosphor-icons/react';
 
 type View = 'map' | 'sessions' | 'settings' | 'design-system';
 type LocationState = { city: string; region: string; lng: number; lat: number };
@@ -618,6 +618,8 @@ function MapCanvas({ mapRef, viewportBottomInset, crosshairTopInset, showDiscove
   const lastMarkerLocationRef = useRef<PlayerLocation | null>(null);
   const hasCenteredOnFirstLiveLocationRef = useRef(false);
   const followCameraInsetRef = useRef<number | null>(null);
+  const wasRecordingRef = useRef(false);
+  const recordingCameraPendingRef = useRef(false);
   const markerAnimationFrameRef = useRef<number | null>(null);
   const markerRotationFrameRef = useRef<number | null>(null);
   const markerRotationRef = useRef(0);
@@ -700,12 +702,12 @@ function MapCanvas({ mapRef, viewportBottomInset, crosshairTopInset, showDiscove
     if (!map || !mapReady) return;
     // Until a live fix or user gesture takes over, keep the cached startup
     // location under the same usable-area center as the crosshair.
-    if (followPlayer && !playerLocation && !hasCenteredOnFirstLiveLocationRef.current) {
+    if (followPlayer && !playerLocation && !sessionActive && !hasCenteredOnFirstLiveLocationRef.current) {
       map.easeTo({ center: initialCenterRef.current, offset: crosshairOffset(map, crosshairTopInset), duration: 0 });
     }
     const point = calculationPointAtCrosshair(map, crosshairTopInset, followPlayer, playerLocation);
     onLocationChangeRef.current(point.lng, point.lat, findMapLocality(map, point));
-  }, [crosshairTopInset, followPlayer, mapReady, mapRef, playerLocation]);
+  }, [crosshairTopInset, followPlayer, mapReady, mapRef, playerLocation, sessionActive]);
   useEffect(() => {
     if (!mapReady) return;
     mapRef.current?.resize();
@@ -772,6 +774,11 @@ function MapCanvas({ mapRef, viewportBottomInset, crosshairTopInset, showDiscove
   }, [mapReady, mapRef, networkRevision, playerLocation]);
   useEffect(() => {
     if (!mapReady || !mapRef.current) return;
+    if (sessionActive !== wasRecordingRef.current) {
+      recordingCameraPendingRef.current = sessionActive;
+      wasRecordingRef.current = sessionActive;
+    }
+    const recordingCameraReady = recordingCameraPendingRef.current && is3D && followPlayer && activeRotationFollow;
     const source = mapRef.current.getSource(PLAYER_DISCOVERY_SOURCE) as maplibregl.GeoJSONSource | undefined;
     const setMarkerPosition = (marker: maplibregl.Marker, lng: number, lat: number) => {
       marker.setLngLat([lng, lat]);
@@ -787,6 +794,10 @@ function MapCanvas({ mapRef, viewportBottomInset, crosshairTopInset, showDiscove
       playerMarkerRef.current = null;
       lastMarkerLocationRef.current = null;
       source?.setData({ type: 'FeatureCollection', features: [] });
+      if (recordingCameraReady) {
+        mapRef.current.easeTo({ zoom: RECORDING_MAP_ZOOM, pitch: DEFAULT_3D_PITCH, duration: 850 });
+        recordingCameraPendingRef.current = false;
+      }
       return;
     }
     let markerWasCreated = false;
@@ -840,6 +851,7 @@ function MapCanvas({ mapRef, viewportBottomInset, crosshairTopInset, showDiscove
       markerRotationFrameRef.current = requestAnimationFrame(animateRotation);
     }
     marker.getElement().classList.toggle('player-marker--recording', sessionActive);
+    if (recordingCameraPendingRef.current && !recordingCameraReady) return;
     if (followPlayer) {
       const map = mapRef.current;
       const camera = {
@@ -852,10 +864,11 @@ function MapCanvas({ mapRef, viewportBottomInset, crosshairTopInset, showDiscove
       };
       const firstFix = !hasCenteredOnFirstLiveLocationRef.current;
       const actionableAreaChanged = followCameraInsetRef.current !== null && followCameraInsetRef.current !== crosshairTopInset;
-      if (firstFix || actionableAreaChanged) map.easeTo({ ...camera, duration: 0 });
-      else map.easeTo({ ...camera, duration: 850, easing: progress => 1 - (1 - progress) ** 3 });
+      if (!sessionActive && (firstFix || actionableAreaChanged)) map.easeTo({ ...camera, duration: 0 });
+      else map.easeTo({ ...camera, ...(recordingCameraReady ? { zoom: RECORDING_MAP_ZOOM } : {}), duration: 850, easing: progress => 1 - (1 - progress) ** 3 });
       hasCenteredOnFirstLiveLocationRef.current = true;
       followCameraInsetRef.current = crosshairTopInset;
+      recordingCameraPendingRef.current = false;
     }
   }, [activeRotationFollow, crosshairTopInset, followPlayer, is3D, mapReady, mapRef, playerLocation, sessionActive]);
   return <div className="map-canvas" style={{ bottom: viewportBottomInset }}><div ref={containerRef} className={mapReady ? 'maplibre-container maplibre-container--ready' : 'maplibre-container'} /><div className={is3D ? 'map-depth-fade' : 'map-depth-fade map-depth-fade--hidden'} aria-hidden="true" />
@@ -913,8 +926,6 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
       setFollowPlayer(true);
       setActiveRotationFollow(true);
       setIs3D(true);
-      // Set the ride scale before follow starts its camera animation.
-      mapRef.current?.jumpTo({ zoom: RECORDING_MAP_ZOOM });
     } else {
       setActiveRotationFollow(false);
       setIs3D(false);
@@ -1291,9 +1302,13 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
       progressAreaControllerRef.current?.abort();
     }
   };
+  const stepZoom = (direction: 1 | -1) => {
+    const map = mapRef.current;
+    if (map) map.easeTo({ zoom: Math.max(map.getMinZoom(), Math.min(map.getMaxZoom(), map.getZoom() + direction)), duration: 350 });
+  };
   return <section ref={mapViewRef} className={active ? "map-view" : "map-view map-view--inactive"} aria-hidden={!active}><MapCanvas mapRef={mapRef} viewportBottomInset={0} crosshairTopInset={topOverlayInset} showDiscovered={showDiscovered} showRegionProgress={boundariesVisible} progressMode={progressMode} is3D={is3D} showBuildings3D={showBuildings3D} showTerrain3D={showTerrain3D} sessionActive={sessionActive} playerLocation={playerLocation} followPlayer={!progressMode && followPlayer} activeRotationFollow={activeRotationFollow} discoveries={discoveries} onDiscoveries={onDiscoveries} onLocationChange={handleLocationChange} onBearingChange={handleBearingChange} onZoomChange={() => {}} onPitchChange={() => {}} onFollowPlayerChange={handleFollowChange} onMapReady={onMapReady} onVisualReady={onVisualReady} />{!isFollowingPlayer && <div className="map-center-crosshair" style={{ top: topOverlayInset }} aria-hidden="true"><span /></div>}
     <header ref={mapHeaderRef} className="map-header"><div className="map-top-right"><div ref={progressCardRef} className="location-summary map-ui-surface"><AreaCoverageCard record={displayedArea} discoveries={discoveries} dataReady={discoveriesLoaded} syncReady={initialSyncSettled} onUpdate={updateCurrentArea} onExplored={ignoreMapAreaExplored} parentAreaName={displayedParentAreaName ?? undefined} reserveParentArea showActions={false} className="min-h-0 border-0 bg-transparent p-0" /></div><div className="map-top-actions"><div className={`map-compass${compassVisible ? ' map-compass--visible' : ''}`} aria-hidden={!compassVisible}><ShadcnButton variant="secondary" size="icon" className="map-ui-surface" aria-label="Reset compass north" tabIndex={compassVisible ? 0 : -1} onClick={resetCompass}><span className="compass-rotor" style={{ transform: `rotate(${-bearing}deg)` }}><i className="compass-needle"><b className="compass-north">▲</b><b className="compass-south">▼</b></i></span></ShadcnButton></div></div></div></header>
-    <div className="map-controls" style={{ bottom: sessionDockOffset }} aria-label="Map controls"><ShadcnButton variant="secondary" size="icon" className="map-ui-surface layers-control" aria-label={`Open layers panel, ${activeLayerCount} active`} aria-expanded={debugOpen} onClick={() => setDebugOpen(!debugOpen)}><Stack weight="regular" aria-hidden="true" />{activeLayerCount > 0 && <span className="layers-control__count" aria-hidden="true">{activeLayerCount}</span>}</ShadcnButton><ShadcnButton variant="secondary" size="icon" className={locationControlClass} aria-label={locationControlLabel} aria-pressed={isFollowingPlayer} onClick={centerOnPlayer}><LocationIcon weight={activeRotationFollow ? 'fill' : 'regular'} aria-hidden="true" /></ShadcnButton><ShadcnButton variant="secondary" size="icon" className="map-ui-surface map-mode-toggle" aria-label={`Switch to ${is3D ? '2D' : '3D'} view`} onClick={() => setIs3D(!is3D)}>{is3D ? '3D' : '2D'}</ShadcnButton></div>{!sessionActive && <ShadcnButton variant="secondary" className="record-fab map-ui-surface" onClick={() => onSessionChange(true)}><Path weight="regular" aria-hidden="true" />Record</ShadcnButton>}
+    <div className="map-controls" style={{ bottom: sessionDockOffset }} aria-label="Map controls"><ShadcnButton variant="secondary" size="icon" className="map-ui-surface layers-control" aria-label={`Open layers panel, ${activeLayerCount} active`} aria-expanded={debugOpen} onClick={() => setDebugOpen(!debugOpen)}><Stack weight="regular" aria-hidden="true" />{activeLayerCount > 0 && <span className="layers-control__count" aria-hidden="true">{activeLayerCount}</span>}</ShadcnButton><ShadcnButton variant="secondary" size="icon" className={locationControlClass} aria-label={locationControlLabel} aria-pressed={isFollowingPlayer} onClick={centerOnPlayer}><LocationIcon weight={activeRotationFollow ? 'fill' : 'regular'} aria-hidden="true" /></ShadcnButton><ShadcnButton variant="secondary" size="icon" className="map-ui-surface map-mode-toggle" aria-label={`Switch to ${is3D ? '2D' : '3D'} view`} onClick={() => setIs3D(!is3D)}>{is3D ? '3D' : '2D'}</ShadcnButton><ButtonGroup orientation="vertical" className="zoom-group map-ui-surface" aria-label="Map zoom"><ShadcnButton variant="secondary" size="icon" aria-label="Zoom in" onClick={() => stepZoom(1)}><Plus weight="regular" aria-hidden="true" /></ShadcnButton><ShadcnButton variant="secondary" size="icon" aria-label="Zoom out" onClick={() => stepZoom(-1)}><Minus weight="regular" aria-hidden="true" /></ShadcnButton></ButtonGroup></div>{!sessionActive && <ShadcnButton variant="secondary" className="record-fab map-ui-surface" onClick={() => onSessionChange(true)}><Path weight="regular" aria-hidden="true" />Record</ShadcnButton>}
     <ShadcnButton variant="secondary" size="medium" className="progress-mode-toggle map-ui-surface rounded-pill" aria-pressed={progressMode} onClick={toggleProgressMode}><Percent weight="regular" aria-hidden="true" />Progress</ShadcnButton>
     {showDebugMenu && debugOpen && <div className="map-layers-panel map-ui-surface" style={{ bottom: sessionDockOffset }}><p>LAYERS</p><label><span><strong>Region boundaries</strong><small>Administrative area outlines</small></span><Switch checked={boundariesVisible} disabled={progressMode} onCheckedChange={setShowRegionProgress} aria-label="Region boundaries" /></label><label><span><strong>3D buildings</strong><small>Building massing</small></span><Switch checked={showBuildings3D} onCheckedChange={setShowBuildings3D} aria-label="3D buildings" /></label><label><span><strong>3D terrain</strong><small>Elevation and shading</small></span><Switch checked={showTerrain3D} onCheckedChange={setShowTerrain3D} aria-label="3D terrain" /></label></div>}
     {!startupDismissed && <div className={`map-startup${startupCenterSettled ? ' map-startup--centered' : ''}${mapVisualReady ? ' map-startup--revealing' : ''}`} role="status" aria-label={mapVisualReady ? 'Map ready' : 'Loading map'}><div className="map-startup__mark" style={{ transform: `translateY(${topOverlayInset / 2}px)` }} aria-hidden="true" /></div>}

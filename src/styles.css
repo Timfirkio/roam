@@ -285,7 +285,8 @@ aside.rounded-control.border-l-2.border-accent { display: none; }
 .map-controls button { width: 44px; height: 44px; }
 .debug-icon { width: 44px; height: 44px; }
 .zoom-group { width: 44px; }
-.zoom-group button { width: 44px; height: 44px; }
+.zoom-group button { width: 100%; height: 44px; border-radius: 0 !important; }
+.zoom-group:has(:focus-visible) { outline: 3px solid var(--color-focus); outline-offset: 2px; }
 .map-mode-toggle { min-height: var(--spacing-control) !important; }
 .map-compass button { width: 48px; height: 48px; }
 .compass-rotor { transition: none; }
@@ -498,6 +499,8 @@ aside.rounded-control.border-l-2.border-accent { display: none; }
 :root { --map-control-gap: 8px; --map-control-shadow: 0 5px 14px rgba(0, 0, 0, .34); }
 .map-controls { right: var(--spacing-map-edge); gap: var(--map-control-gap); }
 .map-controls [data-slot="button"], .map-header .map-compass button, .location-summary, .record-fab { box-shadow: var(--map-control-shadow); }
+.map-controls .zoom-group { box-shadow: var(--map-control-shadow); }
+.map-controls .zoom-group [data-slot="button"] { box-shadow: none; }
 .map-controls [data-slot="button"], .map-header .map-compass button, .record-fab { color: var(--color-paper-50); }
 .map-controls .location-control { color: var(--color-paper-50) !important; }
 .map-controls .location-control--following, .map-controls .location-control--active { border-color: var(--color-border); background: var(--color-surface-raised); color: var(--color-paper-50) !important; }
