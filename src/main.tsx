@@ -620,7 +620,6 @@ function MapCanvas({ mapRef, mapActive, viewportBottomInset, crosshairTopInset, 
   const playerMarkerRef = useRef<maplibregl.Marker | null>(null);
   const lastMarkerLocationRef = useRef<PlayerLocation | null>(null);
   const hasCenteredOnFirstLiveLocationRef = useRef(false);
-  const followCameraInsetRef = useRef<number | null>(null);
   const wasRecordingRef = useRef(false);
   const recordingCameraPendingRef = useRef(false);
   const markerAnimationFrameRef = useRef<number | null>(null);
@@ -902,11 +901,9 @@ function MapCanvas({ mapRef, mapActive, viewportBottomInset, crosshairTopInset, 
       };
       followCameraTargetRef.current = { center: camera.center, offset: camera.offset, pitch: camera.pitch, ...(recordingCameraReady ? { zoom: RECORDING_MAP_ZOOM } : {}) };
       const firstFix = !hasCenteredOnFirstLiveLocationRef.current;
-      const actionableAreaChanged = followCameraInsetRef.current !== null && followCameraInsetRef.current !== crosshairTopInset;
-      if (!sessionActive && (firstFix || actionableAreaChanged)) map.easeTo({ ...camera, duration: 0 });
+      if (!sessionActive && firstFix) map.easeTo({ ...camera, duration: 0 });
       else map.easeTo({ ...camera, ...(recordingCameraReady ? { zoom: RECORDING_MAP_ZOOM } : {}), duration: 850, easing: progress => 1 - (1 - progress) ** 3 });
       hasCenteredOnFirstLiveLocationRef.current = true;
-      followCameraInsetRef.current = crosshairTopInset;
       recordingCameraPendingRef.current = false;
     } else {
       followCameraTargetRef.current = null;
@@ -919,7 +916,6 @@ function MapCanvas({ mapRef, mapActive, viewportBottomInset, crosshairTopInset, 
 function HeadingCompassBar({ bearing }: { bearing: number }) {
   const normalizedBearing = (bearing % 360 + 360) % 360;
   const direction = COMPASS_DIRECTIONS[Math.round(normalizedBearing / 45) % COMPASS_DIRECTIONS.length];
-  const pointsNorth = Math.min(normalizedBearing, 360 - normalizedBearing) <= 1;
   return <div className="heading-compass" role="img" aria-label={`Map heading ${Math.round(normalizedBearing)} degrees ${direction}`}>
     <div className="heading-compass__track" aria-hidden="true">
       {COMPASS_TICKS.map(degrees => {
@@ -927,13 +923,13 @@ function HeadingCompassBar({ bearing }: { bearing: number }) {
         if (Math.abs(difference) > 100) return null;
         const cardinal = degrees % 45 === 0;
         const label = cardinal ? COMPASS_DIRECTIONS[degrees / 45] : String(degrees);
-        return <span key={degrees} className={`heading-compass__tick${cardinal ? ' heading-compass__tick--cardinal' : ''}${degrees === 0 ? ' heading-compass__tick--north' : ''}`} style={{ left: `${50 + difference * 0.55}%` }}>
+        return <span key={degrees} className={`heading-compass__tick${cardinal ? ' heading-compass__tick--cardinal' : ''}`} style={{ left: `${50 + difference * 0.55}%` }}>
           <span className="heading-compass__mark" />
           <span className="heading-compass__label">{label}</span>
         </span>;
       })}
     </div>
-    <span className={`heading-compass__pointer${pointsNorth ? ' heading-compass__pointer--north' : ''}`} aria-hidden="true" />
+    <span className="heading-compass__pointer" aria-hidden="true" />
   </div>;
 }
 
