@@ -1,6 +1,6 @@
 import type { DiscoveredSegment, RoadType } from './discovery';
 import { loadDiscoveredSegments, replaceDiscoveredSegments } from './discovery-store';
-import { loadSessions, replaceSessions, type RideSession, type SessionPoint } from './session-store';
+import { loadDeletedSessions, loadSessions, recordDeletedSessions, replaceSessions, type RideSession, type SessionPoint } from './session-store';
 import { requireSupabase } from './supabase';
 import { formatDistance } from './distance-format';
 
@@ -75,21 +75,54 @@ export async function syncAccountProgress(userId: string, onProgress?: (progress
       if (page.length < CLOUD_DISCOVERY_PAGE_SIZE) return rows;
     }
   };
+  const loadCloudDeletions = async () => {
+    const rows: { id: string; deleted_at: string }[] = [];
+    for (let offset = 0; ; offset += CLOUD_DISCOVERY_PAGE_SIZE) {
+      const { data, error } = await client.from('ride_sessions').select('id, deleted_at').eq('user_id', userId).not('deleted_at', 'is', null).order('id').range(offset, offset + CLOUD_DISCOVERY_PAGE_SIZE - 1);
+      if (error) throw syncError('Could not load deleted rides from the cloud', error);
+      const page = data ?? [];
+      rows.push(...page);
+      if (page.length < CLOUD_DISCOVERY_PAGE_SIZE) return rows;
+    }
+  };
   onProgress?.({ label: 'Preparing local progress…' });
-  const [discoveries, sessions] = await Promise.all([loadDiscoveredSegments(), loadSessions()]);
+  const [discoveries, sessions, localDeletions] = await Promise.all([loadDiscoveredSegments(), loadSessions(), loadDeletedSessions()]);
   onProgress?.({ label: 'Checking your account progress…' });
-  const [initialCloudDiscoveries, initialCloudSessions] = await Promise.all([
+  const [initialCloudDiscoveries, initialCloudSessions, initialCloudDeletions] = await Promise.all([
     loadCloudDiscoveries(),
     client.from('ride_sessions').select('*, ride_session_points(*)').eq('user_id', userId).is('deleted_at', null).order('started_at', { ascending: false }),
+    loadCloudDeletions(),
   ]);
   if (initialCloudSessions.error) throw syncError('Could not load cloud rides', initialCloudSessions.error);
   let cloudDiscoveries = initialCloudDiscoveries;
   let cloudSessions = initialCloudSessions.data ?? [];
+  const activeCloudSessionIds = new Set(cloudSessions.map(row => row.id));
+  const cloudDeletedIds = new Set(initialCloudDeletions.map(row => row.id));
+  const localDeletedIds = new Set(localDeletions.map(row => row.id));
+
+  // A deletion takes precedence over a stale copy on another device.
+  const syncedDeletions = [];
+  for (const deletion of localDeletions.filter(row => !row.synced || activeCloudSessionIds.has(row.id))) {
+    if (!cloudDeletedIds.has(deletion.id)) {
+      const { error } = await client.from('ride_sessions').update({ deleted_at: new Date(deletion.deletedAt).toISOString() }).eq('user_id', userId).eq('id', deletion.id).is('deleted_at', null);
+      if (error) throw syncError('Could not delete ride from the cloud', error);
+    }
+    // Retain the small tombstone, but remove the route's GPS data from the account.
+    const { error: pointsError } = await client.from('ride_session_points').delete().eq('user_id', userId).eq('session_id', deletion.id);
+    if (pointsError) throw syncError('Could not delete ride GPS points from the cloud', pointsError);
+    cloudDeletedIds.add(deletion.id);
+    syncedDeletions.push({ ...deletion, synced: true });
+  }
+  if (syncedDeletions.length || initialCloudDeletions.length) await recordDeletedSessions([
+    ...syncedDeletions,
+    ...initialCloudDeletions.map(row => ({ id: row.id, deletedAt: new Date(row.deleted_at).valueOf(), synced: true })),
+  ]);
 
   const cloudDiscoveryIds = new Set(cloudDiscoveries.map((row: any) => row.segment_id));
   const discoveriesToUpload = discoveries.filter(segment => !cloudDiscoveryIds.has(segment.id));
   const cloudSessionsById = new Map<string, RideSession>(cloudSessions.map((row: any) => [row.id, toSession(row)]));
   const sessionsToUpload = sessions.filter(session => {
+    if (cloudDeletedIds.has(session.id) || localDeletedIds.has(session.id)) return false;
     const cloudSession = cloudSessionsById.get(session.id);
     return !cloudSession || !sameSessionDetails(session, cloudSession) || !samePoints(session.points, cloudSession.points);
   });
@@ -145,8 +178,9 @@ export async function syncAccountProgress(userId: string, onProgress?: (progress
     id: row.segment_id, regionId: row.region_id ?? undefined, regionName: row.region_name ?? undefined, roadType: row.road_type,
     geometry: row.geometry, lengthMeters: row.length_meters, discoveredAt: new Date(row.discovered_at).valueOf(),
   }));
-  const mergedSessions = new Map<string, RideSession>(sessions.map(item => [item.id, item]));
+  const mergedSessions = new Map<string, RideSession>(sessions.filter(item => !cloudDeletedIds.has(item.id) && !localDeletedIds.has(item.id)).map(item => [item.id, item]));
   cloudSessions.forEach((row: any) => {
+    if (cloudDeletedIds.has(row.id) || localDeletedIds.has(row.id)) return;
     const cloudSession = toSession(row);
     const localSession = mergedSessions.get(row.id);
     // Thumbnails are a local rendering cache, not account data. Retain a valid
@@ -164,6 +198,7 @@ export async function syncAccountProgress(userId: string, onProgress?: (progress
   });
   const initialSessionsById = new Map(sessions.map(item => [item.id, item]));
   (await loadSessions()).forEach(item => {
+    if (cloudDeletedIds.has(item.id) || localDeletedIds.has(item.id)) return;
     const initial = initialSessionsById.get(item.id);
     if (!initial || !sameSessionDetails(initial, item) || !samePoints(initial.points, item.points)) mergedSessions.set(item.id, item);
   });
@@ -171,7 +206,7 @@ export async function syncAccountProgress(userId: string, onProgress?: (progress
   const syncedSessions = [...mergedSessions.values()].sort((a, b) => b.startedAt - a.startedAt);
   onProgress?.({ label: 'Updating this device…' });
   await Promise.all([replaceDiscoveredSegments(syncedDiscoveries), replaceSessions(syncedSessions)]);
-  return { discoveries: syncedDiscoveries, sessions: syncedSessions };
+  return { discoveries: syncedDiscoveries, sessions: await loadSessions() };
 }
 
 let activeSync: Promise<Awaited<ReturnType<typeof syncAccountProgress>>> | null = null;

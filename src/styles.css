@@ -372,6 +372,9 @@ aside.rounded-control.border-l-2.border-accent { display: none; }
   .setting-row:hover { color: #fff; }
   .zoom-group button:hover { background: #17201fcc; }
   button[data-slot="button"].w-full.text-left:hover { border-color: transparent; background: var(--color-surface-interactive); }
+  button[data-slot="button"].w-full.text-left.design-system-link:hover { border-color: transparent; background: transparent; color: var(--color-text); }
+  [data-slot="switch"]:not([data-disabled]):hover[data-checked] { border-color: var(--color-paper-100); background: var(--color-accent-button-hover); }
+  [data-slot="switch"]:not([data-disabled]):hover[data-unchecked] { border-color: var(--color-accent); background: var(--color-surface-interactive); }
   .district-progress-card:hover > [data-slot="item"] { border-color: #8a9690; background: #17201fcc; }
   .district-progress-card:hover .progress-bar, .location-summary:hover .progress-bar { background: var(--color-border-muted); }
   .region-accordion-trigger:hover { text-decoration: none; }
