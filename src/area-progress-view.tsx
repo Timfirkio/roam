@@ -85,27 +85,32 @@ export function ScrambleText({ text, className }: { text: string; className?: st
   return <span className={className}><span className="sr-only" aria-live="polite" aria-atomic="true">{text}</span><span aria-hidden="true">{displayText}</span></span>;
 }
 
-function AnimatedPercentage({ value, white = false }: { value: number | null; white?: boolean }) {
+function AnimatedPercentage({ value, white = false, loading = false }: { value: number | null; white?: boolean; loading?: boolean }) {
   const className = `area-progress-percent${white ? ' area-progress-percent--white' : ''}`;
-  return <AnimatedProgressValue value={value} label={value === null ? '—' : `${Math.min(100, value).toFixed(1)}%`} className={className} />;
+  return <AnimatedProgressValue value={value} label={value === null ? loading ? '…' : '—' : `${Math.min(100, value).toFixed(1)}%`} className={className} />;
 }
 
-export function AreaCoverageCard({ record, discoveries, onUpdate, onExplored, parentAreaName, reserveParentArea = false, showActions = true, className, onClick }: { record: AreaRecord; discoveries: DiscoveredSegment[]; onUpdate: (record: AreaRecord) => void; onExplored: (areaId: string, totals: AreaTotals) => void; parentAreaName?: string; reserveParentArea?: boolean; showActions?: boolean; className?: string; onClick?: () => void }) {
-  const { area, job } = record;
-  const displayName = displayAreaName(area.name, area.adminLevel);
+export function AreaCoverageCard({ record, discoveries, onUpdate, onExplored, parentAreaName, reserveParentArea = false, showActions = true, dataReady = true, className, onClick }: { record: AreaRecord | null; discoveries: DiscoveredSegment[]; onUpdate: (record: AreaRecord) => void; onExplored: (areaId: string, totals: AreaTotals) => void; parentAreaName?: string; reserveParentArea?: boolean; showActions?: boolean; dataReady?: boolean; className?: string; onClick?: () => void }) {
+  const area = record?.area;
+  const job = record?.job;
+  const areaKey = area ? `${area.id}:${area.boundaryVersion}` : '';
+  const displayName = area ? displayAreaName(area.name, area.adminLevel) : 'Locating area…';
   const [requesting, setRequesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const ready = job?.status === 'ready' && job.totals;
-  const { totals: explored, refreshing, calculationError, isCurrent } = useExploredAreaTotals(discoveries, area.geometry, `${area.id}:${area.boundaryVersion}`, Boolean(ready));
-  useEffect(() => { if (explored && isCurrent) onExplored(area.id, explored); }, [area.id, explored, isCurrent, onExplored]);
+  const { totals: explored, refreshing, calculationError, isCurrent } = useExploredAreaTotals(discoveries, area?.geometry ?? null, areaKey, Boolean(ready && dataReady));
+  useEffect(() => { if (area && explored && isCurrent) onExplored(area.id, explored); }, [area?.id, explored, isCurrent, onExplored]);
   const percentage = ready && explored && ready.lengthMeters > 0 ? explored.lengthMeters / ready.lengthMeters * 100 : null;
   const inconsistent = percentage !== null && percentage > 100.1;
   const pending = job?.status === 'queued' || job?.status === 'running';
-  const loading = !explored && (refreshing || pending || requesting);
+  const loading = !area || !dataReady || (!explored && (refreshing || pending || requesting));
+  const numbersLoading = !area || !dataReady || pending || requesting || Boolean(ready && refreshing);
+  const exploredLabel = explored && dataReady ? distance(explored.lengthMeters) : calculationError || error || job?.status === 'failed' ? '—' : '…';
+  const totalLabel = ready ? distance(ready.lengthMeters) : job?.status === 'failed' ? '—' : '…';
   const previousSegmentWidthsRef = useRef<Partial<Record<keyof AreaTotals['byRoadType'], number>>>({});
-  const previousAreaKeyRef = useRef(`${area.id}:${area.boundaryVersion}`);
-  if (previousAreaKeyRef.current !== `${area.id}:${area.boundaryVersion}`) {
-    previousAreaKeyRef.current = `${area.id}:${area.boundaryVersion}`;
+  const previousAreaKeyRef = useRef(areaKey);
+  if (previousAreaKeyRef.current !== areaKey) {
+    previousAreaKeyRef.current = areaKey;
     previousSegmentWidthsRef.current = {};
   }
   useEffect(() => {
@@ -116,6 +121,7 @@ export function AreaCoverageCard({ record, discoveries, onUpdate, onExplored, pa
     ? ready.lengthMeters > 0 ? Math.min(100, explored.byRoadType[type] / ready.lengthMeters * 100) : 0
     : previousSegmentWidthsRef.current[type] ?? 0;
   async function calculate() {
+    if (!area) return;
     setRequesting(true); setError(null);
     try { onUpdate(await calculateArea(area.id)); } catch (cause) { setError(message(cause)); }
     finally { setRequesting(false); }
@@ -125,14 +131,14 @@ export function AreaCoverageCard({ record, discoveries, onUpdate, onExplored, pa
       {(parentAreaName || reserveParentArea) && <div className="district-progress-parent roam-overline-sm">{parentAreaName ? <ScrambleText text={parentAreaName} /> : <span aria-hidden="true">&nbsp;</span>}</div>}
       <div className={`district-progress-top${loading ? ' district-progress-top--loading' : ''}`} aria-busy={loading}><div className="district-progress-title"><ScrambleText text={displayName} /></div>{loading && <Spinner className="area-progress-loading" aria-label="Loading area progress" />}</div>
       <div className="progress-bar" aria-label={percentage !== null ? `${displayName}: ${Math.min(100, percentage).toFixed(1)} percent explored` : `${displayName}: coverage not calculated`}><i className="progress-bar__discovered"><em className="progress-bar__paved-roads" style={{ width: `${segmentWidth('paved-road')}%` }} /><em className="progress-bar__paved-cycleways" style={{ width: `${segmentWidth('cycleway')}%` }} /><em className="progress-bar__unpaved" style={{ width: `${segmentWidth('unpaved-path')}%` }} /></i></div>
-      <div className="district-progress-readouts"><ItemDescription className="district-progress-description">{explored ? <><AnimatedProgressValue value={explored.lengthMeters} label={distance(explored.lengthMeters)} className="area-progress-distance" /><span className="district-progress-distance-separator"> / </span><AnimatedProgressValue value={ready ? ready.lengthMeters : null} label={ready ? distance(ready.lengthMeters) : '…'} className="area-progress-distance" /></> : ready ? <><AnimatedProgressValue value={null} label="—" className="area-progress-distance" /><span className="district-progress-distance-separator"> / </span><AnimatedProgressValue value={ready.lengthMeters} label={distance(ready.lengthMeters)} className="area-progress-distance" /></> : calculationError || error ? null : <span aria-hidden="true">&nbsp;</span>}</ItemDescription><div className="district-progress-percent"><AnimatedPercentage white value={percentage !== null && !inconsistent ? percentage : null} /></div></div>
+      <div className="district-progress-readouts"><ItemDescription className="district-progress-description"><AnimatedProgressValue value={explored && dataReady ? explored.lengthMeters : null} label={exploredLabel} className="area-progress-distance" /><span className="district-progress-distance-separator"> / </span><AnimatedProgressValue value={ready ? ready.lengthMeters : null} label={totalLabel} className="area-progress-distance" /></ItemDescription><div className="district-progress-percent"><AnimatedPercentage white value={percentage !== null && dataReady && !inconsistent ? percentage : null} loading={numbersLoading} /></div></div>
       <div role="status" className="area-progress-status">{calculationError && <span>Progress could not be calculated: {calculationError}</span>}{job?.status === 'failed' && <span>{job.error ?? 'Calculation failed. Retry to resume.'}</span>}{ready && ready.lengthMeters === 0 && 'No eligible roads in this map snapshot.'}{inconsistent && 'The saved discoveries and current map differ. Coverage needs reconciliation.'}{error && <span>{error}</span>}</div>
-      {showActions && !ready && <ItemActions className="area-progress-actions"><Button variant="secondary" size="small" disabled={pending || requesting} onClick={event => { event.stopPropagation(); void calculate(); }}>{requesting ? <Spinner /> : null}{job?.status === 'failed' ? 'Retry calculation' : 'Calculate coverage'}</Button></ItemActions>}
+      {showActions && area && !ready && <ItemActions className="area-progress-actions"><Button variant="secondary" size="small" disabled={pending || requesting} onClick={event => { event.stopPropagation(); void calculate(); }}>{requesting ? <Spinner /> : null}{job?.status === 'failed' ? 'Retry calculation' : 'Calculate coverage'}</Button></ItemActions>}
     </ItemContent>
   </Item>;
 }
 
-function useExploredAreaTotals(discoveries: DiscoveredSegment[], geometry: AreaRecord['area']['geometry'], areaKey: string, enabled: boolean) {
+function useExploredAreaTotals(discoveries: DiscoveredSegment[], geometry: AreaRecord['area']['geometry'] | null, areaKey: string, enabled: boolean) {
   const [result, setResult] = useState<{ key: string; areaKey: string; totals: AreaTotals } | null>(null);
   const [error, setError] = useState<{ key: string; message: string } | null>(null);
   const key = useMemo(() => enabled && geometry ? exploredTotalsKey(discoveries, areaKey, geometry) : null, [areaKey, discoveries, enabled, geometry]);

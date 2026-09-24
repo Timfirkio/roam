@@ -872,8 +872,6 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
   const [mapVisualReady, setMapVisualReady] = useState(false);
   const [startupDismissed, setStartupDismissed] = useState(false);
   const [startupCenterSettled, setStartupCenterSettled] = useState(false);
-  const [readyProgressAreaKey, setReadyProgressAreaKey] = useState<string | null>(null);
-  useEffect(() => { if (!initialSyncSettled) setReadyProgressAreaKey(null); }, [initialSyncSettled]);
   const [topOverlayInset, setTopOverlayInset] = useState(0);
   const measuredStartupViewportRef = useRef<string | null>(null);
   const [location, setLocation] = useState<LocationState>(DEFAULT_LOCATION);
@@ -1193,23 +1191,6 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
   }, []);
   const displayedArea = progressMode ? selectedProgressArea ?? currentArea : currentArea;
   const displayedParentAreaName = progressMode ? selectedParentAreaName : currentParentAreaName;
-  const displayedAreaKey = displayedArea ? `${displayedArea.area.id}:${displayedArea.area.boundaryVersion}` : null;
-  const showProgressCard = Boolean(displayedArea && discoveriesLoaded && initialSyncSettled && (
-    readyProgressAreaKey === displayedAreaKey || !displayedArea.area.geometry || !displayedArea.job || displayedArea.job.status === 'failed'
-  ));
-  useEffect(() => {
-    const geometry = displayedArea?.area.geometry;
-    const areaKey = displayedAreaKey;
-    if (!discoveriesLoaded || !initialSyncSettled || !geometry || !areaKey || displayedArea?.job?.status !== 'ready' || !displayedArea.job.totals || readyProgressAreaKey === areaKey) return;
-    let active = true;
-    const key = exploredTotalsKey(discoveries, areaKey, geometry);
-    // Prime the same cache read by AreaCoverageCard, so its first visible
-    // render already has both the network total and explored distance.
-    void calculateExploredAreaTotals(discoveries, geometry, key, areaKey)
-      .then(() => { if (active) setReadyProgressAreaKey(areaKey); })
-      .catch(() => { if (active) setReadyProgressAreaKey(areaKey); });
-    return () => { active = false; };
-  }, [discoveries, discoveriesLoaded, displayedArea, displayedAreaKey, initialSyncSettled, readyProgressAreaKey]);
   useEffect(() => {
     if (displayedArea?.job?.status !== 'queued' && displayedArea?.job?.status !== 'running') return;
     const controller = new AbortController();
@@ -1305,7 +1286,7 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
     }
   };
   return <section ref={mapViewRef} className={active ? "map-view" : "map-view map-view--inactive"} aria-hidden={!active}><MapCanvas mapRef={mapRef} viewportBottomInset={0} crosshairTopInset={topOverlayInset} showDiscovered={showDiscovered} showRegionProgress={boundariesVisible} progressMode={progressMode} is3D={is3D} showBuildings3D={showBuildings3D} showTerrain3D={showTerrain3D} sessionActive={sessionActive} playerLocation={playerLocation} followPlayer={!progressMode && followPlayer} activeRotationFollow={activeRotationFollow} discoveries={discoveries} onDiscoveries={onDiscoveries} onLocationChange={handleLocationChange} onBearingChange={handleBearingChange} onZoomChange={() => {}} onPitchChange={() => {}} onFollowPlayerChange={handleFollowChange} onMapReady={onMapReady} onVisualReady={onVisualReady} />{!isFollowingPlayer && <div className="map-center-crosshair" style={{ top: topOverlayInset }} aria-hidden="true"><span /></div>}
-    <header ref={mapHeaderRef} className="map-header"><div className="map-top-right"><div ref={progressCardRef} className="location-summary map-ui-surface">{showProgressCard && displayedArea ? <AreaCoverageCard record={displayedArea} discoveries={discoveries} onUpdate={updateCurrentArea} onExplored={ignoreMapAreaExplored} parentAreaName={displayedParentAreaName ?? undefined} reserveParentArea showActions={false} className="min-h-0 border-0 bg-transparent p-0" /> : <div className="location-summary-skeleton" role="status"><span className="sr-only">Loading area progress</span><span className="location-summary-skeleton__parent" aria-hidden="true" /><span className="location-summary-skeleton__title" aria-hidden="true" /><span className="location-summary-skeleton__bar" aria-hidden="true" /><span className="location-summary-skeleton__readout" aria-hidden="true" /></div>}</div><div className="map-top-actions"><div className={`map-compass${compassVisible ? ' map-compass--visible' : ''}`} aria-hidden={!compassVisible}><ShadcnButton variant="secondary" size="icon" className="map-ui-surface" aria-label="Reset compass north" tabIndex={compassVisible ? 0 : -1} onClick={resetCompass}><span className="compass-rotor" style={{ transform: `rotate(${-bearing}deg)` }}><i className="compass-needle"><b className="compass-north">▲</b><b className="compass-south">▼</b></i></span></ShadcnButton></div></div></div></header>
+    <header ref={mapHeaderRef} className="map-header"><div className="map-top-right"><div ref={progressCardRef} className="location-summary map-ui-surface"><AreaCoverageCard record={displayedArea} discoveries={discoveries} dataReady={discoveriesLoaded && initialSyncSettled} onUpdate={updateCurrentArea} onExplored={ignoreMapAreaExplored} parentAreaName={displayedParentAreaName ?? undefined} reserveParentArea showActions={false} className="min-h-0 border-0 bg-transparent p-0" /></div><div className="map-top-actions"><div className={`map-compass${compassVisible ? ' map-compass--visible' : ''}`} aria-hidden={!compassVisible}><ShadcnButton variant="secondary" size="icon" className="map-ui-surface" aria-label="Reset compass north" tabIndex={compassVisible ? 0 : -1} onClick={resetCompass}><span className="compass-rotor" style={{ transform: `rotate(${-bearing}deg)` }}><i className="compass-needle"><b className="compass-north">▲</b><b className="compass-south">▼</b></i></span></ShadcnButton></div></div></div></header>
     <div className="map-controls" style={{ bottom: sessionDockOffset }} aria-label="Map controls"><ShadcnButton variant="secondary" size="icon" className="map-ui-surface layers-control" aria-label={`Open layers panel, ${activeLayerCount} active`} aria-expanded={debugOpen} onClick={() => setDebugOpen(!debugOpen)}><Stack weight="regular" aria-hidden="true" />{activeLayerCount > 0 && <span className="layers-control__count" aria-hidden="true">{activeLayerCount}</span>}</ShadcnButton><ShadcnButton variant="secondary" size="icon" className={locationControlClass} aria-label={locationControlLabel} aria-pressed={isFollowingPlayer} onClick={centerOnPlayer}><LocationIcon weight={activeRotationFollow ? 'fill' : 'regular'} aria-hidden="true" /></ShadcnButton><ShadcnButton variant="secondary" size="icon" className="map-ui-surface map-mode-toggle" aria-label={`Switch to ${is3D ? '2D' : '3D'} view`} onClick={() => setIs3D(!is3D)}>{is3D ? '3D' : '2D'}</ShadcnButton></div>{!sessionActive && <ShadcnButton variant="secondary" className="record-fab map-ui-surface" onClick={() => onSessionChange(true)}><Path weight="regular" aria-hidden="true" />Record</ShadcnButton>}
     <ShadcnButton variant="secondary" size="medium" className="progress-mode-toggle map-ui-surface rounded-pill" aria-pressed={progressMode} onClick={toggleProgressMode}><Percent weight="regular" aria-hidden="true" />Progress</ShadcnButton>
     {showDebugMenu && debugOpen && <div className="map-layers-panel map-ui-surface" style={{ bottom: sessionDockOffset }}><p>LAYERS</p><label><span><strong>Region boundaries</strong><small>Administrative area outlines</small></span><Switch checked={boundariesVisible} disabled={progressMode} onCheckedChange={setShowRegionProgress} aria-label="Region boundaries" /></label><label><span><strong>3D buildings</strong><small>Building massing</small></span><Switch checked={showBuildings3D} onCheckedChange={setShowBuildings3D} aria-label="3D buildings" /></label><label><span><strong>3D terrain</strong><small>Elevation and shading</small></span><Switch checked={showTerrain3D} onCheckedChange={setShowTerrain3D} aria-label="3D terrain" /></label></div>}
@@ -1853,11 +1834,16 @@ function App() {
     loadDiscoveredSegments().then(async loaded => {
       if (accountSyncAppliedRef.current) return;
       let synchronized = assignDiscoveryRegions(loaded);
-      if (!localStorage.getItem(DISCOVERY_ROAD_TYPE_MIGRATION_KEY)) {
+      const needsRoadTypeMigration = !localStorage.getItem(DISCOVERY_ROAD_TYPE_MIGRATION_KEY);
+      if (needsRoadTypeMigration) {
         synchronized = assignDiscoveryRegions(await synchronizeDiscoveredSegmentRoadTypes(synchronized));
-        localStorage.setItem(DISCOVERY_ROAD_TYPE_MIGRATION_KEY, 'done');
       }
-      await saveDiscoveredSegments(synchronized);
+      // Avoid rewriting every discovered segment on each startup. Persist only
+      // when migration or region assignment actually changed stored records.
+      if (needsRoadTypeMigration || synchronized.some((segment, index) => segment !== loaded[index])) {
+        await saveDiscoveredSegments(synchronized);
+      }
+      if (needsRoadTypeMigration) localStorage.setItem(DISCOVERY_ROAD_TYPE_MIGRATION_KEY, 'done');
       discoveriesRef.current = synchronized;
       setDiscoveries(synchronized);
     }).catch(() => {}).finally(() => setDiscoveriesLoaded(true));

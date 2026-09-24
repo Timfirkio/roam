@@ -335,12 +335,6 @@ aside.rounded-control.border-l-2.border-accent { display: none; }
 .location-summary { display: grid; width: 100%; max-width: none; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: calc(var(--spacing) * 4); text-align: left; }
 .location-summary { display: block; padding: calc(var(--spacing) * 3) calc(var(--spacing) * 4); border-radius: var(--radius-control); }
 .location-summary { min-height: 7rem; }
-.location-summary-skeleton { display: flex; min-height: calc(7rem - 2px - var(--spacing) * 6); flex-direction: column; justify-content: center; gap: calc(var(--spacing) * 2); }
-.location-summary-skeleton > span:not(.sr-only) { display: block; border-radius: var(--radius-pill); background: var(--color-surface-interactive); }
-.location-summary-skeleton__parent { width: 28%; height: 0.5rem; }
-.location-summary-skeleton__title { width: 52%; height: 0.875rem; }
-.location-summary-skeleton__bar { width: 100%; height: 0.5rem; }
-.location-summary-skeleton__readout { width: 38%; height: 0.75rem; }
 .district-progress-content { display: flex; min-width: 0; width: 100%; flex-direction: column; gap: calc(var(--spacing) * 0.5); }
 .district-progress-top { position: relative; display: flex; align-items: flex-start; justify-content: space-between; gap: calc(var(--spacing) * 4); }
 .district-progress-top--loading .district-progress-title { padding-right: calc(var(--spacing) * 6); }
