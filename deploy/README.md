@@ -68,8 +68,10 @@ import. It reserves 15 GB of disk, holds a host-wide lock, and runs one job at
 a time. The first job reads the Sweden PBF once but stores administrative
 boundaries only (levels 2–9); it does not import the national road network.
 Subsequent `next` jobs scan the local PBF with one län bounding box, trim roads
-to the actual administrative polygon, and calculate its municipality and
-level-9 totals using one worker.
+to the actual administrative polygon, and calculate that län's total plus its
+municipality and level-9 totals using one worker. The län total is measured
+directly against its boundary; summing municipality totals can count roads on
+shared borders twice.
 
 ```bash
 # Creates the nationwide boundary/search catalog and the 21-län manifest.
@@ -84,8 +86,15 @@ level-9 totals using one worker.
 
 Keep `data/sweden-latest.osm.pbf` between batches (about 0.8 GB) so counties
 can be clipped locally. Each temporary county extract is removed on completion.
-After every county is ready, queue levels 2–9 once to produce the final
-nationwide, län, and district totals.
+After deploying this change, backfill län totals for batches already marked
+ready without reimporting their roads:
+
+```bash
+docker compose --env-file .env.areas.production run --rm --no-deps area-api node scripts/backfill-sweden-lan-coverage.mjs
+```
+
+After every county is ready, queue the country-level total once to produce the
+final nationwide coverage.
 
 To schedule one batch nightly after the bootstrap completes:
 

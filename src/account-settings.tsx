@@ -4,7 +4,7 @@ import { EnvelopeSimple, GoogleLogo } from '@phosphor-icons/react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { supabase } from './supabase';
-import { syncAccountProgress } from './cloud-sync';
+import { runAccountSync } from './cloud-sync';
 import { loadDiscoveredSegments } from './discovery-store';
 import { loadSessions } from './session-store';
 import { Capacitor } from '@capacitor/core';
@@ -32,11 +32,8 @@ export function AccountSettings() {
     setMessage('');
     setSyncProgress('Preparing local progress…');
     try {
-      const result = await syncAccountProgress(account.id, progress => setSyncProgress(progress.label));
-      window.dispatchEvent(new CustomEvent('roam:account-sync-complete', { detail: result }));
-      const completedAt = new Date().toISOString();
-      localStorage.setItem(LAST_ACCOUNT_SYNC_STORAGE_KEY, completedAt);
-      setLastSyncedAt(completedAt);
+      const result = await runAccountSync(account.id, progress => setSyncProgress(progress.label));
+      setLastSyncedAt(localStorage.getItem(LAST_ACCOUNT_SYNC_STORAGE_KEY));
       setMessage(`Synced ${result.discoveries.length} discoveries and ${result.sessions.length} rides.`);
     } catch (error) {
       const supabaseError = error && typeof error === 'object' ? error as { message?: unknown; details?: unknown } : null;
@@ -51,6 +48,11 @@ export function AccountSettings() {
   };
 
   useEffect(() => { void Promise.all([loadDiscoveredSegments(), loadSessions()]).finally(() => setLocalReady(true)); }, []);
+  useEffect(() => {
+    const onSync = () => setLastSyncedAt(localStorage.getItem(LAST_ACCOUNT_SYNC_STORAGE_KEY));
+    window.addEventListener('roam:account-sync-complete', onSync);
+    return () => window.removeEventListener('roam:account-sync-complete', onSync);
+  }, []);
   useEffect(() => {
     if (!client) return;
     void client.auth.getUser().then(({ data }) => setUser(data.user));
@@ -125,7 +127,7 @@ export function AccountSettings() {
       <p className="roam-overline -mx-4 border-b border-border-muted px-4 py-3 text-accent">Account</p>
       {user ? <div className="space-y-2 py-4">
         <p className="text-body text-text-muted">Signed in as {user.email}</p>
-        {lastSyncedAt && <p className="text-body text-text-muted">Last synced {new Date(lastSyncedAt).toLocaleString()}</p>}
+        <p className="text-body text-text-muted">Syncs automatically while this app is open and online. {lastSyncedAt && `Last synced ${new Date(lastSyncedAt).toLocaleString()}.`}</p>
         <Button className="w-full" variant="secondary" disabled={busy || !localReady} onClick={() => void sync(user)}>{busy ? <><Spinner />{syncProgress ?? 'Syncing progress…'}</> : 'Sync now'}</Button>
         <Button className="w-full" variant="ghost" disabled={busy} onClick={() => void client.auth.signOut()}>Sign out</Button>
       </div> : <div className="space-y-2 py-4">

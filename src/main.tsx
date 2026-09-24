@@ -42,7 +42,7 @@ import { AlertDialog, AlertDialogContent, AlertDialogDescription, AlertDialogTit
 import { Toaster, toastManager } from '@/components/ui/toast';
 import { useScreenWakeLock } from './use-screen-wake-lock';
 import { AccountSettings } from './account-settings';
-import { syncAccountProgress } from './cloud-sync';
+import { runAccountSync } from './cloud-sync';
 import { supabase } from './supabase';
 import { ArrowsClockwise, CheckCircle, CrosshairSimple, Cube, DotsThreeVertical, DownloadSimple, Gear, Gps, GpsFix, LineSegments, MapTrifold, NavigationArrow, Path, PencilSimple, Percent, Stack, Trash, UploadSimple } from '@phosphor-icons/react';
 
@@ -618,7 +618,7 @@ function loadCachedMapCenter(): [number, number] | null {
   }
 }
 
-function MapCanvas({ mapRef, viewportBottomInset, crosshairTopInset, showDiscovered, showRegionProgress, progressMode, is3D, showBuildings3D, showTerrain3D, sessionActive, playerLocation, followPlayer, activeRotationFollow, discoveries, onDiscoveries, onLocationChange, onBearingChange, onZoomChange, onPitchChange, onFollowPlayerChange, onMapReady }: { mapRef: React.MutableRefObject<Map | null>; viewportBottomInset: number; crosshairTopInset: number; showDiscovered: boolean; showRegionProgress: boolean; progressMode: boolean; is3D: boolean; showBuildings3D: boolean; showTerrain3D: boolean; sessionActive: boolean; playerLocation: PlayerLocation | null; followPlayer: boolean; activeRotationFollow: boolean; discoveries: DiscoveredSegment[]; onDiscoveries: (segments: DiscoveredSegment[]) => void; onLocationChange: (lng: number, lat: number, locality?: { city?: string; region?: string }) => void; onBearingChange: (bearing: number) => void; onZoomChange: (zoom: number) => void; onPitchChange: (pitch: number) => void; onFollowPlayerChange: (following: boolean) => void; onMapReady: () => void }) {
+function MapCanvas({ mapRef, viewportBottomInset, crosshairTopInset, showDiscovered, showRegionProgress, progressMode, is3D, showBuildings3D, showTerrain3D, sessionActive, playerLocation, followPlayer, activeRotationFollow, discoveries, onDiscoveries, onLocationChange, onBearingChange, onZoomChange, onPitchChange, onFollowPlayerChange, onMapReady, startupReady, onVisualReady }: { mapRef: React.MutableRefObject<Map | null>; viewportBottomInset: number; crosshairTopInset: number; showDiscovered: boolean; showRegionProgress: boolean; progressMode: boolean; is3D: boolean; showBuildings3D: boolean; showTerrain3D: boolean; sessionActive: boolean; playerLocation: PlayerLocation | null; followPlayer: boolean; activeRotationFollow: boolean; discoveries: DiscoveredSegment[]; onDiscoveries: (segments: DiscoveredSegment[]) => void; onLocationChange: (lng: number, lat: number, locality?: { city?: string; region?: string }) => void; onBearingChange: (bearing: number) => void; onZoomChange: (zoom: number) => void; onPitchChange: (pitch: number) => void; onFollowPlayerChange: (following: boolean) => void; onMapReady: () => void; startupReady: boolean; onVisualReady: () => void }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const playerMarkerRef = useRef<maplibregl.Marker | null>(null);
   const lastMarkerLocationRef = useRef<PlayerLocation | null>(null);
@@ -715,6 +715,17 @@ function MapCanvas({ mapRef, viewportBottomInset, crosshairTopInset, showDiscove
     const source = mapRef.current.getSource(DISCOVERED_SOURCE) as maplibregl.GeoJSONSource | undefined;
     source?.setData({ type: 'FeatureCollection', features: discoveries.map(segment => ({ type: 'Feature', properties: { roadType: segment.roadType }, geometry: segment.geometry })) } as any);
   }, [discoveries, mapReady, mapRef]);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!startupReady || !mapReady || !map) return;
+    let done = false;
+    const reveal = () => { if (!done) onVisualReady(); };
+    map.once('idle', reveal);
+    if (map.loaded()) requestAnimationFrame(reveal);
+    // A missing tile must not leave the app behind the loading screen forever.
+    const fallback = window.setTimeout(reveal, 5000);
+    return () => { done = true; map.off('idle', reveal); clearTimeout(fallback); };
+  }, [startupReady, mapReady, mapRef, discoveries, playerLocation, onVisualReady]);
   useEffect(() => {
     if (!mapReady || !mapRef.current) return;
     const source = mapRef.current.getSource(PLAYER_DISCOVERY_SOURCE) as maplibregl.GeoJSONSource | undefined;
@@ -825,17 +836,18 @@ function MapCanvas({ mapRef, viewportBottomInset, crosshairTopInset, showDiscove
     }
   }, [activeRotationFollow, crosshairTopInset, followPlayer, is3D, mapReady, mapRef, playerLocation, sessionActive]);
   return <div className="map-canvas" style={{ bottom: viewportBottomInset }}><div ref={containerRef} className={mapReady ? 'maplibre-container maplibre-container--ready' : 'maplibre-container'} /><div className={is3D ? 'map-depth-fade' : 'map-depth-fade map-depth-fade--hidden'} aria-hidden="true" />
-    {!mapReady && <div className="map-loading">LOADING ROAD DATA…</div>}
   </div>;
 }
 
-function MapView({ onRequestLocation, sessionActive, onSessionChange, activityDrawerHeight, showDiscovered, showRegionProgress, setShowRegionProgress, is3D, setIs3D, showBuildings3D, setShowBuildings3D, showTerrain3D, setShowTerrain3D, showDebugMenu, playerLocation, discoveries, onDiscoveries }: { onRequestLocation: () => void; sessionActive: boolean; onSessionChange: (active: boolean) => void; activityDrawerHeight: number; showDiscovered: boolean; showRegionProgress: boolean; setShowRegionProgress: (value: boolean) => void; is3D: boolean; setIs3D: (value: boolean) => void; showBuildings3D: boolean; setShowBuildings3D: (value: boolean) => void; showTerrain3D: boolean; setShowTerrain3D: (value: boolean) => void; showDebugMenu: boolean; playerLocation: PlayerLocation | null; discoveries: DiscoveredSegment[]; onDiscoveries: (segments: DiscoveredSegment[]) => void }) {
+function MapView({ active, onRequestLocation, sessionActive, onSessionChange, activityDrawerHeight, showDiscovered, showRegionProgress, setShowRegionProgress, is3D, setIs3D, showBuildings3D, setShowBuildings3D, showTerrain3D, setShowTerrain3D, showDebugMenu, playerLocation, discoveries, onDiscoveries, startupReady }: { active: boolean; onRequestLocation: () => void; sessionActive: boolean; onSessionChange: (active: boolean) => void; activityDrawerHeight: number; showDiscovered: boolean; showRegionProgress: boolean; setShowRegionProgress: (value: boolean) => void; is3D: boolean; setIs3D: (value: boolean) => void; showBuildings3D: boolean; setShowBuildings3D: (value: boolean) => void; showTerrain3D: boolean; setShowTerrain3D: (value: boolean) => void; showDebugMenu: boolean; playerLocation: PlayerLocation | null; discoveries: DiscoveredSegment[]; onDiscoveries: (segments: DiscoveredSegment[]) => void; startupReady: boolean }) {
   const [bearing, setBearing] = useState(0);
   const [followPlayer, setFollowPlayer] = useState(true);
   const [activeRotationFollow, setActiveRotationFollow] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
   const [progressMode, setProgressMode] = useState(false);
   const [progressMapReady, setProgressMapReady] = useState(false);
+  const [mapVisualReady, setMapVisualReady] = useState(false);
+  const [startupDismissed, setStartupDismissed] = useState(false);
   const [topOverlayInset, setTopOverlayInset] = useState(0);
   const [location, setLocation] = useState<LocationState>(DEFAULT_LOCATION);
   const [currentArea, setCurrentArea] = useState<AreaRecord | null>(null);
@@ -855,6 +867,17 @@ function MapView({ onRequestLocation, sessionActive, onSessionChange, activityDr
   const currentAreaIdRef = useRef<string | null>(null);
   const wakeLockStatus = useScreenWakeLock(sessionActive);
   const onMapReady = useCallback(() => setProgressMapReady(true), []);
+  const onVisualReady = useCallback(() => setMapVisualReady(true), []);
+  useEffect(() => {
+    if (!mapVisualReady) return;
+    const timer = window.setTimeout(() => setStartupDismissed(true), 800);
+    return () => clearTimeout(timer);
+  }, [mapVisualReady]);
+  useEffect(() => {
+    if (!active) return;
+    const frame = requestAnimationFrame(() => mapRef.current?.resize());
+    return () => cancelAnimationFrame(frame);
+  }, [active]);
   useEffect(() => { if (!playerLocation && !sessionActive) setActiveRotationFollow(false); }, [playerLocation, sessionActive]);
   useEffect(() => {
     if (previousSessionActiveRef.current === sessionActive) return;
@@ -1222,11 +1245,12 @@ function MapView({ onRequestLocation, sessionActive, onSessionChange, activityDr
       progressAreaControllerRef.current?.abort();
     }
   };
-  return <section ref={mapViewRef} className="map-view"><MapCanvas mapRef={mapRef} viewportBottomInset={0} crosshairTopInset={topOverlayInset} showDiscovered={showDiscovered} showRegionProgress={boundariesVisible} progressMode={progressMode} is3D={is3D} showBuildings3D={showBuildings3D} showTerrain3D={showTerrain3D} sessionActive={sessionActive} playerLocation={playerLocation} followPlayer={!progressMode && followPlayer} activeRotationFollow={activeRotationFollow} discoveries={discoveries} onDiscoveries={onDiscoveries} onLocationChange={handleLocationChange} onBearingChange={handleBearingChange} onZoomChange={() => {}} onPitchChange={() => {}} onFollowPlayerChange={handleFollowChange} onMapReady={onMapReady} />{!isFollowingPlayer && <div className="map-center-crosshair" style={{ top: topOverlayInset }} aria-hidden="true"><span /></div>}
+  return <section ref={mapViewRef} className={active ? "map-view" : "map-view map-view--inactive"} aria-hidden={!active}><MapCanvas mapRef={mapRef} viewportBottomInset={0} crosshairTopInset={topOverlayInset} showDiscovered={showDiscovered} showRegionProgress={boundariesVisible} progressMode={progressMode} is3D={is3D} showBuildings3D={showBuildings3D} showTerrain3D={showTerrain3D} sessionActive={sessionActive} playerLocation={playerLocation} followPlayer={!progressMode && followPlayer} activeRotationFollow={activeRotationFollow} discoveries={discoveries} onDiscoveries={onDiscoveries} onLocationChange={handleLocationChange} onBearingChange={handleBearingChange} onZoomChange={() => {}} onPitchChange={() => {}} onFollowPlayerChange={handleFollowChange} onMapReady={onMapReady} startupReady={startupReady} onVisualReady={onVisualReady} />{!isFollowingPlayer && <div className="map-center-crosshair" style={{ top: topOverlayInset }} aria-hidden="true"><span /></div>}
     <header ref={mapHeaderRef} className="map-header"><div className="map-top-right">{displayedArea && <div ref={progressCardRef} className="location-summary map-ui-surface"><AreaCoverageCard record={displayedArea} discoveries={discoveries} onUpdate={updateCurrentArea} onExplored={ignoreMapAreaExplored} parentAreaName={displayedParentAreaName ?? undefined} reserveParentArea showActions={false} className="min-h-0 border-0 bg-transparent p-0" /></div>}<div className="map-top-actions"><div className={`map-compass${compassVisible ? ' map-compass--visible' : ''}`} aria-hidden={!compassVisible}><ShadcnButton variant="secondary" size="icon" className="map-ui-surface" aria-label="Reset compass north" tabIndex={compassVisible ? 0 : -1} onClick={resetCompass}><span className="compass-rotor" style={{ transform: `rotate(${-bearing}deg)` }}><i className="compass-needle"><b className="compass-north">▲</b><b className="compass-south">▼</b></i></span></ShadcnButton></div></div></div></header>
     <div className="map-controls" style={{ bottom: sessionDockOffset }} aria-label="Map controls"><ShadcnButton variant="secondary" size="icon" className="map-ui-surface layers-control" aria-label={`Open layers panel, ${activeLayerCount} active`} aria-expanded={debugOpen} onClick={() => setDebugOpen(!debugOpen)}><Stack weight="regular" aria-hidden="true" />{activeLayerCount > 0 && <span className="layers-control__count" aria-hidden="true">{activeLayerCount}</span>}</ShadcnButton><ShadcnButton variant="secondary" size="icon" className={locationControlClass} aria-label={locationControlLabel} aria-pressed={isFollowingPlayer} onClick={centerOnPlayer}><LocationIcon weight={activeRotationFollow ? 'fill' : 'regular'} aria-hidden="true" /></ShadcnButton><ShadcnButton variant="secondary" size="icon" className="map-ui-surface map-mode-toggle" aria-label={`Switch to ${is3D ? '2D' : '3D'} view`} onClick={() => setIs3D(!is3D)}>{is3D ? '3D' : '2D'}</ShadcnButton></div>{!sessionActive && <ShadcnButton variant="secondary" className="record-fab map-ui-surface" onClick={() => onSessionChange(true)}><LineSegments weight="regular" aria-hidden="true" />Record</ShadcnButton>}
     <ShadcnButton variant="secondary" size="medium" className="progress-mode-toggle map-ui-surface rounded-pill" aria-pressed={progressMode} onClick={toggleProgressMode}><Percent weight="regular" aria-hidden="true" />Progress</ShadcnButton>
     {showDebugMenu && debugOpen && <div className="map-layers-panel map-ui-surface" style={{ bottom: sessionDockOffset }}><p>LAYERS</p><label><span><strong>Region boundaries</strong><small>Administrative area outlines</small></span><Switch checked={boundariesVisible} disabled={progressMode} onCheckedChange={setShowRegionProgress} aria-label="Region boundaries" /></label><label><span><strong>3D buildings</strong><small>Building massing</small></span><Switch checked={showBuildings3D} onCheckedChange={setShowBuildings3D} aria-label="3D buildings" /></label><label><span><strong>3D terrain</strong><small>Elevation and shading</small></span><Switch checked={showTerrain3D} onCheckedChange={setShowTerrain3D} aria-label="3D terrain" /></label></div>}
+    {!startupDismissed && <div className={`map-startup${mapVisualReady ? ' map-startup--revealing' : ''}`} role="status" aria-label={mapVisualReady ? 'Map ready' : 'Loading map'}><div className="map-startup__mark" aria-hidden="true" /></div>}
   </section>;
 }
 
@@ -1634,6 +1658,7 @@ function App() {
     return stored === 'granted' || stored === 'denied' ? stored : 'prompt';
   });
   const [gpsEnabled, setGpsEnabled] = useState(() => localStorage.getItem(GPS_ENABLED_STORAGE_KEY) === 'true');
+  const [gpsWaitExpired, setGpsWaitExpired] = useState(false);
   const [sessionActive, setSessionActive] = useState(false);
   const sessionActiveRef = useRef(false);
   const sessionLastPositionRef = useRef<Pick<NavigationState, 'lng' | 'lat'> | null>(null);
@@ -1651,8 +1676,11 @@ function App() {
   const [playerLocation, setPlayerLocation] = useState<PlayerLocation | null>(null);
   const navigationRef = useRef<NavigationState | null>(null);
   const [discoveries, setDiscoveries] = useState<DiscoveredSegment[]>([]);
+  const [discoveriesLoaded, setDiscoveriesLoaded] = useState(false);
   const discoveriesRef = useRef<DiscoveredSegment[]>([]);
   const [sessions, setSessions] = useState<RideSession[]>([]);
+  const [sessionsLoaded, setSessionsLoaded] = useState(false);
+  const [initialSyncSettled, setInitialSyncSettled] = useState(!supabase);
   const sessionsRef = useRef<RideSession[]>([]);
   const accountSyncAppliedRef = useRef(false);
   const thumbnailWorkerRef = useRef(false);
@@ -1661,6 +1689,10 @@ function App() {
   const [thumbnailWake, setThumbnailWake] = useState(0);
   const gpsWatchRef = useRef<CallbackID | null>(null);
   const lastReconciledPointTimestampRef = useRef(0);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setGpsWaitExpired(true), 4000);
+    return () => clearTimeout(timer);
+  }, []);
   useEffect(() => {
     if (sessionActive) { setActivityDrawerVisible(true); return; }
     if (!activityDrawerVisible) return;
@@ -1695,7 +1727,7 @@ function App() {
     const additions = assignDiscoveryRegions(segments).filter(segment => !known.has(segment.id));
     if (!additions.length) return [];
     discoveriesRef.current = [...discoveriesRef.current, ...additions];
-    void saveDiscoveredSegments(additions).catch(() => {});
+    void saveDiscoveredSegments(additions).then(() => window.dispatchEvent(new Event('roam:local-progress-changed'))).catch(() => {});
     setDiscoveries(discoveriesRef.current);
     if (countTowardSession && sessionActiveRef.current) {
       sessionDiscoveredMetersRef.current += additions.reduce((total, segment) => total + segment.lengthMeters, 0);
@@ -1750,56 +1782,79 @@ function App() {
       await saveDiscoveredSegments(synchronized);
       discoveriesRef.current = synchronized;
       setDiscoveries(synchronized);
-    }).catch(() => {});
+    }).catch(() => {}).finally(() => setDiscoveriesLoaded(true));
   }, []);
   useEffect(() => {
     loadSessions().then(loaded => {
       if (accountSyncAppliedRef.current) return;
       sessionsRef.current = loaded;
       setSessions(loaded);
-    }).catch(() => {});
+    }).catch(() => {}).finally(() => setSessionsLoaded(true));
   }, []);
   useEffect(() => { sessionsRef.current = sessions; }, [sessions]);
   useEffect(() => {
-    if (!supabase) return;
+    if (!supabase || !discoveriesLoaded || !sessionsLoaded) return;
     let disposed = false;
-    let syncingUserId: string | null = null;
-    let syncedUserId: string | null = null;
-    const syncSignedInUser = async (user: { id: string }) => {
-      if (disposed || syncingUserId === user.id || syncedUserId === user.id) return;
-      syncingUserId = user.id;
-      try {
-        const result = await syncAccountProgress(user.id);
-        if (disposed) return;
-        syncedUserId = user.id;
-        accountSyncAppliedRef.current = true;
-        discoveriesRef.current = result.discoveries;
-        sessionsRef.current = result.sessions;
-        setDiscoveries(result.discoveries);
-        setSessions(result.sessions);
-        window.dispatchEvent(new CustomEvent('roam:account-sync-complete', { detail: result }));
-      } catch {
-        // The account card exposes manual retry and detailed errors when settings is opened.
-      } finally {
-        if (syncingUserId === user.id) syncingUserId = null;
-      }
-    };
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'SIGNED_OUT') {
-        syncingUserId = null;
-        syncedUserId = null;
+    let userId: string | null = null;
+    let running = false;
+    let queued = false;
+    let firstPass = true;
+    let showStatusOnNextSync = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const sync = async () => {
+      if (disposed || !userId || !navigator.onLine || document.visibilityState === 'hidden') {
+        if (!userId || !navigator.onLine) setInitialSyncSettled(true);
         return;
       }
-      if ((event === 'INITIAL_SESSION' || event === 'SIGNED_IN') && session?.user) void syncSignedInUser(session.user);
-    });
-    void supabase.auth.getUser().then(({ data }) => {
-      if (data.user) void syncSignedInUser(data.user);
-    });
-    return () => {
-      disposed = true;
-      subscription.unsubscribe();
+      if (running) { queued = true; return; }
+      running = true;
+      const showStatus = showStatusOnNextSync && !firstPass;
+      showStatusOnNextSync = false;
+      const accountId = userId;
+      const previousCount = discoveriesRef.current.length;
+      let statusToast: string | undefined;
+      let newProgress = false;
+      let failed = false;
+      const statusTimer = showStatus ? window.setTimeout(() => {
+        statusToast = toastManager.add({ title: 'Checking your progress', description: 'Loading updates from your other devices…', timeout: 0, data: { kind: 'loading' } });
+      }, 600) : null;
+      try {
+        const result = await runAccountSync(accountId);
+        newProgress = result.discoveries.length > previousCount;
+      } catch {
+        failed = true;
+        // Offline and server failures are retried on the next trigger.
+      } finally {
+        if (statusTimer !== null) clearTimeout(statusTimer);
+        if (!disposed && statusToast) toastManager.update(statusToast, { title: failed ? 'Sync paused' : newProgress ? 'New progress loaded' : 'Map is up to date', description: failed ? 'Your progress is saved here. We’ll try again when the app reconnects.' : newProgress ? 'Your map includes updates from your other devices.' : 'Your discoveries and rides are current.', timeout: 5000, data: { kind: failed ? 'error' : 'success' } });
+        else if (!disposed && newProgress && !firstPass) toastManager.add({ title: 'New progress loaded', description: 'Your map includes updates from your other devices.', data: { kind: 'success' } });
+        running = false;
+        firstPass = false;
+        if (!disposed) setInitialSyncSettled(true);
+        if (queued) { queued = false; schedule(500); }
+      }
     };
-  }, []);
+    const schedule = (delay = 1500, showStatus = false) => {
+      showStatusOnNextSync ||= showStatus;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => { timer = null; void sync(); }, delay);
+    };
+    const onAuth = (id: string | null) => {
+      userId = id;
+      if (id) schedule(0);
+      else setInitialSyncSettled(true);
+    };
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => onAuth(session?.user.id ?? null));
+    void supabase.auth.getUser().then(({ data }) => onAuth(data.user?.id ?? null)).catch(() => setInitialSyncSettled(true));
+    const onVisible = () => { if (document.visibilityState === 'visible') schedule(0, true); };
+    const onChanged = () => schedule();
+    const onOnline = () => schedule(0, true);
+    window.addEventListener('online', onOnline);
+    window.addEventListener('roam:local-progress-changed', onChanged);
+    document.addEventListener('visibilitychange', onVisible);
+    const interval = window.setInterval(() => schedule(0), 60_000);
+    return () => { disposed = true; if (timer) clearTimeout(timer); clearInterval(interval); subscription.unsubscribe(); window.removeEventListener('online', onOnline); window.removeEventListener('roam:local-progress-changed', onChanged); document.removeEventListener('visibilitychange', onVisible); };
+  }, [discoveriesLoaded, sessionsLoaded]);
   useEffect(() => {
     const applyAccountSync = (event: Event) => {
       const result = (event as CustomEvent<{ discoveries: DiscoveredSegment[]; sessions: RideSession[] }>).detail;
@@ -2036,6 +2091,7 @@ function App() {
         const session: RideSession = { id: crypto.randomUUID(), title, districtNames, startedAt, endedAt, durationSeconds, distanceMeters: sessionDistanceRef.current, newDistanceMeters: sessionDiscoveredMetersRef.current + reconciledMeters, points };
         await saveSession(session);
         setSessions(current => [session, ...current]);
+        window.dispatchEvent(new Event('roam:local-progress-changed'));
       };
       void finishSession().catch(() => {});
     }
@@ -2056,7 +2112,10 @@ function App() {
   };
   const handleSessionRename = (session: RideSession, title: string) => {
     const updated = { ...session, title };
-    void saveSession(updated).then(() => setSessions(current => current.map(candidate => candidate.id === updated.id ? updated : candidate))).catch(() => {});
+    void saveSession(updated).then(() => {
+      setSessions(current => current.map(candidate => candidate.id === updated.id ? updated : candidate));
+      window.dispatchEvent(new Event('roam:local-progress-changed'));
+    }).catch(() => {});
   };
   const handleSessionDelete = (session: RideSession) => {
     void deleteSession(session.id).then(() => setSessions(current => current.filter(candidate => candidate.id !== session.id))).catch(() => {});
@@ -2086,6 +2145,7 @@ function App() {
     };
     await saveSession(session);
     setSessions(current => [session, ...current].sort((a, b) => b.startedAt - a.startedAt));
+    window.dispatchEvent(new Event('roam:local-progress-changed'));
     return mapSyncFailed ? `Imported ${formatSessionTitle(title)}. Its map sync can be retried from this menu.` : `Imported ${formatSessionTitle(title)} and synced its route to the map.`;
   };
   const handleSyncRidesToMap = async () => {
@@ -2110,7 +2170,7 @@ function App() {
   const handleDiscoveries = (newSegments: DiscoveredSegment[]) => {
     applyDiscoveredSegments(newSegments);
   };
-  return <main className="app-shell" style={{ '--activity-drawer-height': `${activityDrawerHeight}px` } as CSSProperties}><div className="app-content">{view === 'map' && <MapView onRequestLocation={() => handleGpsChange(true)} sessionActive={sessionActive} onSessionChange={handleSessionChange} activityDrawerHeight={activityDrawerHeight} showDiscovered={showDiscovered} showRegionProgress={showRegionProgress} setShowRegionProgress={setShowRegionProgress} is3D={is3D} setIs3D={setIs3D} showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} showDebugMenu={showDebugMenu} playerLocation={playerLocation} discoveries={discoveries} onDiscoveries={handleDiscoveries} />}{view === 'sessions' && <SessionsView sessions={sessions} onExport={handleGpxExport} onRename={handleSessionRename} onDelete={handleSessionDelete} onImportGpx={handleGpxImport} onSyncRides={handleSyncRidesToMap} />}{view === 'settings' && <SettingsView showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} showDebugMenu={showDebugMenu} setShowDebugMenu={setShowDebugMenu} gpsEnabled={gpsEnabled} gpsPermission={gpsPermission} onGpsChange={handleGpsChange} onOpenDesignSystem={() => setView('design-system')} />}{view === 'design-system' && <DesignSystemView onBack={() => setView('settings')} />}</div>{activityDrawerVisible && <div ref={activityDrawerRef} className={`activity-drawer ${sessionActive ? 'activity-drawer--open' : 'activity-drawer--closing'}`}><div className="activity-drawer-copy"><span className="roam-overline-sm activity-drawer-title">Active session</span><div className="activity-drawer-stats font-mono"><span className="activity-drawer-timer">{formatSessionTime(sessionElapsedSeconds)}</span><span className="activity-drawer-separator" aria-hidden="true">·</span><span className="activity-drawer-distance">{formatDistance(sessionDistanceMeters)}</span><span className="activity-drawer-new-distance">({formatDistance(sessionDiscoveredMeters)} new)</span></div></div>{sessionActive && <ShadcnButton variant="destructive" className="hover:!border-danger-500 active:!border-danger-500" onClick={() => handleSessionChange(false)}>Stop</ShadcnButton>}</div>}<PrimaryNavigation view={view} onChange={setView} /><Toaster /></main>;
+  return <main className="app-shell" style={{ '--activity-drawer-height': `${activityDrawerHeight}px` } as CSSProperties}><div className="app-content"><MapView active={view === 'map'} onRequestLocation={() => handleGpsChange(true)} sessionActive={sessionActive} onSessionChange={handleSessionChange} activityDrawerHeight={activityDrawerHeight} showDiscovered={showDiscovered} showRegionProgress={showRegionProgress} setShowRegionProgress={setShowRegionProgress} is3D={is3D} setIs3D={setIs3D} showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} showDebugMenu={showDebugMenu} playerLocation={playerLocation} discoveries={discoveries} onDiscoveries={handleDiscoveries} startupReady={discoveriesLoaded && sessionsLoaded && initialSyncSettled && (!gpsEnabled || Boolean(playerLocation) || gpsWaitExpired)} />{view === 'sessions' && <SessionsView sessions={sessions} onExport={handleGpxExport} onRename={handleSessionRename} onDelete={handleSessionDelete} onImportGpx={handleGpxImport} onSyncRides={handleSyncRidesToMap} />}{view === 'settings' && <SettingsView showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} showDebugMenu={showDebugMenu} setShowDebugMenu={setShowDebugMenu} gpsEnabled={gpsEnabled} gpsPermission={gpsPermission} onGpsChange={handleGpsChange} onOpenDesignSystem={() => setView('design-system')} />}{view === 'design-system' && <DesignSystemView onBack={() => setView('settings')} />}</div>{activityDrawerVisible && <div ref={activityDrawerRef} className={`activity-drawer ${sessionActive ? 'activity-drawer--open' : 'activity-drawer--closing'}`}><div className="activity-drawer-copy"><span className="roam-overline-sm activity-drawer-title">Active session</span><div className="activity-drawer-stats font-mono"><span className="activity-drawer-timer">{formatSessionTime(sessionElapsedSeconds)}</span><span className="activity-drawer-separator" aria-hidden="true">·</span><span className="activity-drawer-distance">{formatDistance(sessionDistanceMeters)}</span><span className="activity-drawer-new-distance">({formatDistance(sessionDiscoveredMeters)} new)</span></div></div>{sessionActive && <ShadcnButton variant="destructive" className="hover:!border-danger-500 active:!border-danger-500" onClick={() => handleSessionChange(false)}>Stop</ShadcnButton>}</div>}<PrimaryNavigation view={view} onChange={setView} /><Toaster /></main>;
 }
 
 const rootElement = document.getElementById('root')!;

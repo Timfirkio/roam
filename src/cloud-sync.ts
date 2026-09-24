@@ -153,9 +153,35 @@ export async function syncAccountProgress(userId: string, onProgress?: (progress
     }
     mergedSessions.set(row.id, cloudSession);
   });
+  // Local GPS discoveries can arrive while a network request is in flight.
+  // Keep them in the cache so the next automatic pass can upload them.
+  (await loadDiscoveredSegments()).forEach(item => {
+    if (!mergedDiscoveries.has(item.id)) mergedDiscoveries.set(item.id, item);
+  });
+  const initialSessionsById = new Map(sessions.map(item => [item.id, item]));
+  (await loadSessions()).forEach(item => {
+    const initial = initialSessionsById.get(item.id);
+    if (!initial || !sameSessionDetails(initial, item) || !samePoints(initial.points, item.points)) mergedSessions.set(item.id, item);
+  });
   const syncedDiscoveries = [...mergedDiscoveries.values()];
   const syncedSessions = [...mergedSessions.values()];
   onProgress?.({ label: 'Updating this device…' });
   await Promise.all([replaceDiscoveredSegments(syncedDiscoveries), replaceSessions(syncedSessions)]);
   return { discoveries: syncedDiscoveries, sessions: syncedSessions };
+}
+
+let activeSync: Promise<Awaited<ReturnType<typeof syncAccountProgress>>> | null = null;
+
+/** Serialize manual and automatic syncs so neither replaces the other's cache. */
+export function runAccountSync(userId: string, onProgress?: (progress: SyncProgress) => void) {
+  if (activeSync) return activeSync;
+  const task = syncAccountProgress(userId, onProgress).then(result => {
+    const completedAt = new Date().toISOString();
+    localStorage.setItem('roam:last-account-sync-at', completedAt);
+    window.dispatchEvent(new CustomEvent('roam:account-sync-complete', { detail: { ...result, completedAt } }));
+    return result;
+  });
+  activeSync = task;
+  void task.finally(() => { if (activeSync === task) activeSync = null; }).catch(() => {});
+  return task;
 }
