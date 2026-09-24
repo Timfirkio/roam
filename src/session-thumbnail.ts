@@ -4,8 +4,8 @@ import { applyRoamBaseStyle, ROAM_MAP_STYLE } from './roam-map-style';
 import { installNetworkSource, NETWORK_SOURCE } from './network-source';
 import { NETWORK_MIN_ZOOM } from './network-tiles';
 
-const WIDTH = 720;
-const HEIGHT = 360;
+const WIDTH = 1440;
+const HEIGHT = 720;
 
 function usableCoordinates(points: SessionPoint[]) {
   return points.filter(point => Number.isFinite(point.lng) && Number.isFinite(point.lat) && Math.abs(point.lng) <= 180 && Math.abs(point.lat) <= 90)
@@ -90,7 +90,7 @@ export async function generateSessionThumbnail(points: SessionPoint[]): Promise<
         const bounds = coordinates.reduce((result, coordinate) => result.extend(coordinate), new maplibregl.LngLatBounds(coordinates[0], coordinates[0]));
         map.fitBounds(bounds, { padding: 48, duration: 0, maxZoom: 15 });
         map.once('idle', () => window.requestAnimationFrame(() => {
-          map?.getCanvas().toBlob(blob => { window.clearTimeout(timeout); finish(blob ?? new Error('Could not encode session thumbnail')); }, 'image/webp', .74);
+          map?.getCanvas().toBlob(blob => { window.clearTimeout(timeout); finish(blob ?? new Error('Could not encode session thumbnail')); }, 'image/webp', .88);
         }));
       });
     });
