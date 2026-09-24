@@ -94,6 +94,8 @@ const PLAYER_DISCOVERY_SOURCE = 'roam-player-discovery-radius';
 const PLAYER_DISCOVERY_FILL = 'roam-player-discovery-radius-fill';
 const PLAYER_DISCOVERY_LINE = 'roam-player-discovery-radius-line';
 const SESSION_THUMBNAIL_STYLE_VERSION = 4;
+const COMPASS_DIRECTIONS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'] as const;
+const COMPASS_TICKS = Array.from({ length: 24 }, (_, index) => index * 15);
 const mapAreaCache = new globalThis.Map<string, AreaRecord>();
 const ignoreMapAreaExplored = (_areaId: string, _totals: AreaTotals) => {};
 
@@ -914,6 +916,27 @@ function MapCanvas({ mapRef, mapActive, viewportBottomInset, crosshairTopInset, 
   </div>;
 }
 
+function HeadingCompassBar({ bearing }: { bearing: number }) {
+  const normalizedBearing = (bearing % 360 + 360) % 360;
+  const direction = COMPASS_DIRECTIONS[Math.round(normalizedBearing / 45) % COMPASS_DIRECTIONS.length];
+  const pointsNorth = Math.min(normalizedBearing, 360 - normalizedBearing) <= 1;
+  return <div className="heading-compass" role="img" aria-label={`Map heading ${Math.round(normalizedBearing)} degrees ${direction}`}>
+    <div className="heading-compass__track" aria-hidden="true">
+      {COMPASS_TICKS.map(degrees => {
+        const difference = ((degrees - normalizedBearing + 540) % 360) - 180;
+        if (Math.abs(difference) > 100) return null;
+        const cardinal = degrees % 45 === 0;
+        const label = cardinal ? COMPASS_DIRECTIONS[degrees / 45] : String(degrees);
+        return <span key={degrees} className={`heading-compass__tick${cardinal ? ' heading-compass__tick--cardinal' : ''}${degrees === 0 ? ' heading-compass__tick--north' : ''}`} style={{ left: `${50 + difference * 0.55}%` }}>
+          <span className="heading-compass__mark" />
+          <span className="heading-compass__label">{label}</span>
+        </span>;
+      })}
+    </div>
+    <span className={`heading-compass__pointer${pointsNorth ? ' heading-compass__pointer--north' : ''}`} aria-hidden="true" />
+  </div>;
+}
+
 function MapView({ active, onRequestLocation, sessionActive, onSessionChange, activityDrawerHeight, showDiscovered, showRegionProgress, setShowRegionProgress, is3D, setIs3D, showBuildings3D, setShowBuildings3D, showTerrain3D, setShowTerrain3D, showDebugMenu, playerLocation, discoveries, discoveriesLoaded, initialSyncSettled, onDiscoveries }: { active: boolean; onRequestLocation: () => void; sessionActive: boolean; onSessionChange: (active: boolean) => void; activityDrawerHeight: number; showDiscovered: boolean; showRegionProgress: boolean; setShowRegionProgress: (value: boolean) => void; is3D: boolean; setIs3D: (value: boolean) => void; showBuildings3D: boolean; setShowBuildings3D: (value: boolean) => void; showTerrain3D: boolean; setShowTerrain3D: (value: boolean) => void; showDebugMenu: boolean; playerLocation: PlayerLocation | null; discoveries: DiscoveredSegment[]; discoveriesLoaded: boolean; initialSyncSettled: boolean; onDiscoveries: (segments: DiscoveredSegment[]) => void }) {
   const [bearing, setBearing] = useState(0);
   const [followPlayer, setFollowPlayer] = useState(true);
@@ -1080,11 +1103,12 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
     let settleTimer: ReturnType<typeof setTimeout> | null = null;
     const updateInset = () => {
       const card = progressCardRef.current;
+      const compassBar = header.querySelector('.heading-compass');
       const viewBounds = view.getBoundingClientRect();
       const viewTop = viewBounds.top;
-      // The mounted card reserves the same safe-area-adjusted space while
-      // loading and after its progress content appears.
-      const top = card ? card.getBoundingClientRect().bottom - viewTop
+      // The full-width 3D compass also occupies the actionable map area.
+      const top = compassBar ? compassBar.getBoundingClientRect().bottom - viewTop
+        : card ? card.getBoundingClientRect().bottom - viewTop
         : header.getBoundingClientRect().top - viewTop + parseFloat(getComputedStyle(header).paddingTop);
       const inset = Math.max(0, Math.ceil(top));
       const viewport = `${inset}:${Math.round(viewBounds.width)}:${Math.round(viewBounds.left)}`;
@@ -1354,7 +1378,12 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
     });
   };
   return <section ref={mapViewRef} className={active ? "map-view" : "map-view map-view--inactive"} aria-hidden={!active}><MapCanvas mapRef={mapRef} mapActive={active} viewportBottomInset={0} crosshairTopInset={topOverlayInset} showDiscovered={showDiscovered} showRegionProgress={boundariesVisible} progressMode={progressMode} is3D={is3D} showBuildings3D={showBuildings3D} showTerrain3D={showTerrain3D} sessionActive={sessionActive} playerLocation={playerLocation} followPlayer={!progressMode && followPlayer} activeRotationFollow={activeRotationFollow} discoveries={discoveries} onDiscoveries={onDiscoveries} onLocationChange={handleLocationChange} onBearingChange={handleBearingChange} onZoomChange={() => {}} onPitchChange={() => {}} onFollowPlayerChange={handleFollowChange} onMapReady={onMapReady} onVisualReady={onVisualReady} />{!isFollowingPlayer && <div className="map-center-crosshair" style={{ top: topOverlayInset }} aria-hidden="true"><span /></div>}
-    <header ref={mapHeaderRef} className="map-header"><div className="map-top-right"><div ref={progressCardRef} className="location-summary map-ui-surface"><AreaCoverageCard record={displayedArea} discoveries={discoveries} dataReady={discoveriesLoaded} syncReady={initialSyncSettled} onUpdate={updateCurrentArea} onExplored={ignoreMapAreaExplored} parentAreaName={displayedParentAreaName ?? undefined} reserveParentArea showActions={false} className="min-h-0 border-0 bg-transparent p-0" /></div><div className="map-top-actions"><div className={`map-compass${compassVisible ? ' map-compass--visible' : ''}`} aria-hidden={!compassVisible}><ShadcnButton variant="secondary" size="icon" className="map-ui-surface" aria-label="Reset compass north" tabIndex={compassVisible ? 0 : -1} onClick={resetCompass}><span className="compass-rotor" style={{ transform: `rotate(${-bearing}deg)` }}><i className="compass-needle"><b className="compass-north">▲</b><b className="compass-south">▼</b></i></span></ShadcnButton></div></div></div></header>
+    <header ref={mapHeaderRef} className="map-header">
+      <div className="map-top-right">
+        <div ref={progressCardRef} className="location-summary map-ui-surface"><AreaCoverageCard record={displayedArea} discoveries={discoveries} dataReady={discoveriesLoaded} syncReady={initialSyncSettled} onUpdate={updateCurrentArea} onExplored={ignoreMapAreaExplored} parentAreaName={displayedParentAreaName ?? undefined} reserveParentArea showActions={false} className="min-h-0 border-0 bg-transparent p-0" /></div>
+        {is3D ? <HeadingCompassBar bearing={bearing} /> : <div className="map-top-actions"><div className={`map-compass${compassVisible ? ' map-compass--visible' : ''}`} aria-hidden={!compassVisible}><ShadcnButton variant="secondary" size="icon" className="map-ui-surface" aria-label="Reset compass north" tabIndex={compassVisible ? 0 : -1} onClick={resetCompass}><span className="compass-rotor" style={{ transform: `rotate(${-bearing}deg)` }}><i className="compass-needle"><b className="compass-north">▲</b><b className="compass-south">▼</b></i></span></ShadcnButton></div></div>}
+      </div>
+    </header>
     <div className="map-controls" style={{ bottom: sessionDockOffset }} aria-label="Map controls"><ShadcnButton variant="secondary" size="icon" className="map-ui-surface layers-control" aria-label={`Open layers panel, ${activeLayerCount} active`} aria-expanded={debugOpen} onClick={() => setDebugOpen(!debugOpen)}><Stack weight="regular" aria-hidden="true" />{activeLayerCount > 0 && <span className="layers-control__count" aria-hidden="true">{activeLayerCount}</span>}</ShadcnButton><ShadcnButton variant="secondary" size="icon" className={locationControlClass} aria-label={locationControlLabel} aria-pressed={isFollowingPlayer} onClick={centerOnPlayer}><LocationIcon weight={activeRotationFollow ? 'fill' : 'regular'} aria-hidden="true" /></ShadcnButton><ShadcnButton variant="secondary" size="icon" className="map-ui-surface map-mode-toggle" aria-label={`Switch to ${is3D ? '2D' : '3D'} view`} onClick={() => setIs3D(!is3D)}>{is3D ? '3D' : '2D'}</ShadcnButton><ButtonGroup orientation="vertical" className="zoom-group map-ui-surface" aria-label="Map zoom"><ShadcnButton variant="secondary" size="icon" aria-label="Zoom in" onClick={() => stepZoom(1)}><Plus weight="regular" aria-hidden="true" /></ShadcnButton><ShadcnButton variant="secondary" size="icon" aria-label="Zoom out" onClick={() => stepZoom(-1)}><Minus weight="regular" aria-hidden="true" /></ShadcnButton></ButtonGroup></div>{!sessionActive && <ShadcnButton variant="secondary" className="record-fab map-ui-surface" onClick={() => onSessionChange(true)}><Path weight="regular" aria-hidden="true" />Roam</ShadcnButton>}
     <ShadcnButton variant="secondary" size="medium" className="progress-mode-toggle map-ui-surface rounded-pill" aria-pressed={progressMode} onClick={toggleProgressMode}><Percent weight="regular" aria-hidden="true" />Progress</ShadcnButton>
     {showDebugMenu && debugOpen && <div className="map-layers-panel map-ui-surface" style={{ bottom: sessionDockOffset }}><p>LAYERS</p><label><span><strong>Region boundaries</strong><small>Administrative area outlines</small></span><Switch checked={boundariesVisible} disabled={progressMode} onCheckedChange={setShowRegionProgress} aria-label="Region boundaries" /></label><label><span><strong>3D buildings</strong><small>Building massing</small></span><Switch checked={showBuildings3D} onCheckedChange={setShowBuildings3D} aria-label="3D buildings" /></label><label><span><strong>3D terrain</strong><small>Elevation and shading</small></span><Switch checked={showTerrain3D} onCheckedChange={setShowTerrain3D} aria-label="3D terrain" /></label></div>}
