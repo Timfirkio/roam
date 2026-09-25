@@ -25,6 +25,10 @@ try {
       b.name
     from osm.boundaries b
     where b.country_code = 'SE' and b.admin_level = 4
+      and exists (
+        select 1 from osm.boundaries country
+        where country.country_code = 'SE' and country.admin_level = 2 and country.name = 'Sverige'
+          and gis.ST_Covers(country.geometry, gis.ST_PointOnSurface(b.geometry)))
     on conflict (area_id) do update set name = excluded.name, updated_at = now()`);
   const { rows } = await pool.query(`
     select status, count(*)::integer as count

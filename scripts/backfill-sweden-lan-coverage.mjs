@@ -15,6 +15,10 @@ try {
     from osm.sweden_batches batch
     join osm.boundaries boundary on boundary.id = batch.area_id
     where batch.status = 'ready'
+      and exists (
+        select 1 from osm.boundaries country
+        where country.country_code = 'SE' and country.admin_level = 2 and country.name = 'Sverige'
+          and gis.ST_Covers(country.geometry, gis.ST_PointOnSurface(boundary.geometry)))
     order by boundary.name`);
   for (const area of areas) {
     if (!area.has_roads) throw new Error(`${area.name} is marked ready but has no imported roads.`);
