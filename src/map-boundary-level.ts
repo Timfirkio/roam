@@ -40,3 +40,8 @@ export function boundaryLineOpacity(level: 2 | 4 | 7 | 9) {
   }[level];
   return ['step', ['zoom'], ...stops];
 }
+
+/** Preview Level 9 outlines as discovered roads approach their overview cutoff. */
+export function boundaryPreviewOpacity(level: 2 | 4 | 7 | 9, fullZoom: number, startZoom: number) {
+  return level === 9 ? ['interpolate', ['linear'], ['zoom'], fullZoom, 0.9, startZoom, 0] : 0;
+}

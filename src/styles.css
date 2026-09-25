@@ -34,6 +34,7 @@
   --color-paper-200: #d8d4c8;
   --color-paper-300: #b8b5ab;
   --color-location-500: #2bb8b0;
+  --color-unpaved-progress: #218e88;
   --color-location-200: #b9fff7;
   --color-location-muted: rgba(240, 237, 227, 0.06);
   --color-location-current-border: #718783;
@@ -160,7 +161,7 @@ button:focus-visible, [href]:focus-visible, [tabindex]:focus-visible, input:focu
 .summary-progress__discovered { display: flex !important; height: 100%; background: transparent !important; transition: width .35s ease; }
 .summary-progress__paved, .summary-progress__unpaved { display: block; height: 100%; border-radius: 0; font-style: normal; }
 .summary-progress__paved { background: #f0ede3; }
-.summary-progress__unpaved { background: #d59c67; }
+.summary-progress__unpaved { background: var(--color-unpaved-progress); }
 .map-compass button { width: 42px; height: 42px; }
 .map-depth-fade { position: absolute; z-index: 1; top: 0; right: 0; left: 0; height: 82%; pointer-events: none; background: linear-gradient(to bottom, rgba(10, 11, 12, .18) 0%, rgba(10, 11, 12, .15) 24%, rgba(10, 11, 12, .1) 48%, rgba(10, 11, 12, .055) 72%, rgba(10, 11, 12, .02) 88%, transparent 100%); transition: opacity .35s ease; }
 .map-depth-fade--hidden { opacity: 0; }
@@ -170,7 +171,7 @@ button:focus-visible, [href]:focus-visible, [tabindex]:focus-visible, input:focu
 .progress-bar__paved-roads, .progress-bar__paved-cycleways, .progress-bar__unpaved { display: block; height: 100%; border-radius: 0; font-style: normal; transition: width 520ms var(--ease-outdoor); }
 .progress-bar__paved-roads { background: #f0ede3; }
 .progress-bar__paved-cycleways { background: #2bb8b0; }
-.progress-bar__unpaved { background: #d59c67; }
+.progress-bar__unpaved { background: var(--color-unpaved-progress); }
 .settings-view { min-height: calc(100svh - 76px); overflow: auto; padding: 34px 24px 124px; background: radial-gradient(circle at 20% 0%, #19211f, #0a0b0c 55%); }
 .settings-header { max-width: 680px; }.settings-header h1 { margin: 34px 0 12px; font-size: clamp(38px, 10vw, 64px); letter-spacing: -.08em; }.settings-header > p:last-child { max-width: 480px; color: #8c9893; font-size: 14px; line-height: 1.7; }
 .settings-group { max-width: 680px; margin-top: 38px; padding: 0 16px; border: 1px solid #293331; background: #111615; }.settings-group-title { margin: 0 -16px; padding: 12px 16px; border-bottom: 1px solid #293331; color: #d59c67; font-size: 9px; letter-spacing: .14em; }.setting-row { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 18px; padding: 16px 0; border: 0; border-bottom: 1px solid #293331; background: transparent; color: #f0ede3; text-align: left; }.setting-row:last-child { border-bottom: 0; }.setting-row > span { display: flex; min-width: 0; flex-direction: column; gap: 5px; }.setting-row strong { font-size: 11px; letter-spacing: .06em; }.setting-row small { color: #728079; font-size: 9px; line-height: 1.5; }.setting-toggle { flex: 0 0 auto; min-width: 38px; padding: 5px 7px; border: 1px solid #46534e; color: #89938e; font-size: 8px; letter-spacing: .08em; text-align: center; }.setting-toggle--on { border-color: #d59c67; color: #f0ede3; background: #2a2118; }.settings-note { display: flex; max-width: 680px; flex-direction: column; gap: 6px; margin-top: 14px; padding: 14px 16px; border-left: 2px solid #d59c67; background: #151b19; }.settings-note strong { color: #d59c67; font-size: 9px; letter-spacing: .12em; }.settings-note span { color: #8c9893; font-size: 10px; line-height: 1.6; }
@@ -215,7 +216,7 @@ aside.rounded-control.border-l-2.border-accent { display: none; }
 .progress-bar { height: 0.5rem; overflow: hidden; border-radius: var(--radius-pill); background: var(--color-surface-interactive); }
 .progress-bar__paved-roads { background: var(--color-paper-100); }
 .progress-bar__paved-cycleways { background: var(--color-location-500); }
-.progress-bar__unpaved { background: var(--color-accent); }
+.progress-bar__unpaved { background: var(--color-unpaved-progress); }
 .progress-map-view { position: relative; height: calc(100svh - 76px); min-height: 570px; overflow: hidden; background: var(--color-ink-950); }
 .progress-map-canvas { position: absolute; inset: 0; }
 .progress-map-canvas .maplibre-container { opacity: 1; }

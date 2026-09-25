@@ -9,6 +9,8 @@ import type { DiscoveredSegment } from './discovery';
 import { installNetworkSource, NETWORK_SOURCE } from './network-source';
 import { NETWORK_MIN_ZOOM } from './network-tiles';
 import { applyRoamBaseStyle, ROAM_MAP_STYLE } from './roam-map-style';
+import { DISCOVERED_UNPAVED_ROAD_COLOR, UNPAVED_ROAD_DASHARRAY, UNPAVED_ROAD_WIDTH } from './map-road-colors';
+import { discoveredNetworkFeatures } from './discovery-render';
 import { Button } from './components/ui/button';
 import { Item, ItemActions, ItemContent, ItemDescription, ItemTitle } from './components/ui/item';
 import { Spinner } from './components/ui/spinner';
@@ -23,6 +25,7 @@ const AREA_TILE_FILL = 'roam-progress-area-tile-fills';
 const AREA_TILE_LINE = 'roam-progress-area-tile-lines';
 const DISCOVERED_SOURCE = 'roam-progress-discovered-network';
 const DISCOVERED_LAYER = 'roam-progress-discovered-network-line';
+const DISCOVERED_UNPAVED_LAYER = 'roam-progress-discovered-unpaved-line';
 const distance = (meters: number) => `${(meters / 1000).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} km`;
 const message = (error: unknown) => error instanceof Error ? error.message : 'Could not load area coverage. Try again.';
 
@@ -192,15 +195,22 @@ function ProgressMap({ centre, discoveries, selected, onSelectId, onHover }: { c
       applyRoamBaseStyle(map);
       // The Map and Progress tabs share the same OSM treatment. At cycling
       // zooms, replace the generalized bikeable paths with full z14 geometry.
-      const overview = map.getStyle().layers?.find((layer: any) => layer.id === 'roam-bikeable-paths');
-      if (overview?.type === 'line' && map.getSource(NETWORK_SOURCE) && !map.getLayer('roam-bikeable-paths-detail')) {
-        map.addLayer({ ...overview, id: 'roam-bikeable-paths-detail', source: NETWORK_SOURCE, minzoom: NETWORK_MIN_ZOOM }, 'roam-bikeable-paths');
-        map.setLayerZoomRange('roam-bikeable-paths', 6, NETWORK_MIN_ZOOM);
+      for (const id of ['roam-bikeable-paths', 'roam-unpaved-paths']) {
+        const overview = map.getStyle().layers?.find((layer: any) => layer.id === id);
+        if (overview?.type === 'line' && map.getSource(NETWORK_SOURCE) && !map.getLayer(`${id}-detail`)) {
+          map.addLayer({ ...overview, id: `${id}-detail`, source: NETWORK_SOURCE, minzoom: NETWORK_MIN_ZOOM }, id);
+          map.setLayerZoomRange(id, 6, NETWORK_MIN_ZOOM);
+        }
       }
       map.addSource(DISCOVERED_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
       map.addLayer({
-        id: DISCOVERED_LAYER, type: 'line', source: DISCOVERED_SOURCE, minzoom: 6, maxzoom: 24,
-        paint: { 'line-color': ['match', ['get', 'roadType'], 'cycleway', '#2bb8b0', 'unpaved-path', '#d59c67', 'footpath', '#2bb8b0', '#f0eee7'], 'line-opacity': 1, 'line-width': ['interpolate', ['linear'], ['zoom'], 6, 1, 10, 1.2, 15, 1.8, 18, 3] },
+        id: DISCOVERED_LAYER, type: 'line', source: DISCOVERED_SOURCE, minzoom: 6, maxzoom: 24, filter: ['!=', ['get', 'roadType'], 'unpaved-path'],
+        paint: { 'line-color': ['match', ['get', 'roadType'], 'cycleway', '#2bb8b0', 'footpath', '#2bb8b0', '#f0eee7'], 'line-opacity': 1, 'line-width': ['interpolate', ['linear'], ['zoom'], 6, 1, 10, 1.2, 15, 1.8, 18, 3] },
+      } as any);
+      map.addLayer({
+        id: DISCOVERED_UNPAVED_LAYER, type: 'line', source: DISCOVERED_SOURCE, minzoom: 6, maxzoom: 24,
+        filter: ['==', ['get', 'roadType'], 'unpaved-path'], layout: { 'line-cap': 'butt', 'line-join': 'round' },
+        paint: { 'line-color': DISCOVERED_UNPAVED_ROAD_COLOR, 'line-opacity': 1, 'line-width': UNPAVED_ROAD_WIDTH, 'line-dasharray': UNPAVED_ROAD_DASHARRAY },
       } as any);
       map.addSource(AREA_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
       if (import.meta.env.VITE_AREA_CATALOG !== 'false') {
@@ -250,7 +260,7 @@ function ProgressMap({ centre, discoveries, selected, onSelectId, onHover }: { c
   useEffect(() => {
     const map = mapRef.current;
     if (!ready || !map?.getSource(DISCOVERED_SOURCE)) return;
-    (map.getSource(DISCOVERED_SOURCE) as maplibregl.GeoJSONSource).setData({ type: 'FeatureCollection', features: discoveries.map(segment => ({ type: 'Feature', properties: { roadType: segment.roadType }, geometry: segment.geometry })) } as any);
+    (map.getSource(DISCOVERED_SOURCE) as maplibregl.GeoJSONSource).setData(discoveredNetworkFeatures(discoveries) as any);
   }, [discoveries, ready]);
   useEffect(() => {
     const map = mapRef.current;
