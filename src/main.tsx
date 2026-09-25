@@ -26,7 +26,7 @@ import { reconcileSessionRoute, synchronizeDiscoveredSegmentRoadTypes } from './
 import { generateSessionThumbnail } from './session-thumbnail';
 import { formatSessionTitle, isGeneratedSessionTitle, regionNamesForSession, SESSION_NAMING_VERSION, titleForRegions } from './session-naming';
 import { applyRoamBaseStyle } from './roam-map-style';
-import { boundaryLineOpacity, boundaryMatchesLevel, mapBoundaryLevel } from './map-boundary-level';
+import { areaAtBoundaryLevel, boundaryLineOpacity, boundaryMatchesLevel, mapBoundaryLevel, maxZoomForBoundaryLevel } from './map-boundary-level';
 import { isDiscoverableProperties, legacyRoadTypeForProperties, roadTypeForProperties, stableRoadCandidateId } from './road-rules';
 import { STOCKHOLM_ROAD_NETWORK_BY_DISTRICT } from './road-network-catalog';
 import { Button as ShadcnButton, buttonVariants } from '@/components/ui/button';
@@ -942,6 +942,7 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
   const [activeRotationFollow, setActiveRotationFollow] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
   const [progressMode, setProgressMode] = useState(false);
+  const [boundaryLevel, setBoundaryLevel] = useState(mapBoundaryLevel(DEFAULT_MAP_ZOOM));
   const [progressMapReady, setProgressMapReady] = useState(false);
   const [mapVisualReady, setMapVisualReady] = useState(false);
   const [startupDismissed, setStartupDismissed] = useState(false);
@@ -1007,9 +1008,7 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       void lookupAreas(location.lng, location.lat, controller.signal).then(async ({ areas }) => {
-        const candidate = areas
-          .filter(record => record.area.adminLevel >= 7 && record.area.adminLevel <= 9)
-          .sort((left, right) => right.area.adminLevel - left.area.adminLevel)[0];
+        const candidate = areaAtBoundaryLevel(areas, boundaryLevel);
         if (!candidate) {
           setCurrentArea(null);
           setCurrentParentAreaName(null);
@@ -1039,7 +1038,7 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
       });
     }, 350);
     return () => { controller.abort(); window.clearTimeout(timer); };
-  }, [location.lat, location.lng]);
+  }, [boundaryLevel, location.lat, location.lng]);
   const updateCurrentArea = useCallback((record: AreaRecord) => {
     mapAreaCache.set(record.area.id, record);
     setCurrentArea(current => current?.area.id === record.area.id ? record : current);
@@ -1054,7 +1053,7 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
     mapRef.current.fitBounds([[west, south], [east, north]], {
       padding: { top: Math.ceil(measuredTopInset + 20), right: 24, bottom: 24, left: 24 },
       pitch: 0,
-      maxZoom: 13.5,
+      maxZoom: maxZoomForBoundaryLevel(record.area.adminLevel),
       duration: 650,
     });
   }, [topOverlayInset]);
@@ -1349,6 +1348,16 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
   const LocationIcon = activeRotationFollow ? NavigationArrow : isFollowingPlayer ? GpsFix : Gps;
   const boundariesVisible = showRegionProgress || progressMode;
   const activeLayerCount = [boundariesVisible, showBuildings3D, showTerrain3D].filter(Boolean).length;
+  useEffect(() => {
+    if (boundaryLevel > 7 || sessionActive) return;
+    setFollowPlayer(false);
+    setActiveRotationFollow(false);
+    setIs3D(false);
+    setSelectedProgressArea(null);
+    setSelectedParentAreaName(null);
+    pendingProgressFitRef.current = false;
+    setProgressMode(true);
+  }, [boundaryLevel, sessionActive, setIs3D]);
   const toggleProgressMode = () => {
     const next = !progressMode;
     setProgressMode(next);
@@ -1376,7 +1385,7 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
       duration: 350,
     });
   };
-  return <section ref={mapViewRef} className={active ? "map-view" : "map-view map-view--inactive"} aria-hidden={!active}><MapCanvas mapRef={mapRef} mapActive={active} viewportBottomInset={0} crosshairTopInset={topOverlayInset} showDiscovered={showDiscovered} showRegionProgress={boundariesVisible} progressMode={progressMode} is3D={is3D} showBuildings3D={showBuildings3D} showTerrain3D={showTerrain3D} sessionActive={sessionActive} playerLocation={playerLocation} followPlayer={!progressMode && followPlayer} activeRotationFollow={activeRotationFollow} discoveries={discoveries} onDiscoveries={onDiscoveries} onLocationChange={handleLocationChange} onBearingChange={handleBearingChange} onZoomChange={() => {}} onPitchChange={() => {}} onFollowPlayerChange={handleFollowChange} onMapReady={onMapReady} onVisualReady={onVisualReady} />{!isFollowingPlayer && <div className="map-center-crosshair" style={{ top: topOverlayInset }} aria-hidden="true"><span /></div>}
+  return <section ref={mapViewRef} className={active ? "map-view" : "map-view map-view--inactive"} aria-hidden={!active}><MapCanvas mapRef={mapRef} mapActive={active} viewportBottomInset={0} crosshairTopInset={topOverlayInset} showDiscovered={showDiscovered} showRegionProgress={boundariesVisible} progressMode={progressMode} is3D={is3D} showBuildings3D={showBuildings3D} showTerrain3D={showTerrain3D} sessionActive={sessionActive} playerLocation={playerLocation} followPlayer={!progressMode && followPlayer} activeRotationFollow={activeRotationFollow} discoveries={discoveries} onDiscoveries={onDiscoveries} onLocationChange={handleLocationChange} onBearingChange={handleBearingChange} onZoomChange={zoom => setBoundaryLevel(mapBoundaryLevel(zoom))} onPitchChange={() => {}} onFollowPlayerChange={handleFollowChange} onMapReady={onMapReady} onVisualReady={onVisualReady} />{!isFollowingPlayer && <div className="map-center-crosshair" style={{ top: topOverlayInset }} aria-hidden="true"><span /></div>}
     <header ref={mapHeaderRef} className="map-header">
       <div className="map-top-right">
         <div ref={progressCardRef} className="location-summary map-ui-surface"><AreaCoverageCard record={displayedArea} discoveries={discoveries} dataReady={discoveriesLoaded} syncReady={initialSyncSettled} onUpdate={updateCurrentArea} onExplored={ignoreMapAreaExplored} parentAreaName={displayedParentAreaName ?? undefined} reserveParentArea showActions={false} className="min-h-0 border-0 bg-transparent p-0" /></div>

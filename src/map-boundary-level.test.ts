@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { boundaryLineOpacity, boundaryMatchesLevel, mapBoundaryLevel } from './map-boundary-level';
+import { areaAtBoundaryLevel, boundaryLineOpacity, boundaryMatchesLevel, mapBoundaryLevel, maxZoomForBoundaryLevel } from './map-boundary-level';
+import type { AreaRecord } from './area-types';
 
 describe('map boundary levels', () => {
   it('switches directly from municipality to county boundaries', () => {
@@ -20,5 +21,15 @@ describe('map boundary levels', () => {
   it('switches county and municipality outlines at the same threshold', () => {
     expect(boundaryLineOpacity(4)).toEqual(['step', ['zoom'], 0, 5, 0.9, 8, 0]);
     expect(boundaryLineOpacity(7)).toEqual(['step', ['zoom'], 0, 8, 0.9, 10, 0]);
+  });
+  it('uses the visible tier for the card and falls back to a parent when level 9 is absent', () => {
+    const records = [2, 4, 7, 9].map(adminLevel => ({ area: { id: String(adminLevel), adminLevel } })) as AreaRecord[];
+    expect(areaAtBoundaryLevel(records, mapBoundaryLevel(15))?.area.id).toBe('9');
+    expect(areaAtBoundaryLevel(records, mapBoundaryLevel(9))?.area.id).toBe('7');
+    expect(areaAtBoundaryLevel(records, mapBoundaryLevel(7))?.area.id).toBe('4');
+    expect(areaAtBoundaryLevel(records.filter(record => record.area.adminLevel !== 9), 9)?.area.id).toBe('7');
+  });
+  it('fits a selected region within its visible zoom band', () => {
+    for (const level of [2, 4, 7]) expect(mapBoundaryLevel(maxZoomForBoundaryLevel(level))).toBe(level);
   });
 });
