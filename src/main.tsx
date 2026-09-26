@@ -34,7 +34,7 @@ import { useAppVisible } from './use-app-visible';
 import { createPlayerModel, PLAYER_MODEL_LAYER } from './player-model';
 import { DISCOVERED_UNPAVED_ROAD_COLOR, UNDISCOVERED_UNPAVED_ROAD_COLOR, UNPAVED_ROAD_DASHARRAY, UNPAVED_ROAD_WIDTH } from './map-road-colors';
 import { discoveredNetworkFeatures } from './discovery-render';
-import { areaAtBoundaryLevel, boundaryLineOpacity, boundaryMatchesLevel, boundaryPreviewOpacity, mapBoundaryLevel, maxZoomForBoundaryLevel } from './map-boundary-level';
+import { areaAtBoundaryLevel, boundaryLineOpacity, boundaryMatchesLevel, mapBoundaryLevel, maxZoomForBoundaryLevel } from './map-boundary-level';
 import { isDiscoverableProperties, legacyRoadTypeForProperties, roadTypeForProperties, stableRoadCandidateId } from './road-rules';
 import { STOCKHOLM_ROAD_NETWORK_BY_DISTRICT } from './road-network-catalog';
 import { Button as ShadcnButton, buttonVariants } from '@/components/ui/button';
@@ -78,7 +78,6 @@ const ROAD_MIN_ZOOM = 6;
 const ROAD_MAX_ZOOM = 24;
 // Discovered segments stop reading clearly at overview scale, before base roads disappear.
 const DISCOVERED_MIN_ZOOM = 11;
-const BOUNDARY_PREVIEW_START_ZOOM = 13;
 const DEFAULT_MAP_ZOOM = 15;
 const RECORDING_MAP_ZOOM = 16;
 const DEFAULT_3D_PITCH = 60;
@@ -366,14 +365,16 @@ function styleRoamMap(map: Map, showDiscovered: boolean, showRegionProgress: boo
     if (!map.getLayer(REGION_BOUNDARIES_FILL)) map.addLayer({ id: REGION_BOUNDARIES_FILL, type: 'fill', source: REGION_BOUNDARIES_SOURCE, 'source-layer': 'boundaries', layout: { visibility: showRegionProgress || progressMode ? 'visible' : 'none' }, paint: { 'fill-color': REGION_BOUNDARY_COLOR, 'fill-opacity': 0 } } as any, firstRoadLayer);
     map.setPaintProperty(REGION_BOUNDARIES_FILL, 'fill-color', REGION_BOUNDARY_COLOR);
     map.setPaintProperty(REGION_BOUNDARIES_FILL, 'fill-opacity', 0);
+    const boundaryWidth = ['interpolate', ['linear'], ['zoom'], 6, 0.9, 12, 1.2, 18, 1.5];
     for (const level of REGION_BOUNDARY_LEVELS) {
       const id = regionBoundaryLineId(level);
-      if (!map.getLayer(id)) map.addLayer({ id, type: 'line', source: REGION_BOUNDARIES_SOURCE, 'source-layer': 'boundaries', layout: { visibility: 'visible', 'line-cap': 'butt', 'line-join': 'miter' }, paint: { 'line-color': REGION_BOUNDARY_COLOR, 'line-opacity': showRegionProgress || progressMode ? boundaryLineOpacity(level) : boundaryPreviewOpacity(level, DISCOVERED_MIN_ZOOM, BOUNDARY_PREVIEW_START_ZOOM), 'line-width': ['interpolate', ['linear'], ['zoom'], 6, 0.65, 12, 0.85, 18, 1] } } as any);
+      if (!map.getLayer(id)) map.addLayer({ id, type: 'line', source: REGION_BOUNDARIES_SOURCE, 'source-layer': 'boundaries', layout: { visibility: showRegionProgress || progressMode ? 'visible' : 'none', 'line-cap': 'butt', 'line-join': 'miter' }, paint: { 'line-color': REGION_BOUNDARY_COLOR, 'line-opacity': showRegionProgress || progressMode ? boundaryLineOpacity(level) : 0, 'line-width': boundaryWidth } } as any);
+      map.setLayoutProperty(id, 'visibility', showRegionProgress || progressMode ? 'visible' : 'none');
       map.setFilter(id, (level === 9 ? ['==', ['to-number', ['get', 'display_level'], ['to-number', ['get', 'admin_level'], 0]], 9] : ['==', ['to-number', ['get', 'admin_level'], 0], level]) as any);
       map.setPaintProperty(id, 'line-color', REGION_BOUNDARY_COLOR);
-      map.setPaintProperty(id, 'line-opacity', (showRegionProgress || progressMode ? boundaryLineOpacity(level) : boundaryPreviewOpacity(level, DISCOVERED_MIN_ZOOM, BOUNDARY_PREVIEW_START_ZOOM)) as any);
+      map.setPaintProperty(id, 'line-opacity', (showRegionProgress || progressMode ? boundaryLineOpacity(level) : 0) as any);
       map.setPaintProperty(id, 'line-dasharray', undefined);
-      map.setPaintProperty(id, 'line-width', ['interpolate', ['linear'], ['zoom'], 6, 0.65, 12, 0.85, 18, 1]);
+      map.setPaintProperty(id, 'line-width', boundaryWidth as any);
     }
     refreshMapBoundaryLevel(map);
   }
@@ -535,7 +536,7 @@ function styleRoamMap(map: Map, showDiscovered: boolean, showRegionProgress: boo
   if (map.getLayer(REGION_BOUNDARIES_FILL)) map.moveLayer(REGION_BOUNDARIES_FILL);
   for (const id of REGION_BOUNDARIES_LINES) if (map.getLayer(id)) map.moveLayer(id);
   if (map.getLayer(REGION_BOUNDARIES_FILL)) map.setLayoutProperty(REGION_BOUNDARIES_FILL, 'visibility', showRegionProgress || progressMode ? 'visible' : 'none');
-  for (const lineId of REGION_BOUNDARIES_LINES) if (map.getLayer(lineId)) map.setLayoutProperty(lineId, 'visibility', 'visible');
+  for (const lineId of REGION_BOUNDARIES_LINES) if (map.getLayer(lineId)) map.setLayoutProperty(lineId, 'visibility', showRegionProgress || progressMode ? 'visible' : 'none');
   for (const id of [REGION_BOUNDARIES_FILL, CURRENT_AREA_FILL, ...REGION_BOUNDARIES_LINES, CURRENT_AREA_LINE]) {
     if (map.getLayer(id)) map.moveLayer(id);
   }
@@ -543,7 +544,7 @@ function styleRoamMap(map: Map, showDiscovered: boolean, showRegionProgress: boo
   // its id. Reassert catalog visibility after the final layer-order pass so
   // sibling/admin-level features cannot be left hidden behind the active area.
   if (map.getLayer(REGION_BOUNDARIES_FILL)) map.setLayoutProperty(REGION_BOUNDARIES_FILL, 'visibility', showRegionProgress || progressMode ? 'visible' : 'none');
-  for (const lineId of REGION_BOUNDARIES_LINES) if (map.getLayer(lineId)) map.setLayoutProperty(lineId, 'visibility', 'visible');
+  for (const lineId of REGION_BOUNDARIES_LINES) if (map.getLayer(lineId)) map.setLayoutProperty(lineId, 'visibility', showRegionProgress || progressMode ? 'visible' : 'none');
   // Blend translucent buildings over the completed terrain, including roads
   // and discovery overlays, before their depth can reject those ground pixels.
   if (map.getLayer('roam-buildings-3d')) map.moveLayer('roam-buildings-3d');
@@ -1035,7 +1036,6 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
   const [debugOpen, setDebugOpen] = useState(false);
   const [progressMode, setProgressMode] = useState(false);
   const [boundaryLevel, setBoundaryLevel] = useState(mapBoundaryLevel(DEFAULT_MAP_ZOOM));
-  const [boundaryPreviewVisible, setBoundaryPreviewVisible] = useState(DEFAULT_MAP_ZOOM < BOUNDARY_PREVIEW_START_ZOOM);
   const [discoveredRoadsOutOfView, setDiscoveredRoadsOutOfView] = useState(DEFAULT_MAP_ZOOM < DISCOVERED_MIN_ZOOM);
   const [progressMapReady, setProgressMapReady] = useState(false);
   const [mapVisualReady, setMapVisualReady] = useState(false);
@@ -1439,8 +1439,7 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
   const locationControlClass = `map-ui-surface location-control${isFollowingPlayer ? ' location-control--following' : ''}${activeRotationFollow ? ' location-control--active' : ''}`;
   const locationControlLabel = activeRotationFollow ? 'Following your location and heading' : isFollowingPlayer ? 'Following your location' : 'Follow your location';
   const LocationIcon = activeRotationFollow ? NavigationArrow : isFollowingPlayer ? GpsFix : Gps;
-  const boundariesVisible = showRegionProgress || progressMode || boundaryPreviewVisible;
-  const activeLayerCount = [showRegionProgress || progressMode, showBuildings3D, showTerrain3D].filter(Boolean).length;
+  const activeLayerCount = [showRegionProgress, showBuildings3D, showTerrain3D].filter(Boolean).length;
   useEffect(() => {
     if (!discoveredRoadsOutOfView || sessionActive) return;
     setFollowPlayer(false);
@@ -1449,14 +1448,12 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
     setSelectedProgressArea(null);
     setSelectedParentAreaName(null);
     pendingProgressFitRef.current = false;
-    setShowRegionProgress(true);
     setProgressMode(true);
-  }, [discoveredRoadsOutOfView, sessionActive, setIs3D, setShowRegionProgress]);
+  }, [discoveredRoadsOutOfView, sessionActive, setIs3D]);
   const toggleProgressMode = () => {
     const next = !progressMode;
     setProgressMode(next);
     if (next) {
-      setShowRegionProgress(true);
       setFollowPlayer(false);
       setActiveRotationFollow(false);
       setIs3D(false);
@@ -1479,7 +1476,7 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
       duration: 350,
     });
   };
-  return <section ref={mapViewRef} className={active ? "map-view" : "map-view map-view--inactive"} aria-hidden={!active}><MapCanvas mapRef={mapRef} mapActive={active} viewportBottomInset={0} crosshairTopInset={topOverlayInset} showDiscovered={showDiscovered} showRegionProgress={showRegionProgress} progressMode={progressMode} is3D={is3D} showBuildings3D={showBuildings3D} showTerrain3D={showTerrain3D} sessionActive={sessionActive} playerLocation={playerLocation} followPlayer={!progressMode && followPlayer} activeRotationFollow={activeRotationFollow} discoveries={discoveries} onDiscoveries={onDiscoveries} onLocationChange={handleLocationChange} onBearingChange={handleBearingChange} onZoomChange={zoom => { setBoundaryLevel(mapBoundaryLevel(zoom)); setBoundaryPreviewVisible(zoom < BOUNDARY_PREVIEW_START_ZOOM); setDiscoveredRoadsOutOfView(zoom < DISCOVERED_MIN_ZOOM); }} onPitchChange={() => {}} onFollowPlayerChange={handleFollowChange} onMapReady={onMapReady} onVisualReady={onVisualReady} />{!progressMode && !isFollowingPlayer && <div className="map-center-crosshair" style={{ top: topOverlayInset }} aria-hidden="true"><span /></div>}
+  return <section ref={mapViewRef} className={active ? "map-view" : "map-view map-view--inactive"} aria-hidden={!active}><MapCanvas mapRef={mapRef} mapActive={active} viewportBottomInset={0} crosshairTopInset={topOverlayInset} showDiscovered={showDiscovered} showRegionProgress={showRegionProgress} progressMode={progressMode} is3D={is3D} showBuildings3D={showBuildings3D} showTerrain3D={showTerrain3D} sessionActive={sessionActive} playerLocation={playerLocation} followPlayer={!progressMode && followPlayer} activeRotationFollow={activeRotationFollow} discoveries={discoveries} onDiscoveries={onDiscoveries} onLocationChange={handleLocationChange} onBearingChange={handleBearingChange} onZoomChange={zoom => { setBoundaryLevel(mapBoundaryLevel(zoom)); setDiscoveredRoadsOutOfView(zoom < DISCOVERED_MIN_ZOOM); }} onPitchChange={() => {}} onFollowPlayerChange={handleFollowChange} onMapReady={onMapReady} onVisualReady={onVisualReady} />{!progressMode && !isFollowingPlayer && <div className="map-center-crosshair" style={{ top: topOverlayInset }} aria-hidden="true"><span /></div>}
     <header ref={mapHeaderRef} className="map-header">
       <div className="map-top-right">
         <div ref={progressCardRef} className="location-summary map-ui-surface"><AreaCoverageCard record={displayedArea} discoveries={discoveries} dataReady={discoveriesLoaded} syncReady={initialSyncSettled} onUpdate={updateCurrentArea} onExplored={ignoreMapAreaExplored} parentAreaName={displayedParentAreaName ?? undefined} reserveParentArea showActions={false} className="min-h-0 border-0 bg-transparent p-0" /></div>
@@ -1921,7 +1918,7 @@ function App() {
   const appVisible = useAppVisible();
   const [view, setView] = useState<View>('map');
   const showDiscovered = true;
-  const [showRegionProgress, setShowRegionProgress] = useMapSetting('region-boundaries');
+  const [showRegionProgress, setShowRegionProgress] = useMapSetting('region-boundaries-v2', true);
   const [is3D, setIs3D] = useMapSetting('3d-view');
   const preRide3DRef = useRef(is3D);
   const [showBuildings3D, setShowBuildings3D] = useMapSetting('3d-buildings');

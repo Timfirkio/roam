@@ -33,12 +33,12 @@ export function boundaryMatchesLevel(properties: Record<string, unknown>, level:
 /** Show only the outline tier that matches the current zoom. */
 export function boundaryLineOpacity(level: 2 | 4 | 7 | 9) {
   const stops = {
-    2: [0.9, 5, 0],
-    4: [0, 5, 0.9, 8, 0],
-    7: [0, 8, 0.9, 10, 0],
-    9: [0, 10, 0.9],
+    2: [0, 0.82, 4, 0.82, 6, 0.55, 9, 0.38, 14, 0.3, 20, 0.25],
+    4: [0, 0.15, 5, 0.78, 7, 0.8, 9, 0.62, 12, 0.42, 16, 0.32, 20, 0.25],
+    7: [0, 0.15, 7, 0.74, 8.5, 0.82, 10, 0.65, 12, 0.45, 16, 0.34, 20, 0.27],
+    9: [0, 0.12, 9, 0.78, 10, 0.84, 12, 0.75, 15, 0.62, 18, 0.5, 20, 0.42],
   }[level];
-  return ['step', ['zoom'], ...stops];
+  return ['interpolate', ['linear'], ['zoom'], ...stops];
 }
 
 /** Preview Level 9 outlines as discovered roads approach their overview cutoff. */
