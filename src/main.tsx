@@ -20,6 +20,7 @@ import { STOCKHOLM_MUNICIPALITY, STOCKHOLM_REGION_BY_DISTRICT, STOCKHOLM_REGIONS
 import { SWEDEN_MUNICIPALITIES, SWEDEN_MUNICIPALITIES_SORTED } from './sweden-municipalities';
 import { distanceMeters, nextNavigationState, type NavigationState } from './player-navigation';
 import { FollowBearing } from './follow-bearing';
+import { clearZoomStep, easeMapCamera, stepMapZoom } from './map-camera';
 import { Geolocation, type CallbackID, type Position } from '@capacitor/geolocation';
 import { Capacitor } from '@capacitor/core';
 import { RideTracking, type RideTrackingPoint } from './ride-background-tracking';
@@ -29,6 +30,8 @@ import { generateSessionThumbnail } from './session-thumbnail';
 import { formatSessionTitle, isGeneratedSessionTitle, regionNamesForSession, SESSION_NAMING_VERSION, titleForRegions } from './session-naming';
 import { applyRoamBaseStyle } from './roam-map-style';
 import { useMapSetting } from './map-settings';
+import { useAppVisible } from './use-app-visible';
+import { createPlayerModel, PLAYER_MODEL_LAYER } from './player-model';
 import { DISCOVERED_UNPAVED_ROAD_COLOR, UNDISCOVERED_UNPAVED_ROAD_COLOR, UNPAVED_ROAD_DASHARRAY, UNPAVED_ROAD_WIDTH } from './map-road-colors';
 import { discoveredNetworkFeatures } from './discovery-render';
 import { areaAtBoundaryLevel, boundaryLineOpacity, boundaryMatchesLevel, boundaryPreviewOpacity, mapBoundaryLevel, maxZoomForBoundaryLevel } from './map-boundary-level';
@@ -270,13 +273,12 @@ function refreshMapBoundaryLevel(map: Map) {
   if (map.getLayer(REGION_BOUNDARIES_FILL)) map.setFilter(REGION_BOUNDARIES_FILL, filter as any);
 }
 
-function styleRoamMap(map: Map, showDiscovered: boolean, showRegionProgress: boolean, progressMode: boolean, is3D: boolean, showBuildings3D: boolean, showTerrain3D: boolean) {
+function styleRoamMap(map: Map, showDiscovered: boolean, showRegionProgress: boolean, progressMode: boolean, is3D: boolean, showBuildings3D: boolean, showTerrain3D: boolean, initialDiscoveries: DiscoveredSegment[] = []) {
   applyRoamBaseStyle(map);
   const layers = map.getStyle().layers ?? [];
   const firstRoadLayer = layers.find((layer: any) => layer.type === 'line' && ('source-layer' in layer ? layer['source-layer'] === 'transportation' : false))?.id;
   const showBuildingExtrusions = is3D && showBuildings3D;
-  // Terrain no longer substitutes flat footprints for building extrusions.
-  const showBuildingFootprints = false;
+  const showBuildingFootprints = !is3D && showBuildings3D;
   map.setPaintProperty('background', 'background-color', '#0a0b0c');
   for (const layer of layers) {
     const id = layer.id.toLowerCase();
@@ -370,7 +372,7 @@ function styleRoamMap(map: Map, showDiscovered: boolean, showRegionProgress: boo
     refreshMapBoundaryLevel(map);
   }
   if (!map.getSource(DISCOVERED_SOURCE)) {
-    map.addSource(DISCOVERED_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+    map.addSource(DISCOVERED_SOURCE, { type: 'geojson', data: discoveredNetworkFeatures(initialDiscoveries) as any });
   }
   if (!map.getLayer(DISCOVERED_SOURCE)) {
     map.addLayer({
@@ -449,17 +451,17 @@ function styleRoamMap(map: Map, showDiscovered: boolean, showRegionProgress: boo
       layout: { visibility: is3D && showBuildings3D ? 'visible' : 'none' },
     } as any, firstRoadLayer);
   }
-  if (map.getSource('openmaptiles') && !map.getLayer('roam-building-footprints')) {
+  if (map.getSource(BUILDING_SOURCE) && !map.getLayer('roam-building-footprints')) {
     map.addLayer({
       id: 'roam-building-footprints',
       type: 'fill',
       minzoom: 13,
-      source: 'openmaptiles',
+      source: BUILDING_SOURCE,
       'source-layer': 'building',
       paint: {
         'fill-color': '#27302e',
         'fill-opacity': 0.2,
-        'fill-outline-color': '#3b4642',
+        'fill-antialias': false,
       },
       layout: { visibility: showBuildingFootprints ? 'visible' : 'none' },
     } as any, firstRoadLayer);
@@ -539,6 +541,7 @@ function styleRoamMap(map: Map, showDiscovered: boolean, showRegionProgress: boo
   // Blend translucent buildings over the completed terrain, including roads
   // and discovery overlays, before their depth can reject those ground pixels.
   if (map.getLayer('roam-buildings-3d')) map.moveLayer('roam-buildings-3d');
+  if (map.getLayer(PLAYER_MODEL_LAYER)) map.moveLayer(PLAYER_MODEL_LAYER);
 }
 
 function roadTypeForFeature(properties: Record<string, unknown>) {
@@ -680,6 +683,7 @@ function MapCanvas({ mapRef, mapActive, viewportBottomInset, crosshairTopInset, 
   const initialCenterRef = useRef<[number, number]>(loadCachedMapCenter() ?? [18.0649, 59.3326]);
   const [mapReady, setMapReady] = useState(false);
   const discoveredNetworkRevealedRef = useRef(false);
+  const discoveredSourceDataRef = useRef<DiscoveredSegment[] | null>(null);
   const [networkRevision, setNetworkRevision] = useState(0);
   const discoveryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastDiscoveryAttemptRef = useRef(0);
@@ -702,11 +706,12 @@ function MapCanvas({ mapRef, mapActive, viewportBottomInset, crosshairTopInset, 
           const camera = followCameraTargetRef.current;
           const bearing = followBearingRef.current.bearing;
           if (!camera || bearing === null) return;
-          mapRef.current?.easeTo({ ...camera, bearing, duration: 180, easing: progress => 1 - (1 - progress) ** 2 });
+          if (mapRef.current) easeMapCamera(mapRef.current, { ...camera, bearing, duration: 180, easing: progress => 1 - (1 - progress) ** 2 });
           if (markerRotationFrameRef.current !== null) cancelAnimationFrame(markerRotationFrameRef.current);
           markerRotationFrameRef.current = null;
           markerRotationRef.current = bearing;
           playerMarkerRef.current?.setRotation(bearing);
+          mapRef.current?.triggerRepaint();
         });
         if (disposed) { await listener.remove(); return; }
         await RideTracking.startOrientation();
@@ -727,7 +732,14 @@ function MapCanvas({ mapRef, mapActive, viewportBottomInset, crosshairTopInset, 
     };
     map.on('load', () => {
       removeNetworkProtocol = installNetworkSource(map);
-      styleRoamMap(map, showDiscovered, showRegionProgress, progressMode, is3D, showBuildings3D, showTerrain3D);
+      styleRoamMap(map, showDiscovered, showRegionProgress, progressMode, is3D, showBuildings3D, showTerrain3D, discoveriesRef.current);
+      discoveredSourceDataRef.current = discoveriesRef.current;
+      map.addLayer(createPlayerModel(() => {
+        const marker = playerMarkerRef.current;
+        if (!marker || !marker.getElement().classList.contains('player-marker--3d')) return null;
+        const location = marker.getLngLat();
+        return { lng: location.lng, lat: location.lat, heading: marker.getRotation(), arrow: marker.getElement().classList.contains('player-marker--recording') };
+      }));
       reportCalculationPoint();
       onBearingChange(map.getBearing());
       onZoomChange(map.getZoom());
@@ -758,7 +770,7 @@ function MapCanvas({ mapRef, mapActive, viewportBottomInset, crosshairTopInset, 
     map.on('dragstart', stopFollowingForGesture);
     map.on('rotatestart', stopFollowingForUserEvent);
     map.on('pitchstart', stopFollowingForUserEvent);
-    map.on('zoomstart', (event: any) => { if (event.originalEvent) stopFollowingForGesture(); });
+    map.on('zoomstart', (event: any) => { if (event.originalEvent) { clearZoomStep(map); stopFollowingForGesture(); } });
     return () => { if (markerAnimationFrameRef.current !== null) cancelAnimationFrame(markerAnimationFrameRef.current); if (markerRotationFrameRef.current !== null) cancelAnimationFrame(markerRotationFrameRef.current); if (cameraFrameRef.current !== null) cancelAnimationFrame(cameraFrameRef.current); playerMarkerRef.current?.remove(); playerMarkerRef.current = null; map.remove(); removeNetworkProtocol(); mapRef.current = null; };
   }, [mapRef]);
   useEffect(() => {
@@ -766,7 +778,7 @@ function MapCanvas({ mapRef, mapActive, viewportBottomInset, crosshairTopInset, 
   }, [mapReady, mapRef, showDiscovered, showRegionProgress, progressMode, is3D, showBuildings3D, showTerrain3D]);
   useEffect(() => {
     if (mapReady && mapRef.current) {
-      mapRef.current.easeTo({ pitch: is3D ? DEFAULT_3D_PITCH : 0, duration: 450 });
+      easeMapCamera(mapRef.current, { pitch: is3D ? DEFAULT_3D_PITCH : 0, duration: 450 });
     }
   }, [mapReady, mapRef, is3D]);
   useEffect(() => {
@@ -775,7 +787,7 @@ function MapCanvas({ mapRef, mapActive, viewportBottomInset, crosshairTopInset, 
     // Until a live fix or user gesture takes over, keep the cached startup
     // location under the same usable-area center as the crosshair.
     if (followPlayer && !playerLocation && !sessionActive && !hasCenteredOnFirstLiveLocationRef.current) {
-      map.easeTo({ center: initialCenterRef.current, offset: crosshairOffset(map, crosshairTopInset), duration: 0 });
+      easeMapCamera(map, { center: initialCenterRef.current, offset: crosshairOffset(map, crosshairTopInset), duration: 0 });
     }
     const point = calculationPointAtCrosshair(map, crosshairTopInset, followPlayer, playerLocation);
     onLocationChangeRef.current(point.lng, point.lat, findMapLocality(map, point));
@@ -789,32 +801,53 @@ function MapCanvas({ mapRef, mapActive, viewportBottomInset, crosshairTopInset, 
     const map = mapRef.current;
     const source = map.getSource(DISCOVERED_SOURCE) as maplibregl.GeoJSONSource | undefined;
     if (!source) return;
-    const data = discoveredNetworkFeatures(discoveries);
-    if (discoveredNetworkRevealedRef.current || discoveries.length === 0) {
-      source.setData(data as any);
-      return;
-    }
     let active = true;
-    let frame = 0;
-    // Wait for GeoJSON processing and a transparent frame before fading in.
-    void source.setData(data as any).then(() => {
+    const update = discoveredSourceDataRef.current === discoveries
+      ? Promise.resolve()
+      : source.setData(discoveredNetworkFeatures(discoveries) as any);
+    discoveredSourceDataRef.current = discoveries;
+    let fadeStartedAt = 0;
+    let fadeDuration = 600;
+    const redrawFade = () => {
       if (!active) return;
-      frame = requestAnimationFrame(() => {
-        frame = requestAnimationFrame(() => {
-          if (!active || !map.getLayer(DISCOVERED_SOURCE)) return;
-          if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-            for (const id of [DISCOVERED_SOURCE, DISCOVERED_UNPAVED_LAYER]) {
-              if (map.getLayer(id)) map.setPaintProperty(id, 'line-opacity-transition', { duration: 0 });
-            }
-          }
-          discoveredNetworkRevealedRef.current = true;
-          for (const id of [DISCOVERED_SOURCE, DISCOVERED_UNPAVED_LAYER]) {
-            if (map.getLayer(id)) map.setPaintProperty(id, 'line-opacity', 1);
-          }
-        });
-      });
-    }).catch(() => {});
-    return () => { active = false; cancelAnimationFrame(frame); };
+      // MapLibre 6's terrain texture fingerprints track source data, not paint
+      // transitions. Release drape textures while opacity changes at rest.
+      for (const tile of map.terrain?.tileManager.getRenderableTiles() ?? []) tile.releaseRTT(map.painter);
+      if (performance.now() - fadeStartedAt >= fadeDuration) map.off('render', redrawFade);
+      map.triggerRepaint();
+    };
+    const onSourceData = (event: maplibregl.MapSourceDataEvent) => {
+      if (active && event.sourceId === DISCOVERED_SOURCE) map.triggerRepaint();
+    };
+    const onRender = () => {
+      if (!active || !map.isSourceLoaded(DISCOVERED_SOURCE)) return;
+      map.off('render', onRender);
+      map.off('sourcedata', onSourceData);
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        fadeDuration = 0;
+        for (const id of [DISCOVERED_SOURCE, DISCOVERED_UNPAVED_LAYER]) {
+          if (map.getLayer(id)) map.setPaintProperty(id, 'line-opacity-transition', { duration: 0 });
+        }
+      }
+      discoveredNetworkRevealedRef.current = true;
+      fadeStartedAt = performance.now();
+      map.on('render', redrawFade);
+      for (const id of [DISCOVERED_SOURCE, DISCOVERED_UNPAVED_LAYER]) {
+        if (map.getLayer(id)) map.setPaintProperty(id, 'line-opacity', 1);
+      }
+      map.triggerRepaint();
+    };
+    // Fade only after visible GeoJSON tiles have rendered a transparent frame.
+    // Worker completion alone does not mean those tiles are ready to draw.
+    void update.then(() => {
+      if (!active) return;
+      if (!discoveredNetworkRevealedRef.current && discoveries.length > 0) {
+        map.on('sourcedata', onSourceData);
+        map.on('render', onRender);
+      }
+      map.triggerRepaint();
+    }).catch(error => { if (active) console.warn('Could not display discovered roads:', error); });
+    return () => { active = false; map.off('sourcedata', onSourceData); map.off('render', onRender); map.off('render', redrawFade); };
   }, [discoveries, mapReady, mapRef]);
   useEffect(() => {
     const map = mapRef.current;
@@ -858,6 +891,7 @@ function MapCanvas({ mapRef, mapActive, viewportBottomInset, crosshairTopInset, 
     const source = mapRef.current.getSource(PLAYER_DISCOVERY_SOURCE) as maplibregl.GeoJSONSource | undefined;
     const setMarkerPosition = (marker: maplibregl.Marker, lng: number, lat: number) => {
       marker.setLngLat([lng, lat]);
+      mapRef.current?.triggerRepaint();
       source?.setData(circle([lng, lat], DISCOVERY_RADIUS_METERS, { units: 'meters', steps: 24 }) as any);
     };
     if (!playerLocation) {
@@ -869,10 +903,11 @@ function MapCanvas({ mapRef, mapActive, viewportBottomInset, crosshairTopInset, 
       markerRotationRef.current = 0;
       playerMarkerRef.current?.remove();
       playerMarkerRef.current = null;
+      mapRef.current.triggerRepaint();
       lastMarkerLocationRef.current = null;
       source?.setData({ type: 'FeatureCollection', features: [] });
       if (recordingCameraReady) {
-        mapRef.current.easeTo({ zoom: RECORDING_MAP_ZOOM, pitch: DEFAULT_3D_PITCH, duration: 850 });
+        easeMapCamera(mapRef.current, { zoom: RECORDING_MAP_ZOOM, pitch: DEFAULT_3D_PITCH, duration: 850 });
         recordingCameraPendingRef.current = false;
       }
       return;
@@ -923,12 +958,15 @@ function MapCanvas({ mapRef, mapActive, viewportBottomInset, crosshairTopInset, 
         const rotation = startRotation + (finalRotation - startRotation) * eased;
         markerRotationRef.current = rotation;
         marker.setRotation(rotation);
+        mapRef.current?.triggerRepaint();
         if (progress < 1) markerRotationFrameRef.current = requestAnimationFrame(animateRotation);
         else markerRotationFrameRef.current = null;
       };
       markerRotationFrameRef.current = requestAnimationFrame(animateRotation);
     }
     marker.getElement().classList.toggle('player-marker--recording', sessionActive);
+    marker.getElement().classList.toggle('player-marker--3d', is3D);
+    mapRef.current.triggerRepaint();
     if (recordingCameraPendingRef.current && !recordingCameraReady) return;
     if (followPlayer) {
       const map = mapRef.current;
@@ -942,8 +980,8 @@ function MapCanvas({ mapRef, mapActive, viewportBottomInset, crosshairTopInset, 
       };
       followCameraTargetRef.current = { center: camera.center, offset: camera.offset, pitch: camera.pitch, ...(recordingCameraReady ? { zoom: RECORDING_MAP_ZOOM } : {}) };
       const firstFix = !hasCenteredOnFirstLiveLocationRef.current;
-      if (!sessionActive && firstFix) map.easeTo({ ...camera, duration: 0 });
-      else map.easeTo({ ...camera, ...(recordingCameraReady ? { zoom: RECORDING_MAP_ZOOM } : {}), duration: 850, easing: progress => 1 - (1 - progress) ** 3 });
+      if (!sessionActive && firstFix) easeMapCamera(map, { ...camera, duration: 0 });
+      else easeMapCamera(map, { ...camera, ...(recordingCameraReady ? { zoom: RECORDING_MAP_ZOOM } : {}), duration: 850, easing: progress => 1 - (1 - progress) ** 3 });
       hasCenteredOnFirstLiveLocationRef.current = true;
       recordingCameraPendingRef.current = false;
     } else {
@@ -1007,7 +1045,6 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
   const progressAreaControllerRef = useRef<AbortController | null>(null);
   const pendingProgressFitRef = useRef(false);
   const previousSessionActiveRef = useRef(false);
-  const wakeLockStatus = useScreenWakeLock(sessionActive);
   const onMapReady = useCallback(() => setProgressMapReady(true), []);
   const onVisualReady = useCallback(() => setMapVisualReady(true), []);
   useEffect(() => {
@@ -1354,6 +1391,7 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
     for (const id of [REGION_BOUNDARIES_FILL, CURRENT_AREA_FILL, ...REGION_BOUNDARIES_LINES, CURRENT_AREA_LINE]) {
       if (map.getLayer(id)) map.moveLayer(id);
     }
+    if (map.getLayer(PLAYER_MODEL_LAYER)) map.moveLayer(PLAYER_MODEL_LAYER);
     return () => { map.off('zoomend', updateVisibility); map.off('idle', updateVisibility); };
   }, [displayedArea, progressMode]);
   useEffect(() => { mapRef.current?.resize(); }, [activityDrawerHeight]);
@@ -1376,14 +1414,14 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
     }
     if (!activeRotationFollow) {
       setActiveRotationFollow(true);
-      if (mapRef.current) mapRef.current.easeTo({ center: [playerLocation.lng, playerLocation.lat], offset: crosshairOffset(mapRef.current, topOverlayInset), ...(playerLocation.isMoving && playerLocation.travelHeading !== null ? { bearing: playerLocation.travelHeading } : {}), duration: 850 });
+      if (mapRef.current) easeMapCamera(mapRef.current, { center: [playerLocation.lng, playerLocation.lat], offset: crosshairOffset(mapRef.current, topOverlayInset), ...(playerLocation.isMoving && playerLocation.travelHeading !== null ? { bearing: playerLocation.travelHeading } : {}), duration: 850 });
       return;
     }
     setActiveRotationFollow(false);
   };
   const isFollowingPlayer = !progressMode && followPlayer && Boolean(playerLocation);
   const handleFollowChange = (following: boolean) => { setFollowPlayer(following); if (!following) setActiveRotationFollow(false); };
-  const resetCompass = () => { setActiveRotationFollow(false); mapRef.current?.easeTo({ bearing: 0, duration: 450 }); };
+  const resetCompass = () => { setActiveRotationFollow(false); if (mapRef.current) easeMapCamera(mapRef.current, { bearing: 0, duration: 450 }); };
   const normalizedBearing = (bearing % 360 + 360) % 360;
   const compassVisible = Math.min(normalizedBearing, 360 - normalizedBearing) > 1;
   const locationControlClass = `map-ui-surface location-control${isFollowingPlayer ? ' location-control--following' : ''}${activeRotationFollow ? ' location-control--active' : ''}`;
@@ -1421,8 +1459,7 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
   const stepZoom = (direction: 1 | -1) => {
     const map = mapRef.current;
     if (!map) return;
-    map.easeTo({
-      zoom: Math.max(map.getMinZoom(), Math.min(map.getMaxZoom(), map.getZoom() + direction * 0.5)),
+    stepMapZoom(map, direction, {
       ...(isFollowingPlayer && playerLocation ? {
         center: [playerLocation.lng, playerLocation.lat] as [number, number],
         offset: crosshairOffset(map, topOverlayInset),
@@ -1440,9 +1477,8 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
         </div>
       </div>
     </header>
-    <div className="map-controls" style={{ bottom: sessionDockOffset }} aria-label="Map controls"><ShadcnButton variant="secondary" size="icon" className="map-ui-surface layers-control" aria-label={`Open layers panel, ${activeLayerCount} active`} aria-expanded={debugOpen} onClick={() => setDebugOpen(!debugOpen)}><Stack weight="regular" aria-hidden="true" />{activeLayerCount > 0 && <span className="layers-control__count" aria-hidden="true">{activeLayerCount}</span>}</ShadcnButton><ShadcnButton variant="secondary" size="icon" className={locationControlClass} aria-label={locationControlLabel} aria-pressed={isFollowingPlayer} onClick={centerOnPlayer}><LocationIcon weight={activeRotationFollow ? 'fill' : 'regular'} aria-hidden="true" /></ShadcnButton><ShadcnButton variant="secondary" size="icon" className="map-ui-surface map-mode-toggle" aria-label={`Switch to ${is3D ? '2D' : '3D'} view`} onClick={() => setIs3D(!is3D)}>{is3D ? '3D' : '2D'}</ShadcnButton><ButtonGroup orientation="vertical" className="zoom-group map-ui-surface" aria-label="Map zoom"><ShadcnButton variant="secondary" size="icon" aria-label="Zoom in" onClick={() => stepZoom(1)}><Plus weight="regular" aria-hidden="true" /></ShadcnButton><ShadcnButton variant="secondary" size="icon" aria-label="Zoom out" onClick={() => stepZoom(-1)}><Minus weight="regular" aria-hidden="true" /></ShadcnButton></ButtonGroup></div>{!sessionActive && <ShadcnButton variant="secondary" className="record-fab map-ui-surface" onClick={() => onSessionChange(true)}><Path weight="regular" aria-hidden="true" />Roam</ShadcnButton>}
+    <div className="map-controls" style={{ bottom: sessionDockOffset }} aria-label="Map controls">{showDebugMenu && debugOpen && <div className="map-layers-panel map-ui-surface"><p>LAYERS</p><label><strong>Persistent region boundaries</strong><Switch checked={showRegionProgress} disabled={progressMode} onCheckedChange={setShowRegionProgress} aria-label="Persistent region boundaries" /></label><label><strong>3D terrain</strong><Switch checked={showTerrain3D} onCheckedChange={setShowTerrain3D} aria-label="3D terrain" /></label><label><strong>3D buildings</strong><Switch checked={showBuildings3D} onCheckedChange={setShowBuildings3D} aria-label="3D buildings" /></label></div>}<ShadcnButton variant="secondary" size="icon" className="map-ui-surface layers-control" aria-label={`Open layers panel, ${activeLayerCount} active`} aria-expanded={debugOpen} onClick={() => setDebugOpen(!debugOpen)}><Stack weight="regular" aria-hidden="true" />{activeLayerCount > 0 && <span className="layers-control__dot" aria-hidden="true" />}</ShadcnButton><ShadcnButton variant="secondary" size="icon" className={locationControlClass} aria-label={locationControlLabel} aria-pressed={isFollowingPlayer} onClick={centerOnPlayer}><LocationIcon weight={activeRotationFollow ? 'fill' : 'regular'} aria-hidden="true" /></ShadcnButton><ShadcnButton variant="secondary" size="icon" className="map-ui-surface map-mode-toggle" aria-label={`Switch to ${is3D ? '2D' : '3D'} view`} onClick={() => setIs3D(!is3D)}>{is3D ? '3D' : '2D'}</ShadcnButton><ButtonGroup orientation="vertical" className="zoom-group map-ui-surface" aria-label="Map zoom"><ShadcnButton variant="secondary" size="icon" aria-label="Zoom in" onClick={() => stepZoom(1)}><Plus weight="regular" aria-hidden="true" /></ShadcnButton><ShadcnButton variant="secondary" size="icon" aria-label="Zoom out" onClick={() => stepZoom(-1)}><Minus weight="regular" aria-hidden="true" /></ShadcnButton></ButtonGroup></div>{!sessionActive && <ShadcnButton variant="secondary" className="record-fab map-ui-surface" onClick={() => onSessionChange(true)}><Path weight="regular" aria-hidden="true" />Roam</ShadcnButton>}
     <ShadcnButton variant="secondary" size="medium" className="progress-mode-toggle map-ui-surface rounded-pill" aria-pressed={progressMode} onClick={toggleProgressMode}><Percent weight="regular" aria-hidden="true" />Progress</ShadcnButton>
-    {showDebugMenu && debugOpen && <div className="map-layers-panel map-ui-surface" style={{ bottom: sessionDockOffset }}><p>LAYERS</p><label><span><strong>Keep region boundaries</strong><small>Administrative outlines at every zoom</small></span><Switch checked={showRegionProgress} disabled={progressMode} onCheckedChange={setShowRegionProgress} aria-label="Keep region boundaries" /></label><label><span><strong>3D buildings</strong><small>Building massing</small></span><Switch checked={showBuildings3D} onCheckedChange={setShowBuildings3D} aria-label="3D buildings" /></label><label><span><strong>3D terrain</strong><small>Elevation and shading</small></span><Switch checked={showTerrain3D} onCheckedChange={setShowTerrain3D} aria-label="3D terrain" /></label></div>}
     {!startupDismissed && <div className={`map-startup${startupCenterSettled ? ' map-startup--centered' : ''}${mapVisualReady ? ' map-startup--revealing' : ''}`} role="status" aria-label={mapVisualReady ? 'Map ready' : 'Loading map'}><div className="map-startup__mark" style={{ transform: `translateY(${topOverlayInset / 2}px)` }} aria-hidden="true" /></div>}
   </section>;
 }
@@ -1870,6 +1906,7 @@ function PrimaryNavigation({ view, onChange }: { view: View; onChange: (view: Vi
 }
 
 function App() {
+  const appVisible = useAppVisible();
   const [view, setView] = useState<View>('map');
   const showDiscovered = true;
   const [showRegionProgress, setShowRegionProgress] = useMapSetting('region-boundaries');
@@ -1882,6 +1919,7 @@ function App() {
   });
   const [gpsEnabled, setGpsEnabled] = useState(() => localStorage.getItem(GPS_ENABLED_STORAGE_KEY) === 'true');
   const [sessionActive, setSessionActive] = useState(false);
+  useScreenWakeLock(sessionActive);
   const sessionActiveRef = useRef(false);
   const sessionLastPositionRef = useRef<Pick<NavigationState, 'lng' | 'lat'> | null>(null);
   const lastProcessedLocationTimestampRef = useRef(0);
@@ -2412,7 +2450,7 @@ function App() {
     if (!data.user) throw new Error('Sign in from Settings to refresh from the cloud.');
     await runAccountSync(data.user.id);
   };
-  return <main className="app-shell" style={{ '--activity-drawer-height': `${activityDrawerHeight}px` } as CSSProperties}><div className="app-content"><MapView active={view === 'map'} onRequestLocation={() => handleGpsChange(true)} sessionActive={sessionActive} onSessionChange={handleSessionChange} activityDrawerHeight={activityDrawerHeight} showDiscovered={showDiscovered} showRegionProgress={showRegionProgress} setShowRegionProgress={setShowRegionProgress} is3D={is3D} setIs3D={setIs3D} showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} showDebugMenu playerLocation={playerLocation} discoveries={discoveries} discoveriesLoaded={discoveriesLoaded} initialSyncSettled={initialSyncSettled} onDiscoveries={handleDiscoveries} />{view === 'sessions' && <SessionsView sessions={sessions} onExport={handleGpxExport} onRename={handleSessionRename} onDelete={handleSessionDelete} onImportGpx={handleGpxImport} onRefresh={handleCloudRefresh} />}{view === 'settings' && <SettingsView showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} gpsEnabled={gpsEnabled} gpsPermission={gpsPermission} onGpsChange={handleGpsChange} onOpenDesignSystem={() => setView('design-system')} />}{view === 'design-system' && <DesignSystemView onBack={() => setView('settings')} />}</div>{activityDrawerVisible && <div ref={activityDrawerRef} className={`activity-drawer ${sessionActive ? 'activity-drawer--open' : 'activity-drawer--closing'}`}><div className="activity-drawer-copy"><span className="roam-overline-sm activity-drawer-title">Active session</span><div className="activity-drawer-stats font-mono"><span className="activity-drawer-timer">{formatSessionTime(sessionElapsedSeconds)}</span><span className="activity-drawer-separator" aria-hidden="true">·</span><span className="activity-drawer-distance">{formatDistance(sessionDistanceMeters)}</span><span className="activity-drawer-new-distance">({formatDistance(sessionDiscoveredMeters)} new)</span></div></div>{sessionActive && <ShadcnButton variant="destructive" className="hover:!border-danger-500 active:!border-danger-500" onClick={() => handleSessionChange(false)}>Stop</ShadcnButton>}</div>}<PrimaryNavigation view={view} onChange={setView} /><Toaster /></main>;
+  return <main className="app-shell" style={{ '--activity-drawer-height': `${activityDrawerHeight}px` } as CSSProperties}><div className="app-content">{view === 'map' && appVisible && <MapView active onRequestLocation={() => handleGpsChange(true)} sessionActive={sessionActive} onSessionChange={handleSessionChange} activityDrawerHeight={activityDrawerHeight} showDiscovered={showDiscovered} showRegionProgress={showRegionProgress} setShowRegionProgress={setShowRegionProgress} is3D={is3D} setIs3D={setIs3D} showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} showDebugMenu playerLocation={playerLocation} discoveries={discoveries} discoveriesLoaded={discoveriesLoaded} initialSyncSettled={initialSyncSettled} onDiscoveries={handleDiscoveries} />}{view === 'sessions' && <SessionsView sessions={sessions} onExport={handleGpxExport} onRename={handleSessionRename} onDelete={handleSessionDelete} onImportGpx={handleGpxImport} onRefresh={handleCloudRefresh} />}{view === 'settings' && <SettingsView showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} gpsEnabled={gpsEnabled} gpsPermission={gpsPermission} onGpsChange={handleGpsChange} onOpenDesignSystem={() => setView('design-system')} />}{view === 'design-system' && <DesignSystemView onBack={() => setView('settings')} />}</div>{activityDrawerVisible && <div ref={activityDrawerRef} className={`activity-drawer ${sessionActive ? 'activity-drawer--open' : 'activity-drawer--closing'}`}><div className="activity-drawer-copy"><span className="roam-overline-sm activity-drawer-title">Active session</span><div className="activity-drawer-stats font-mono"><span className="activity-drawer-timer">{formatSessionTime(sessionElapsedSeconds)}</span><span className="activity-drawer-separator" aria-hidden="true">·</span><span className="activity-drawer-distance">{formatDistance(sessionDistanceMeters)}</span><span className="activity-drawer-new-distance">({formatDistance(sessionDiscoveredMeters)} new)</span></div></div>{sessionActive && <ShadcnButton variant="destructive" className="hover:!border-danger-500 active:!border-danger-500" onClick={() => handleSessionChange(false)}>Stop</ShadcnButton>}</div>}<PrimaryNavigation view={view} onChange={setView} /><Toaster /></main>;
 }
 
 const rootElement = document.getElementById('root')!;

@@ -194,6 +194,7 @@ aside.rounded-control.border-l-2.border-accent { display: none; }
 .location-control--active { animation: location-follow-glow 1.8s ease-in-out infinite; }
 .location-control--active svg { filter: drop-shadow(0 0 5px color-mix(in srgb, var(--color-location-500) 72%, transparent)); }
 .player-marker__arrow { transition-duration: 320ms; }
+.player-marker--3d::before, .player-marker--3d::after, .player-marker--3d .player-marker__arrow { opacity: 0; }
 @keyframes location-follow-glow { 50% { box-shadow: 0 5px 14px rgba(0, 0, 0, .34), 0 0 0 4px color-mix(in srgb, var(--color-location-500) 34%, transparent); } }
 @media (prefers-reduced-motion: reduce) { .location-control--active { animation: none; } }
 
@@ -267,16 +268,14 @@ aside.rounded-control.border-l-2.border-accent { display: none; }
 .map-header .map-compass button { width: 44px; height: 44px; border-radius: 50%; }
 .map-controls { display: grid; justify-items: end; gap: var(--spacing); }
 .layers-control { position: relative; }
-.layers-control__count { position: absolute; top: -5px; right: -5px; display: grid; min-width: 18px; height: 18px; place-items: center; border: 2px solid var(--color-ink-950); border-radius: var(--radius-pill); background: var(--color-accent); color: var(--color-ink-950); font-family: var(--font-mono); font-size: 10px; font-weight: 700; line-height: 1; }
-.map-layers-panel { position: absolute; z-index: 3; right: calc(var(--spacing-map-edge) + 56px); width: min(336px, calc(100vw - (var(--spacing-map-edge) * 3) - 56px)); overflow: hidden; border-radius: var(--radius-panel); box-shadow: 0 12px 32px #0009; }
+.layers-control__dot { position: absolute; top: 6px; right: 6px; width: 10px; height: 10px; border: 2px solid var(--color-surface-raised); border-radius: var(--radius-pill); background: var(--color-text-subtle); }
+.map-layers-panel { position: absolute; z-index: 3; right: 0; bottom: calc(100% + var(--map-control-gap)); width: min(336px, calc(100vw - (var(--spacing-map-edge) * 2))); overflow: hidden; border-radius: var(--radius-panel); box-shadow: 0 12px 32px #0009; }
 .map-layers-panel > p { margin: 0; border-bottom: 1px solid var(--color-border-muted); padding: 12px 14px; color: var(--color-accent); font-family: var(--font-mono); font-size: var(--text-overline); font-weight: 600; letter-spacing: .14em; }
-.map-layers-panel label { display: flex; min-height: 64px; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 14px; border-bottom: 1px solid var(--color-border-muted); color: var(--color-text); cursor: pointer; }
+.map-layers-panel label { display: flex; min-height: var(--spacing-control); align-items: center; justify-content: space-between; gap: 16px; padding: 10px 14px; border-bottom: 1px solid var(--color-border-muted); color: var(--color-text); cursor: pointer; }
 .map-layers-panel label:last-child { border-bottom: 0; }
 .map-layers-panel label:hover { background: var(--color-surface-interactive); }
-.map-layers-panel label > span { display: grid; gap: 2px; }
 .map-layers-panel label strong { font-family: var(--font-sans); font-size: var(--text-body); font-weight: 600; line-height: var(--text-body--line-height); }
-.map-layers-panel label small { color: var(--color-text-subtle); font-size: var(--text-label); line-height: var(--text-label--line-height); }
-.map-layers-panel [data-slot="switch"] { min-width: 34px; }
+.map-layers-panel [data-slot="switch"] { width: var(--spacing-control); height: calc(var(--spacing) * 6); min-width: var(--spacing-control); }
 .record-fab { position: absolute; z-index: 3; right: var(--spacing-map-edge); bottom: var(--spacing-map-edge); display: inline-flex; min-width: 84px; min-height: 44px; align-items: center; gap: 8px; border-radius: var(--radius-pill) !important; color: var(--color-text); font-weight: 400; box-shadow: 0 8px 24px #0008; }
 .record-fab svg, .progress-mode-toggle svg { width: 20px; height: 20px; flex: none; color: var(--color-paper-50); }
 .session-dock { border-radius: var(--radius-pill); animation: session-dock-expand 260ms var(--ease-outdoor); }
