@@ -34,7 +34,7 @@ import { useAppVisible } from './use-app-visible';
 import { createPlayerModel, PLAYER_MODEL_LAYER } from './player-model';
 import { DISCOVERED_UNPAVED_ROAD_COLOR, UNDISCOVERED_UNPAVED_ROAD_COLOR, UNPAVED_ROAD_DASHARRAY, UNPAVED_ROAD_WIDTH } from './map-road-colors';
 import { discoveredNetworkFeatures } from './discovery-render';
-import { areaAtBoundaryLevel, boundaryLineOpacity, boundaryMatchesLevel, mapBoundaryLevel, maxZoomForBoundaryLevel } from './map-boundary-level';
+import { areaAtBoundaryLevel, boundaryPaintAtZoom, boundaryMatchesLevel, mapBoundaryLevel, maxZoomForBoundaryLevel } from './map-boundary-level';
 import { isDiscoverableProperties, legacyRoadTypeForProperties, roadTypeForProperties, stableRoadCandidateId } from './road-rules';
 import { STOCKHOLM_ROAD_NETWORK_BY_DISTRICT } from './road-network-catalog';
 import { Button as ShadcnButton, buttonVariants } from '@/components/ui/button';
@@ -273,6 +273,31 @@ function refreshMapBoundaryLevel(map: Map) {
 }
 
 const styledBaseMaps = new WeakSet<Map>();
+const boundaryPaintZooms = new WeakMap<Map, number>();
+
+function refreshBoundaryAppearance(map: Map, force = false) {
+  const zoom = map.getZoom();
+  const previousZoom = boundaryPaintZooms.get(map);
+  if (!force && previousZoom !== undefined && Math.abs(previousZoom - zoom) < 0.1) return;
+  let visible = false;
+  for (const level of REGION_BOUNDARY_LEVELS) {
+    const id = regionBoundaryLineId(level);
+    if (!map.getLayer(id) || map.getLayoutProperty(id, 'visibility') === 'none') continue;
+    visible = true;
+    const paint = boundaryPaintAtZoom(level, zoom);
+    map.setPaintProperty(id, 'line-opacity-transition', { duration: 0, delay: 0 });
+    map.setPaintProperty(id, 'line-width-transition', { duration: 0, delay: 0 });
+    map.setPaintProperty(id, 'line-opacity', paint.opacity);
+    map.setPaintProperty(id, 'line-width', paint.width);
+  }
+  boundaryPaintZooms.set(map, zoom);
+  if (visible || force) {
+    // RTT fingerprints omit paint changes and retain old zoom textures during
+    // movement. Invalidate them together so adjacent tiles cannot disagree.
+    for (const tile of map.terrain?.tileManager.getRenderableTiles() ?? []) tile.releaseRTT(map.painter);
+    map.triggerRepaint();
+  }
+}
 
 function styleRoamMap(map: Map, showDiscovered: boolean, showRegionProgress: boolean, progressMode: boolean, is3D: boolean, showBuildings3D: boolean, showTerrain3D: boolean, initialDiscoveries: DiscoveredSegment[] = []) {
   const initializeBaseStyle = !styledBaseMaps.has(map);
@@ -365,18 +390,19 @@ function styleRoamMap(map: Map, showDiscovered: boolean, showRegionProgress: boo
     if (!map.getLayer(REGION_BOUNDARIES_FILL)) map.addLayer({ id: REGION_BOUNDARIES_FILL, type: 'fill', source: REGION_BOUNDARIES_SOURCE, 'source-layer': 'boundaries', layout: { visibility: showRegionProgress || progressMode ? 'visible' : 'none' }, paint: { 'fill-color': REGION_BOUNDARY_COLOR, 'fill-opacity': 0 } } as any, firstRoadLayer);
     map.setPaintProperty(REGION_BOUNDARIES_FILL, 'fill-color', REGION_BOUNDARY_COLOR);
     map.setPaintProperty(REGION_BOUNDARIES_FILL, 'fill-opacity', 0);
-    const boundaryWidth = ['interpolate', ['linear'], ['zoom'], 6, 0.9, 12, 1.2, 18, 1.5];
     for (const level of REGION_BOUNDARY_LEVELS) {
       const id = regionBoundaryLineId(level);
-      if (!map.getLayer(id)) map.addLayer({ id, type: 'line', source: REGION_BOUNDARIES_SOURCE, 'source-layer': 'boundaries', layout: { visibility: showRegionProgress || progressMode ? 'visible' : 'none', 'line-cap': 'butt', 'line-join': 'miter' }, paint: { 'line-color': REGION_BOUNDARY_COLOR, 'line-opacity': showRegionProgress || progressMode ? boundaryLineOpacity(level) : 0, 'line-width': boundaryWidth } } as any);
+      const boundaryPaint = boundaryPaintAtZoom(level, map.getZoom());
+      if (!map.getLayer(id)) map.addLayer({ id, type: 'line', source: REGION_BOUNDARIES_SOURCE, 'source-layer': 'boundaries', layout: { visibility: showRegionProgress || progressMode ? 'visible' : 'none', 'line-cap': 'butt', 'line-join': 'miter' }, paint: { 'line-color': REGION_BOUNDARY_COLOR, 'line-opacity': showRegionProgress || progressMode ? boundaryPaint.opacity : 0, 'line-width': boundaryPaint.width } } as any);
       map.setLayoutProperty(id, 'visibility', showRegionProgress || progressMode ? 'visible' : 'none');
       map.setFilter(id, (level === 9 ? ['==', ['to-number', ['get', 'display_level'], ['to-number', ['get', 'admin_level'], 0]], 9] : ['==', ['to-number', ['get', 'admin_level'], 0], level]) as any);
       map.setPaintProperty(id, 'line-color', REGION_BOUNDARY_COLOR);
-      map.setPaintProperty(id, 'line-opacity', (showRegionProgress || progressMode ? boundaryLineOpacity(level) : 0) as any);
+      map.setPaintProperty(id, 'line-opacity', (showRegionProgress || progressMode ? boundaryPaint.opacity : 0) as any);
       map.setPaintProperty(id, 'line-dasharray', undefined);
-      map.setPaintProperty(id, 'line-width', boundaryWidth as any);
+      map.setPaintProperty(id, 'line-width', boundaryPaint.width);
     }
     refreshMapBoundaryLevel(map);
+    refreshBoundaryAppearance(map, true);
   }
   if (!map.getSource(DISCOVERED_SOURCE)) {
     map.addSource(DISCOVERED_SOURCE, { type: 'geojson', data: discoveredNetworkFeatures(initialDiscoveries) as any });
@@ -763,13 +789,14 @@ function MapCanvas({ mapRef, mapActive, viewportBottomInset, crosshairTopInset, 
         cameraFrameRef.current = null;
         onBearingChange(map.getBearing());
         onZoomChange(map.getZoom());
+        refreshBoundaryAppearance(map);
         onPitchChange(map.getPitch());
       });
     };
     map.on('rotate', scheduleCameraState);
     map.on('zoom', scheduleCameraState);
     map.on('pitch', scheduleCameraState);
-    map.on('zoomend', () => refreshMapBoundaryLevel(map));
+    map.on('zoomend', () => { refreshMapBoundaryLevel(map); refreshBoundaryAppearance(map, true); });
     map.on('moveend', reportCalculationPoint);
     map.on('idle', () => setNetworkRevision(revision => revision + 1));
     const stopFollowingForGesture = () => onFollowPlayerChangeRef.current(false);

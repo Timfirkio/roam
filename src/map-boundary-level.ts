@@ -41,6 +41,24 @@ export function boundaryLineOpacity(level: 2 | 4 | 7 | 9) {
   return ['interpolate', ['linear'], ['zoom'], ...stops];
 }
 
+/** Evaluate camera styling once so terrain tiles share the same appearance. */
+export function boundaryPaintAtZoom(level: 2 | 4 | 7 | 9, zoom: number) {
+  const stops = boundaryLineOpacity(level).slice(3) as number[];
+  let opacity = stops[1];
+  for (let i = 2; i < stops.length; i += 2) {
+    if (zoom <= stops[i]) {
+      const fraction = Math.max(0, Math.min(1, (zoom - stops[i - 2]) / (stops[i] - stops[i - 2])));
+      opacity = stops[i - 1] + (stops[i + 1] - stops[i - 1]) * fraction;
+      break;
+    }
+    opacity = stops[i + 1];
+  }
+  const width = zoom <= 12
+    ? 0.9 + Math.max(0, Math.min(1, (zoom - 6) / 6)) * 0.3
+    : 1.2 + Math.max(0, Math.min(1, (zoom - 12) / 6)) * 0.3;
+  return { opacity, width };
+}
+
 /** Preview Level 9 outlines as discovered roads approach their overview cutoff. */
 export function boundaryPreviewOpacity(level: 2 | 4 | 7 | 9, fullZoom: number, startZoom: number) {
   return level === 9 ? ['interpolate', ['linear'], ['zoom'], fullZoom, 0.9, startZoom, 0] : 0;

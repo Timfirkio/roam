@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { areaAtBoundaryLevel, boundaryLineOpacity, boundaryMatchesLevel, boundaryPreviewOpacity, mapBoundaryLevel, maxZoomForBoundaryLevel } from './map-boundary-level';
+import { areaAtBoundaryLevel, boundaryPaintAtZoom, boundaryMatchesLevel, boundaryPreviewOpacity, mapBoundaryLevel, maxZoomForBoundaryLevel } from './map-boundary-level';
 import type { AreaRecord } from './area-types';
 
 describe('map boundary levels', () => {
@@ -18,9 +18,25 @@ describe('map boundary levels', () => {
     expect(boundaryMatchesLevel({ admin_level: 7, display_level: 7 }, 9)).toBe(false);
     expect(boundaryMatchesLevel({ admin_level: 9 }, 7)).toBe(false);
   });
-  it('switches county and municipality outlines at the same threshold', () => {
-    expect(boundaryLineOpacity(4)).toEqual(['step', ['zoom'], 0, 5, 0.9, 8, 0]);
-    expect(boundaryLineOpacity(7)).toEqual(['step', ['zoom'], 0, 8, 0.9, 10, 0]);
+  it('keeps close boundaries visible and makes overview boundaries stronger', () => {
+    for (const level of [2, 4, 7, 9] as const) {
+      const overview = boundaryPaintAtZoom(level, level === 2 ? 4 : level === 4 ? 7 : level === 7 ? 8.5 : 10);
+      const close = boundaryPaintAtZoom(level, 18);
+      expect(close.opacity).toBeGreaterThan(0);
+      expect(overview.opacity).toBeGreaterThan(close.opacity);
+      expect(close.width).toBeGreaterThan(overview.width);
+    }
+  });
+  it('produces continuous scalar paint through tile zoom thresholds', () => {
+    for (const level of [2, 4, 7, 9] as const) {
+      for (const zoom of [8, 10, 12, 14, 16, 18]) {
+        const before = boundaryPaintAtZoom(level, zoom - 0.001);
+        const after = boundaryPaintAtZoom(level, zoom + 0.001);
+        expect(Math.abs(after.opacity - before.opacity)).toBeLessThan(0.002);
+        expect(Math.abs(after.width - before.width)).toBeLessThan(0.002);
+      }
+    }
+    expect(boundaryPaintAtZoom(9, 30)).toEqual({ opacity: 0.42, width: 1.5 });
   });
   it('fades municipal-region outlines in before the Progress cutoff', () => {
     expect(boundaryPreviewOpacity(9, 11, 13)).toEqual(['interpolate', ['linear'], ['zoom'], 11, 0.9, 13, 0]);
