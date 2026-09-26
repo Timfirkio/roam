@@ -268,7 +268,7 @@ aside.rounded-control.border-l-2.border-accent { display: none; }
 .map-header .map-compass button { width: 44px; height: 44px; border-radius: 50%; }
 .map-controls { display: grid; justify-items: end; gap: var(--spacing); }
 .layers-control { position: relative; }
-.layers-control__dot { position: absolute; top: 6px; right: 6px; width: 10px; height: 10px; border: 2px solid var(--color-surface-raised); border-radius: var(--radius-pill); background: var(--color-text-subtle); }
+.layers-control svg [opacity="0.2"] { fill: var(--color-paper-50); opacity: 0.55; }
 .map-layers-panel { position: absolute; z-index: 3; right: 0; bottom: calc(100% + var(--map-control-gap)); width: min(336px, calc(100vw - (var(--spacing-map-edge) * 2))); overflow: hidden; border-radius: var(--radius-panel); box-shadow: 0 12px 32px #0009; }
 .map-layers-panel > p { margin: 0; border-bottom: 1px solid var(--color-border-muted); padding: 12px 14px; color: var(--color-accent); font-family: var(--font-mono); font-size: var(--text-overline); font-weight: 600; letter-spacing: .14em; }
 .map-layers-panel label { display: flex; min-height: var(--spacing-control); align-items: center; justify-content: space-between; gap: 16px; padding: 10px 14px; border-bottom: 1px solid var(--color-border-muted); color: var(--color-text); cursor: pointer; }

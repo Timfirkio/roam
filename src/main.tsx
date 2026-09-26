@@ -273,12 +273,16 @@ function refreshMapBoundaryLevel(map: Map) {
   if (map.getLayer(REGION_BOUNDARIES_FILL)) map.setFilter(REGION_BOUNDARIES_FILL, filter as any);
 }
 
+const styledBaseMaps = new WeakSet<Map>();
+
 function styleRoamMap(map: Map, showDiscovered: boolean, showRegionProgress: boolean, progressMode: boolean, is3D: boolean, showBuildings3D: boolean, showTerrain3D: boolean, initialDiscoveries: DiscoveredSegment[] = []) {
-  applyRoamBaseStyle(map);
+  const initializeBaseStyle = !styledBaseMaps.has(map);
+  if (initializeBaseStyle) applyRoamBaseStyle(map);
   const layers = map.getStyle().layers ?? [];
   const firstRoadLayer = layers.find((layer: any) => layer.type === 'line' && ('source-layer' in layer ? layer['source-layer'] === 'transportation' : false))?.id;
   const showBuildingExtrusions = is3D && showBuildings3D;
   const showBuildingFootprints = !is3D && showBuildings3D;
+  if (initializeBaseStyle) {
   map.setPaintProperty('background', 'background-color', '#0a0b0c');
   for (const layer of layers) {
     const id = layer.id.toLowerCase();
@@ -338,6 +342,8 @@ function styleRoamMap(map: Map, showDiscovered: boolean, showRegionProgress: boo
       if (isPedestrianFootpath) map.setPaintProperty(layer.id, 'line-dasharray', [1, 2.5]);
       else if (isCycleway || isGravelPath || isContextRoad) map.setPaintProperty(layer.id, 'line-dasharray', undefined);
     }
+  }
+  styledBaseMaps.add(map);
   }
   if (map.getSource('openmaptiles') && !map.getLayer('roam-bikeable-paths')) {
     map.addLayer({
@@ -774,7 +780,14 @@ function MapCanvas({ mapRef, mapActive, viewportBottomInset, crosshairTopInset, 
     return () => { if (markerAnimationFrameRef.current !== null) cancelAnimationFrame(markerAnimationFrameRef.current); if (markerRotationFrameRef.current !== null) cancelAnimationFrame(markerRotationFrameRef.current); if (cameraFrameRef.current !== null) cancelAnimationFrame(cameraFrameRef.current); playerMarkerRef.current?.remove(); playerMarkerRef.current = null; map.remove(); removeNetworkProtocol(); mapRef.current = null; };
   }, [mapRef]);
   useEffect(() => {
-    if (mapReady && mapRef.current) styleRoamMap(mapRef.current, showDiscovered, showRegionProgress, progressMode, is3D, showBuildings3D, showTerrain3D);
+    if (!mapReady || !mapRef.current) return;
+    const map = mapRef.current;
+    // Give the switch and icon a painted frame before changing map layers.
+    // Cancel superseded work so rapid toggles apply only the latest settings.
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => styleRoamMap(map, showDiscovered, showRegionProgress, progressMode, is3D, showBuildings3D, showTerrain3D));
+    });
+    return () => cancelAnimationFrame(frame);
   }, [mapReady, mapRef, showDiscovered, showRegionProgress, progressMode, is3D, showBuildings3D, showTerrain3D]);
   useEffect(() => {
     if (mapReady && mapRef.current) {
@@ -1427,7 +1440,7 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
   const locationControlLabel = activeRotationFollow ? 'Following your location and heading' : isFollowingPlayer ? 'Following your location' : 'Follow your location';
   const LocationIcon = activeRotationFollow ? NavigationArrow : isFollowingPlayer ? GpsFix : Gps;
   const boundariesVisible = showRegionProgress || progressMode || boundaryPreviewVisible;
-  const activeLayerCount = [boundariesVisible, showBuildings3D, showTerrain3D].filter(Boolean).length;
+  const activeLayerCount = [showRegionProgress || progressMode, showBuildings3D, showTerrain3D].filter(Boolean).length;
   useEffect(() => {
     if (!discoveredRoadsOutOfView || sessionActive) return;
     setFollowPlayer(false);
@@ -1476,7 +1489,7 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
         </div>
       </div>
     </header>
-    <div className="map-controls" style={{ bottom: sessionDockOffset }} aria-label="Map controls">{showDebugMenu && debugOpen && <div className="map-layers-panel map-ui-surface"><p>LAYERS</p><label><strong>Persistent region boundaries</strong><Switch checked={showRegionProgress} disabled={progressMode} onCheckedChange={setShowRegionProgress} aria-label="Persistent region boundaries" /></label><label><strong>3D terrain</strong><Switch checked={showTerrain3D} onCheckedChange={setShowTerrain3D} aria-label="3D terrain" /></label><label><strong>3D buildings</strong><Switch checked={showBuildings3D} onCheckedChange={setShowBuildings3D} aria-label="3D buildings" /></label></div>}<ShadcnButton variant="secondary" size="icon" className="map-ui-surface layers-control" aria-label={`Open layers panel, ${activeLayerCount} active`} aria-expanded={debugOpen} onClick={() => setDebugOpen(!debugOpen)}><Stack weight="regular" aria-hidden="true" />{activeLayerCount > 0 && <span className="layers-control__dot" aria-hidden="true" />}</ShadcnButton><ShadcnButton variant="secondary" size="icon" className={locationControlClass} aria-label={locationControlLabel} aria-pressed={isFollowingPlayer} onClick={centerOnPlayer}><LocationIcon weight={activeRotationFollow ? 'fill' : 'regular'} aria-hidden="true" /></ShadcnButton><ShadcnButton variant="secondary" size="icon" className="map-ui-surface map-mode-toggle" aria-label={`Switch to ${is3D ? '2D' : '3D'} view`} onClick={() => setIs3D(!is3D)}>{is3D ? '3D' : '2D'}</ShadcnButton><ButtonGroup orientation="vertical" className="zoom-group map-ui-surface" aria-label="Map zoom"><ShadcnButton variant="secondary" size="icon" aria-label="Zoom in" onClick={() => stepZoom(1)}><Plus weight="regular" aria-hidden="true" /></ShadcnButton><ShadcnButton variant="secondary" size="icon" aria-label="Zoom out" onClick={() => stepZoom(-1)}><Minus weight="regular" aria-hidden="true" /></ShadcnButton></ButtonGroup></div>{!sessionActive && <ShadcnButton variant="secondary" className="record-fab map-ui-surface" onClick={() => onSessionChange(true)}><Path weight="regular" aria-hidden="true" />Roam</ShadcnButton>}
+    <div className="map-controls" style={{ bottom: sessionDockOffset }} aria-label="Map controls">{showDebugMenu && debugOpen && <div className="map-layers-panel map-ui-surface"><p>LAYERS</p><label><strong>Persistent region boundaries</strong><Switch checked={showRegionProgress} disabled={progressMode} onCheckedChange={setShowRegionProgress} aria-label="Persistent region boundaries" /></label><label><strong>3D terrain</strong><Switch checked={showTerrain3D} onCheckedChange={setShowTerrain3D} aria-label="3D terrain" /></label><label><strong>3D buildings</strong><Switch checked={showBuildings3D} onCheckedChange={setShowBuildings3D} aria-label="3D buildings" /></label></div>}<ShadcnButton variant="secondary" size="icon" className="map-ui-surface layers-control" aria-label={`Open layers panel, ${activeLayerCount} active`} aria-expanded={debugOpen} onClick={() => setDebugOpen(!debugOpen)}><Stack weight={activeLayerCount > 0 ? "duotone" : "regular"} aria-hidden="true" /></ShadcnButton><ShadcnButton variant="secondary" size="icon" className={locationControlClass} aria-label={locationControlLabel} aria-pressed={isFollowingPlayer} onClick={centerOnPlayer}><LocationIcon weight={activeRotationFollow ? 'fill' : 'regular'} aria-hidden="true" /></ShadcnButton><ShadcnButton variant="secondary" size="icon" className="map-ui-surface map-mode-toggle" aria-label={`Switch to ${is3D ? '2D' : '3D'} view`} onClick={() => setIs3D(!is3D)}>{is3D ? '3D' : '2D'}</ShadcnButton><ButtonGroup orientation="vertical" className="zoom-group map-ui-surface" aria-label="Map zoom"><ShadcnButton variant="secondary" size="icon" aria-label="Zoom in" onClick={() => stepZoom(1)}><Plus weight="regular" aria-hidden="true" /></ShadcnButton><ShadcnButton variant="secondary" size="icon" aria-label="Zoom out" onClick={() => stepZoom(-1)}><Minus weight="regular" aria-hidden="true" /></ShadcnButton></ButtonGroup></div>{!sessionActive && <ShadcnButton variant="secondary" className="record-fab map-ui-surface" onClick={() => onSessionChange(true)}><Path weight="regular" aria-hidden="true" />Roam</ShadcnButton>}
     <ShadcnButton variant="secondary" size="medium" className="progress-mode-toggle map-ui-surface rounded-pill" aria-pressed={progressMode} onClick={toggleProgressMode}><Percent weight="regular" aria-hidden="true" />Progress</ShadcnButton>
     {!startupDismissed && <div className={`map-startup${startupCenterSettled ? ' map-startup--centered' : ''}${mapVisualReady ? ' map-startup--revealing' : ''}`} role="status" aria-label={mapVisualReady ? 'Map ready' : 'Loading map'}><div className="map-startup__mark" style={{ transform: `translateY(${topOverlayInset / 2}px)` }} aria-hidden="true" /></div>}
   </section>;
