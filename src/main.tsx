@@ -5,7 +5,9 @@ import { cachedExploredTotals, calculateExploredAreaTotals, exploredTotalsKey } 
 import { areaTileUrlTemplate, loadArea, lookupAreas } from './area-client';
 import { displayAreaName, shortRegionName } from './area-display-name';
 import type { AreaRecord, AreaTotals } from './area-types';
-import maplibregl, { type Map } from 'maplibre-gl';
+import * as maplibregl from 'maplibre-gl';
+import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
+import type { Map } from 'maplibre-gl';
 import { area, bbox, booleanPointInPolygon, centerOfMass, circle, pointOnFeature } from '@turf/turf';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import './styles.css';
@@ -26,6 +28,7 @@ import { reconcileSessionRoute, synchronizeDiscoveredSegmentRoadTypes } from './
 import { generateSessionThumbnail } from './session-thumbnail';
 import { formatSessionTitle, isGeneratedSessionTitle, regionNamesForSession, SESSION_NAMING_VERSION, titleForRegions } from './session-naming';
 import { applyRoamBaseStyle } from './roam-map-style';
+import { useMapSetting } from './map-settings';
 import { DISCOVERED_UNPAVED_ROAD_COLOR, UNDISCOVERED_UNPAVED_ROAD_COLOR, UNPAVED_ROAD_DASHARRAY, UNPAVED_ROAD_WIDTH } from './map-road-colors';
 import { discoveredNetworkFeatures } from './discovery-render';
 import { areaAtBoundaryLevel, boundaryLineOpacity, boundaryMatchesLevel, boundaryPreviewOpacity, mapBoundaryLevel, maxZoomForBoundaryLevel } from './map-boundary-level';
@@ -52,6 +55,9 @@ import { formatDistance } from './distance-format';
 import { supabase } from './supabase';
 import { ArrowsClockwise, CheckCircle, Compass, CrosshairSimple, Cube, DotsThreeOutline, DownloadSimple, Gear, Gps, GpsFix, MapTrifold, Minus, NavigationArrow, Path, PencilSimple, Percent, Plus, Stack, Trash, UploadSimple } from '@phosphor-icons/react';
 
+// MapLibre 6 ships its worker separately; let Vite serve and emit the asset.
+maplibregl.setWorkerUrl(maplibreWorkerUrl);
+
 type View = 'map' | 'sessions' | 'settings' | 'design-system';
 type LocationState = { city: string; region: string; lng: number; lat: number };
 type GpsPermission = 'prompt' | 'granted' | 'denied';
@@ -59,6 +65,7 @@ type PlayerLocation = NavigationState & { accuracy: number };
 
 const MAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
 const TERRAIN_SOURCE = 'roam-terrain';
+const BUILDING_SOURCE = 'roam-building-detail';
 const HILLSHADE_SOURCE = 'roam-hillshade';
 const TERRAIN_TILEJSON = 'https://tiles.mapterhorn.com/tilejson.json';
 const TERRAIN_LOD_LEVELS = 2;
@@ -267,8 +274,9 @@ function styleRoamMap(map: Map, showDiscovered: boolean, showRegionProgress: boo
   applyRoamBaseStyle(map);
   const layers = map.getStyle().layers ?? [];
   const firstRoadLayer = layers.find((layer: any) => layer.type === 'line' && ('source-layer' in layer ? layer['source-layer'] === 'transportation' : false))?.id;
-  const showBuildingExtrusions = is3D && showBuildings3D && !showTerrain3D;
-  const showBuildingFootprints = is3D && showBuildings3D && showTerrain3D;
+  const showBuildingExtrusions = is3D && showBuildings3D;
+  // Terrain no longer substitutes flat footprints for building extrusions.
+  const showBuildingFootprints = false;
   map.setPaintProperty('background', 'background-color', '#0a0b0c');
   for (const layer of layers) {
     const id = layer.id.toLowerCase();
@@ -326,7 +334,7 @@ function styleRoamMap(map: Map, showDiscovered: boolean, showRegionProgress: boo
       map.setLayoutProperty(layer.id, 'line-cap', 'round');
       map.setLayoutProperty(layer.id, 'line-join', 'round');
       if (isPedestrianFootpath) map.setPaintProperty(layer.id, 'line-dasharray', [1, 2.5]);
-      else if (isCycleway || isGravelPath || isContextRoad) map.setPaintProperty(layer.id, 'line-dasharray', null);
+      else if (isCycleway || isGravelPath || isContextRoad) map.setPaintProperty(layer.id, 'line-dasharray', undefined);
     }
   }
   if (map.getSource('openmaptiles') && !map.getLayer('roam-bikeable-paths')) {
@@ -356,7 +364,7 @@ function styleRoamMap(map: Map, showDiscovered: boolean, showRegionProgress: boo
       map.setFilter(id, (level === 9 ? ['==', ['to-number', ['get', 'display_level'], ['to-number', ['get', 'admin_level'], 0]], 9] : ['==', ['to-number', ['get', 'admin_level'], 0], level]) as any);
       map.setPaintProperty(id, 'line-color', REGION_BOUNDARY_COLOR);
       map.setPaintProperty(id, 'line-opacity', (showRegionProgress || progressMode ? boundaryLineOpacity(level) : boundaryPreviewOpacity(level, DISCOVERED_MIN_ZOOM, BOUNDARY_PREVIEW_START_ZOOM)) as any);
-      map.setPaintProperty(id, 'line-dasharray', null);
+      map.setPaintProperty(id, 'line-dasharray', undefined);
       map.setPaintProperty(id, 'line-width', ['interpolate', ['linear'], ['zoom'], 6, 0.65, 12, 0.85, 18, 1]);
     }
     refreshMapBoundaryLevel(map);
@@ -418,12 +426,18 @@ function styleRoamMap(map: Map, showDiscovered: boolean, showRegionProgress: boo
       paint: { 'line-color': '#b9fff7', 'line-opacity': 0.55, 'line-width': 1.5 },
     } as any, firstRoadLayer);
   }
-  if (map.getSource('openmaptiles') && !map.getLayer('roam-buildings-3d')) {
+  const baseBuildingSource = map.getSource<maplibregl.VectorTileSource>('openmaptiles');
+  if (baseBuildingSource && !map.getSource(BUILDING_SOURCE)) {
+    // Buildings exist only in z13–14 tiles. Keep full-detail geometry stable
+    // when pitched-view LOD would otherwise choose tiles without buildings.
+    map.addSource(BUILDING_SOURCE, { ...baseBuildingSource.serialize(), minzoom: 14, maxzoom: 14 });
+  }
+  if (map.getSource(BUILDING_SOURCE) && !map.getLayer('roam-buildings-3d')) {
     map.addLayer({
       id: 'roam-buildings-3d',
       type: 'fill-extrusion',
       minzoom: 13,
-      source: 'openmaptiles',
+      source: BUILDING_SOURCE,
       'source-layer': 'building',
       paint: {
         'fill-extrusion-color': '#27302e',
@@ -450,11 +464,6 @@ function styleRoamMap(map: Map, showDiscovered: boolean, showRegionProgress: boo
       layout: { visibility: showBuildingFootprints ? 'visible' : 'none' },
     } as any, firstRoadLayer);
   }
-  // Keep transparent extrusions behind every transportation layer. This is
-  // especially important with terrain enabled, where MapLibre's 3D render
-  // pass can otherwise make an incorrectly anchored extrusion cover roads.
-  const roadLayer = map.getStyle().layers?.find((layer: any) => layer.type === 'line' && ('source-layer' in layer ? layer['source-layer'] === 'transportation' : false));
-  if (roadLayer && map.getLayer('roam-buildings-3d')) map.moveLayer('roam-buildings-3d', roadLayer.id);
   if (map.getLayer('roam-buildings-3d')) map.setLayoutProperty('roam-buildings-3d', 'visibility', showBuildingExtrusions ? 'visible' : 'none');
   if (map.getLayer('roam-building-footprints')) map.setLayoutProperty('roam-building-footprints', 'visibility', showBuildingFootprints ? 'visible' : 'none');
   if (is3D && showTerrain3D) {
@@ -527,6 +536,9 @@ function styleRoamMap(map: Map, showDiscovered: boolean, showRegionProgress: boo
   // sibling/admin-level features cannot be left hidden behind the active area.
   if (map.getLayer(REGION_BOUNDARIES_FILL)) map.setLayoutProperty(REGION_BOUNDARIES_FILL, 'visibility', showRegionProgress || progressMode ? 'visible' : 'none');
   for (const lineId of REGION_BOUNDARIES_LINES) if (map.getLayer(lineId)) map.setLayoutProperty(lineId, 'visibility', 'visible');
+  // Blend translucent buildings over the completed terrain, including roads
+  // and discovery overlays, before their depth can reject those ground pixels.
+  if (map.getLayer('roam-buildings-3d')) map.moveLayer('roam-buildings-3d');
 }
 
 function roadTypeForFeature(properties: Record<string, unknown>) {
@@ -785,7 +797,7 @@ function MapCanvas({ mapRef, mapActive, viewportBottomInset, crosshairTopInset, 
     let active = true;
     let frame = 0;
     // Wait for GeoJSON processing and a transparent frame before fading in.
-    void source.setData(data as any, true).then(() => {
+    void source.setData(data as any).then(() => {
       if (!active) return;
       frame = requestAnimationFrame(() => {
         frame = requestAnimationFrame(() => {
@@ -1328,7 +1340,7 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
     if (!map.getLayer(CURRENT_AREA_LINE)) map.addLayer({ id: CURRENT_AREA_LINE, type: 'line', source: CURRENT_AREA_SOURCE, layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': REGION_BOUNDARY_COLOR, 'line-opacity': 1, 'line-width': ['interpolate', ['linear'], ['zoom'], 6, 1.4, 12, 1.8, 18, 2.2] } } as any);
     map.setPaintProperty(CURRENT_AREA_FILL, 'fill-color', REGION_BOUNDARY_COLOR);
     map.setPaintProperty(CURRENT_AREA_LINE, 'line-color', REGION_BOUNDARY_COLOR);
-    map.setPaintProperty(CURRENT_AREA_LINE, 'line-dasharray', null);
+    map.setPaintProperty(CURRENT_AREA_LINE, 'line-dasharray', undefined);
     const updateVisibility = () => {
       const level = mapBoundaryLevel(map.getZoom());
       const promotedMunicipality = level === 9 && displayedArea.area.adminLevel === 7 && map.queryRenderedFeatures({ layers: [REGION_BOUNDARIES_FILL] }).some(feature => String(feature.properties?.id) === displayedArea.area.id && boundaryMatchesLevel(feature.properties as Record<string, unknown>, 9));
@@ -1860,10 +1872,10 @@ function PrimaryNavigation({ view, onChange }: { view: View; onChange: (view: Vi
 function App() {
   const [view, setView] = useState<View>('map');
   const showDiscovered = true;
-  const [showRegionProgress, setShowRegionProgress] = useState(false);
-  const [is3D, setIs3D] = useState(false);
-  const [showBuildings3D, setShowBuildings3D] = useState(false);
-  const [showTerrain3D, setShowTerrain3D] = useState(false);
+  const [showRegionProgress, setShowRegionProgress] = useMapSetting('region-boundaries');
+  const [is3D, setIs3D] = useMapSetting('3d-view');
+  const [showBuildings3D, setShowBuildings3D] = useMapSetting('3d-buildings');
+  const [showTerrain3D, setShowTerrain3D] = useMapSetting('3d-terrain');
   const [gpsPermission, setGpsPermission] = useState<GpsPermission>(() => {
     const stored = localStorage.getItem(GPS_PERMISSION_STORAGE_KEY);
     return stored === 'granted' || stored === 'denied' ? stored : 'prompt';

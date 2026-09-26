@@ -4,7 +4,7 @@ import { Marker, LngLat, type Map } from 'maplibre-gl';
 // Exercise the real MapLibre marker with just the DOM/map surface it needs.
 function fixture() {
   const element = {
-    classList: { add() {}, remove() {} },
+    classList: { add() {}, remove() {}, toggle() {} },
     style: {}, remove() {},
     addEventListener() {}, removeEventListener() {},
     hasAttribute: () => true, setAttribute() {},
@@ -16,7 +16,7 @@ function fixture() {
   const map = {
     getCanvasContainer: () => ({ appendChild() {} }),
     on() {}, off() {}, loaded: () => true, isMoving: () => false,
-    transform: { getCoveringTilesDetailsProvider: () => ({ allowWorldCopies: () => false }) },
+    _camera: { transform: { getCoveringTilesDetailsProvider: () => ({ allowWorldCopies: () => false }) } },
     project,
     _ownerWindow: { requestAnimationFrame: () => 1 },
   } as unknown as Map;

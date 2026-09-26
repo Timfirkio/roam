@@ -1,4 +1,4 @@
-import maplibregl from 'maplibre-gl';
+import * as maplibregl from 'maplibre-gl';
 import type { SessionPoint } from './session-store';
 import { applyRoamBaseStyle, ROAM_MAP_STYLE } from './roam-map-style';
 import { installNetworkSource, NETWORK_SOURCE } from './network-source';

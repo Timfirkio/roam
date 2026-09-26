@@ -1,4 +1,5 @@
-import maplibregl, { type Map, type VectorTileSource } from 'maplibre-gl';
+import * as maplibregl from 'maplibre-gl';
+import type { Map, VectorTileSource } from 'maplibre-gl';
 import { createNetworkTileLoader, NETWORK_DETAIL_ZOOM, NETWORK_MIN_ZOOM } from './network-tiles';
 
 export const NETWORK_SOURCE = 'roam-network-detail';
