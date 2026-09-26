@@ -1070,7 +1070,6 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
       setIs3D(true);
     } else {
       setActiveRotationFollow(false);
-      setIs3D(false);
       mapRef.current?.jumpTo({ bearing: 0 });
     }
   }, [sessionActive, setIs3D]);
@@ -1911,6 +1910,7 @@ function App() {
   const showDiscovered = true;
   const [showRegionProgress, setShowRegionProgress] = useMapSetting('region-boundaries');
   const [is3D, setIs3D] = useMapSetting('3d-view');
+  const preRide3DRef = useRef(is3D);
   const [showBuildings3D, setShowBuildings3D] = useMapSetting('3d-buildings');
   const [showTerrain3D, setShowTerrain3D] = useMapSetting('3d-terrain');
   const [gpsPermission, setGpsPermission] = useState<GpsPermission>(() => {
@@ -2351,6 +2351,8 @@ function App() {
   };
   const handleSessionChange = (active: boolean) => {
     const startedAt = sessionStartedAt;
+    if (active && !sessionActiveRef.current) preRide3DRef.current = is3D;
+    else if (!active && sessionActiveRef.current) setIs3D(preRide3DRef.current);
     sessionActiveRef.current = active;
     setSessionActive(active);
     setSessionStartedAt(active ? Date.now() : null);
