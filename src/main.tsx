@@ -31,7 +31,8 @@ import { formatSessionTitle, isGeneratedSessionTitle, regionNamesForSession, SES
 import { applyRoamBaseStyle } from './roam-map-style';
 import { useMapSetting } from './map-settings';
 import { useAppVisible } from './use-app-visible';
-import { createPlayerModel, PLAYER_MODEL_LAYER } from './player-model';
+import { createPlayerModel } from './player-model';
+import { orderMapOverlays } from './map-overlay-order';
 import { DISCOVERED_UNPAVED_ROAD_COLOR, UNDISCOVERED_UNPAVED_ROAD_COLOR, UNPAVED_ROAD_DASHARRAY, UNPAVED_ROAD_WIDTH } from './map-road-colors';
 import { discoveredNetworkFeatures } from './discovery-render';
 import { areaAtBoundaryLevel, boundaryPaintAtZoom, boundaryMatchesLevel, mapBoundaryLevel, maxZoomForBoundaryLevel } from './map-boundary-level';
@@ -559,22 +560,9 @@ function styleRoamMap(map: Map, showDiscovered: boolean, showRegionProgress: boo
       }
     }
   }
-  if (map.getLayer(REGION_BOUNDARIES_FILL)) map.moveLayer(REGION_BOUNDARIES_FILL);
-  for (const id of REGION_BOUNDARIES_LINES) if (map.getLayer(id)) map.moveLayer(id);
   if (map.getLayer(REGION_BOUNDARIES_FILL)) map.setLayoutProperty(REGION_BOUNDARIES_FILL, 'visibility', showRegionProgress || progressMode ? 'visible' : 'none');
   for (const lineId of REGION_BOUNDARIES_LINES) if (map.getLayer(lineId)) map.setLayoutProperty(lineId, 'visibility', showRegionProgress || progressMode ? 'visible' : 'none');
-  for (const id of [REGION_BOUNDARIES_FILL, CURRENT_AREA_FILL, ...REGION_BOUNDARIES_LINES, CURRENT_AREA_LINE]) {
-    if (map.getLayer(id)) map.moveLayer(id);
-  }
-  // The shared base-map treatment hides any style layer with “boundary” in
-  // its id. Reassert catalog visibility after the final layer-order pass so
-  // sibling/admin-level features cannot be left hidden behind the active area.
-  if (map.getLayer(REGION_BOUNDARIES_FILL)) map.setLayoutProperty(REGION_BOUNDARIES_FILL, 'visibility', showRegionProgress || progressMode ? 'visible' : 'none');
-  for (const lineId of REGION_BOUNDARIES_LINES) if (map.getLayer(lineId)) map.setLayoutProperty(lineId, 'visibility', showRegionProgress || progressMode ? 'visible' : 'none');
-  // Blend translucent buildings over the completed terrain, including roads
-  // and discovery overlays, before their depth can reject those ground pixels.
-  if (map.getLayer('roam-buildings-3d')) map.moveLayer('roam-buildings-3d');
-  if (map.getLayer(PLAYER_MODEL_LAYER)) map.moveLayer(PLAYER_MODEL_LAYER);
+  orderMapOverlays(map, [REGION_BOUNDARIES_FILL, CURRENT_AREA_FILL, ...REGION_BOUNDARIES_LINES, CURRENT_AREA_LINE]);
 }
 
 function roadTypeForFeature(properties: Record<string, unknown>) {
@@ -1427,10 +1415,7 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
     updateVisibility();
     map.on('zoomend', updateVisibility);
     map.on('idle', updateVisibility);
-    for (const id of [REGION_BOUNDARIES_FILL, CURRENT_AREA_FILL, ...REGION_BOUNDARIES_LINES, CURRENT_AREA_LINE]) {
-      if (map.getLayer(id)) map.moveLayer(id);
-    }
-    if (map.getLayer(PLAYER_MODEL_LAYER)) map.moveLayer(PLAYER_MODEL_LAYER);
+    orderMapOverlays(map, [REGION_BOUNDARIES_FILL, CURRENT_AREA_FILL, ...REGION_BOUNDARIES_LINES, CURRENT_AREA_LINE]);
     return () => { map.off('zoomend', updateVisibility); map.off('idle', updateVisibility); };
   }, [displayedArea, progressMode]);
   useEffect(() => { mapRef.current?.resize(); }, [activityDrawerHeight]);
