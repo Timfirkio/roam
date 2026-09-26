@@ -1,7 +1,11 @@
-import { beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import type { DiscoveredSegment } from './discovery';
 import type { DeletedSession, RideSession } from './session-store';
 
 const state = vi.hoisted(() => ({
+  localDiscoveries: [] as DiscoveredSegment[],
+  cloudDiscoveries: [] as Record<string, any>[],
+  duringCloudRead: null as (() => void) | null,
   localSessions: [] as RideSession[],
   localDeletions: [] as DeletedSession[],
   cloudRows: [] as Record<string, any>[],
@@ -10,8 +14,8 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock('./discovery-store', () => ({
-  loadDiscoveredSegments: async () => [],
-  replaceDiscoveredSegments: async () => {},
+  loadDiscoveredSegments: async () => [...state.localDiscoveries],
+  replaceDiscoveredSegments: async (segments: DiscoveredSegment[]) => { state.localDiscoveries = segments; },
 }));
 
 vi.mock('./session-store', () => ({
@@ -46,6 +50,16 @@ vi.mock('./supabase', () => ({ requireSupabase: () => ({ from: (table: string) =
     upsert: (value: any) => { operation = 'upsert'; payload = value; return query; },
     insert: () => { operation = 'insert'; return query; },
     then: (resolve: (value: any) => unknown, reject?: (reason: unknown) => unknown) => Promise.resolve().then(() => {
+      if (table === 'discoveries' && operation === 'select') {
+        const duringCloudRead = state.duringCloudRead;
+        state.duringCloudRead = null;
+        duringCloudRead?.();
+        return { data: [...state.cloudDiscoveries], error: null };
+      }
+      if (table === 'discoveries' && operation === 'upsert') {
+        state.cloudDiscoveries.push(...payload);
+        return { data: null, error: null };
+      }
       if (table === 'ride_sessions' && operation === 'update') {
         const row = state.cloudRows.find(candidate => candidate.id === sessionId && candidate.deleted_at === null);
         if (row) row.deleted_at = payload.deleted_at;
@@ -66,7 +80,7 @@ vi.mock('./supabase', () => ({ requireSupabase: () => ({ from: (table: string) =
   return query;
 } }) }));
 
-import { syncAccountProgress } from './cloud-sync';
+import { runAccountSync, syncAccountProgress } from './cloud-sync';
 
 const session: RideSession = {
   id: 'ride-1', title: 'Ride', districtNames: [], startedAt: 1_000, endedAt: 2_000,
@@ -83,11 +97,70 @@ function cloudSession(deletedAt: string | null) {
 }
 
 beforeEach(() => {
+  state.localDiscoveries = [];
+  state.cloudDiscoveries = [];
+  state.duringCloudRead = null;
   state.localSessions = [];
   state.localDeletions = [];
   state.cloudRows = [];
   state.deletedPointIds = [];
   state.uploadedSessionIds = [];
+});
+
+afterEach(() => vi.unstubAllGlobals());
+
+function discovery(id: string, lengthMeters = 12): DiscoveredSegment {
+  return { id, lengthMeters, roadType: 'cycleway', discoveredAt: 1_000, geometry: { type: 'LineString', coordinates: [[18, 59], [18.001, 59]] } };
+}
+
+function cloudDiscovery(segment: DiscoveredSegment) {
+  return { segment_id: segment.id, road_type: segment.roadType, geometry: segment.geometry, length_meters: segment.lengthMeters, discovered_at: new Date(segment.discoveredAt).toISOString() };
+}
+
+async function syncEvent() {
+  const dispatchEvent = vi.fn();
+  vi.stubGlobal('window', { dispatchEvent });
+  await runAccountSync('user-1');
+  expect(dispatchEvent).toHaveBeenCalledOnce();
+  return (dispatchEvent.mock.calls[0][0] as CustomEvent).detail;
+}
+
+it('does not report local GPS discoveries or a ride completed during sync as remote progress', async () => {
+  state.duringCloudRead = () => {
+    state.localDiscoveries.push(discovery('local-during-sync'));
+    state.localSessions.push(session);
+  };
+
+  const detail = await syncEvent();
+
+  expect(detail.addedDiscoveryMeters).toBe(0);
+  expect(detail.addedRides).toBe(0);
+  expect(detail.discoveries.map((item: DiscoveredSegment) => item.id)).toEqual(['local-during-sync']);
+  expect(detail.sessions).toEqual([session]);
+});
+
+it('reports only remote additions when cloud and local progress arrive during the same sync', async () => {
+  state.localDiscoveries = [discovery('local-before-sync')];
+  state.cloudDiscoveries = [cloudDiscovery(discovery('remote', 24))];
+  state.cloudRows = [{ ...cloudSession(null), id: 'remote-ride' }];
+  state.duringCloudRead = () => {
+    const local = discovery('local-during-sync');
+    state.localDiscoveries.push(local);
+    // Even a cloud echo of a discovery made here must stay silent.
+    state.cloudDiscoveries.push(cloudDiscovery(local));
+    state.localSessions.push(session);
+  };
+
+  const detail = await syncEvent();
+
+  expect(detail.addedDiscoveryMeters).toBe(24);
+  expect(detail.addedRides).toBe(1);
+  expect(detail.discoveries).toHaveLength(3);
+  expect(detail.sessions).toHaveLength(2);
+
+  const repeated = await syncEvent();
+  expect(repeated.addedDiscoveryMeters).toBe(0);
+  expect(repeated.addedRides).toBe(0);
 });
 
 it('uploads a local deletion and removes the cloud GPS points', async () => {

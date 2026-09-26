@@ -193,20 +193,28 @@ export async function syncAccountProgress(userId: string, onProgress?: (progress
   });
   // Local GPS discoveries can arrive while a network request is in flight.
   // Keep them in the cache so the next automatic pass can upload them.
-  (await loadDiscoveredSegments()).forEach(item => {
+  const latestLocalDiscoveries = await loadDiscoveredSegments();
+  latestLocalDiscoveries.forEach(item => {
     if (!mergedDiscoveries.has(item.id)) mergedDiscoveries.set(item.id, item);
   });
   const initialSessionsById = new Map(sessions.map(item => [item.id, item]));
-  (await loadSessions()).forEach(item => {
+  const latestLocalSessions = await loadSessions();
+  latestLocalSessions.forEach(item => {
     if (cloudDeletedIds.has(item.id) || localDeletedIds.has(item.id)) return;
     const initial = initialSessionsById.get(item.id);
     if (!initial || !sameSessionDetails(initial, item) || !samePoints(initial.points, item.points)) mergedSessions.set(item.id, item);
   });
   const syncedDiscoveries = [...mergedDiscoveries.values()];
   const syncedSessions = [...mergedSessions.values()].sort((a, b) => b.startedAt - a.startedAt);
+  // Only cloud records absent from this device are remote additions. GPS
+  // discoveries and completed rides made during the sync are still local.
+  const localDiscoveryIds = new Set([...discoveries, ...latestLocalDiscoveries].map(item => item.id));
+  const localSessionIds = new Set([...sessions, ...latestLocalSessions].map(item => item.id));
+  const addedDiscoveryMeters = syncedDiscoveries.filter(item => !localDiscoveryIds.has(item.id)).reduce((total, item) => total + item.lengthMeters, 0);
+  const addedRides = syncedSessions.filter(item => !localSessionIds.has(item.id)).length;
   onProgress?.({ label: 'Updating this device…' });
   await Promise.all([replaceDiscoveredSegments(syncedDiscoveries), replaceSessions(syncedSessions)]);
-  return { discoveries: syncedDiscoveries, sessions: await loadSessions() };
+  return { discoveries: syncedDiscoveries, sessions: await loadSessions(), addedDiscoveryMeters, addedRides };
 }
 
 let activeSync: Promise<Awaited<ReturnType<typeof syncAccountProgress>>> | null = null;
@@ -214,17 +222,11 @@ let activeSync: Promise<Awaited<ReturnType<typeof syncAccountProgress>>> | null 
 /** Serialize manual and automatic syncs so neither replaces the other's cache. */
 export function runAccountSync(userId: string, onProgress?: (progress: SyncProgress) => void) {
   if (activeSync) return activeSync;
-  const task = Promise.all([loadDiscoveredSegments(), loadSessions()]).then(async ([localDiscoveries, localSessions]) => {
-    const knownDiscoveries = new Set(localDiscoveries.map(item => item.id));
-    const knownSessions = new Set(localSessions.map(item => item.id));
+  const task = (async () => {
     const result = await syncAccountProgress(userId, onProgress);
-    window.dispatchEvent(new CustomEvent('roam:account-sync-complete', { detail: {
-      ...result,
-      addedDiscoveryMeters: result.discoveries.filter(item => !knownDiscoveries.has(item.id)).reduce((total, item) => total + item.lengthMeters, 0),
-      addedRides: result.sessions.filter(item => !knownSessions.has(item.id)).length,
-    } }));
+    window.dispatchEvent(new CustomEvent('roam:account-sync-complete', { detail: result }));
     return result;
-  });
+  })();
   activeSync = task;
   void task.finally(() => { if (activeSync === task) activeSync = null; }).catch(() => {});
   return task;
