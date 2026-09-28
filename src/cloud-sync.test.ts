@@ -11,6 +11,7 @@ const state = vi.hoisted(() => ({
   cloudRows: [] as Record<string, any>[],
   deletedPointIds: [] as string[],
   uploadedSessionIds: [] as string[],
+  insertedPoints: [] as Record<string, any>[],
 }));
 
 vi.mock('./discovery-store', () => ({
@@ -38,17 +39,18 @@ vi.mock('./supabase', () => ({ requireSupabase: () => ({ from: (table: string) =
   let payload: any;
   let deletedFilter: 'active' | 'deleted' | null = null;
   let sessionId: string | null = null;
+  let range: [number, number] | null = null;
   const query = {
     select: () => query,
     eq: (column: string, value: string) => { if (column === 'id' || column === 'session_id') sessionId = value; return query; },
     is: (column: string) => { if (column === 'deleted_at') deletedFilter = 'active'; return query; },
     not: (column: string) => { if (column === 'deleted_at') deletedFilter = 'deleted'; return query; },
     order: () => query,
-    range: () => query,
+    range: (from: number, to: number) => { range = [from, to]; return query; },
     update: (value: any) => { operation = 'update'; payload = value; return query; },
     delete: () => { operation = 'delete'; return query; },
     upsert: (value: any) => { operation = 'upsert'; payload = value; return query; },
-    insert: () => { operation = 'insert'; return query; },
+    insert: (value: any) => { operation = 'insert'; payload = value; return query; },
     then: (resolve: (value: any) => unknown, reject?: (reason: unknown) => unknown) => Promise.resolve().then(() => {
       if (table === 'discoveries' && operation === 'select') {
         const duringCloudRead = state.duringCloudRead;
@@ -71,9 +73,24 @@ vi.mock('./supabase', () => ({ requireSupabase: () => ({ from: (table: string) =
       }
       if (table === 'ride_session_points' && operation === 'delete') {
         state.deletedPointIds.push(sessionId!);
+        const cloudSession = state.cloudRows.find(row => row.id === sessionId);
+        if (cloudSession) cloudSession.ride_session_points = [];
+        state.insertedPoints = state.insertedPoints.filter(point => point.session_id !== sessionId);
         return { data: null, error: null };
       }
-      if (table === 'ride_sessions') return { data: state.cloudRows.filter(row => deletedFilter === 'deleted' ? row.deleted_at !== null : row.deleted_at === null), error: null };
+      if (table === 'ride_session_points' && operation === 'insert') {
+        state.insertedPoints.push(...payload);
+        return { data: null, error: null };
+      }
+      if (table === 'ride_session_points' && operation === 'select') {
+        const points = [...state.cloudRows.flatMap(row => row.ride_session_points ?? []), ...state.insertedPoints]
+          .sort((a, b) => a.session_id.localeCompare(b.session_id) || a.sequence - b.sequence);
+        return { data: range ? points.slice(range[0], range[1] + 1) : points.slice(0, 1_000), error: null };
+      }
+      if (table === 'ride_sessions') {
+        const rows = state.cloudRows.filter(row => deletedFilter === 'deleted' ? row.deleted_at !== null : row.deleted_at === null);
+        return { data: range ? rows.slice(range[0], range[1] + 1) : rows.slice(0, 1_000), error: null };
+      }
       return { data: [], error: null };
     }).then(resolve, reject),
   };
@@ -105,6 +122,7 @@ beforeEach(() => {
   state.cloudRows = [];
   state.deletedPointIds = [];
   state.uploadedSessionIds = [];
+  state.insertedPoints = [];
 });
 
 afterEach(() => vi.unstubAllGlobals());
@@ -194,4 +212,36 @@ it('reapplies a synced deletion if a stale device restores the cloud row', async
 
   expect(state.cloudRows[0].deleted_at).toBe(new Date(3_000).toISOString());
   expect(state.uploadedSessionIds).toEqual([]);
+});
+
+it('loads every GPS point across cloud pages and keeps the complete ride locally', async () => {
+  const points = Array.from({ length: 1_501 }, (_, sequence) => ({
+    session_id: session.id, sequence, lat: 59 + sequence / 100_000, lng: 18,
+    accuracy: 5, recorded_at: new Date(1_000 + sequence * 1_000).toISOString(), speed: null, bearing: null,
+  }));
+  state.cloudRows = [{ ...cloudSession(null), ride_session_points: points }];
+
+  const result = await syncAccountProgress('user-1');
+
+  expect(result.sessions).toHaveLength(1);
+  expect(result.sessions[0].points).toHaveLength(1_501);
+  expect(result.sessions[0].points[0].lat).toBe(points[0].lat);
+  expect(result.sessions[0].points.at(-1)?.lat).toBe(points.at(-1)?.lat);
+});
+
+it('restores a complete local route when the cloud copy has only 1000 points', async () => {
+  const points = Array.from({ length: 1_501 }, (_, sequence) => ({
+    lat: 59 + sequence / 100_000, lng: 18, accuracy: 5, timestamp: 1_000 + sequence * 1_000,
+  }));
+  state.localSessions = [{ ...session, points }];
+  state.cloudRows = [{ ...cloudSession(null), ride_session_points: points.slice(0, 1_000).map((point, sequence) => ({
+    session_id: session.id, sequence, lat: point.lat, lng: point.lng, accuracy: point.accuracy,
+    recorded_at: new Date(point.timestamp).toISOString(), speed: null, bearing: null,
+  })) }];
+
+  const result = await syncAccountProgress('user-1');
+
+  expect(state.deletedPointIds).toEqual([session.id]);
+  expect(state.insertedPoints).toHaveLength(1_501);
+  expect(result.sessions[0].points).toHaveLength(1_501);
 });

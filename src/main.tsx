@@ -24,9 +24,11 @@ import { clearZoomStep, easeMapCamera, stepMapZoom } from './map-camera';
 import { Geolocation, type CallbackID, type Position } from '@capacitor/geolocation';
 import { Capacitor } from '@capacitor/core';
 import { RideTracking, type RideTrackingPoint } from './ride-background-tracking';
+import { gpxDocument } from './gpx-document';
 import { deleteSession, loadSessions, saveSession, type RideSession } from './session-store';
 import { reconcileSessionRoute, synchronizeDiscoveredSegmentRoadTypes } from './session-route-reconciliation';
 import { generateSessionThumbnail } from './session-thumbnail';
+import { PREVIEW_HEIGHT, PREVIEW_WIDTH, sessionCoordinates, sessionPreviewGeometry, smoothSessionCoordinates } from './session-preview-geometry';
 import { formatSessionTitle, isGeneratedSessionTitle, regionNamesForSession, SESSION_NAMING_VERSION, titleForRegions } from './session-naming';
 import { applyRoamBaseStyle } from './roam-map-style';
 import { useMapSetting } from './map-settings';
@@ -109,7 +111,7 @@ const CURRENT_AREA_LINE = 'roam-current-area-line';
 const PLAYER_DISCOVERY_SOURCE = 'roam-player-discovery-radius';
 const PLAYER_DISCOVERY_FILL = 'roam-player-discovery-radius-fill';
 const PLAYER_DISCOVERY_LINE = 'roam-player-discovery-radius-line';
-const SESSION_THUMBNAIL_STYLE_VERSION = 4;
+const SESSION_THUMBNAIL_STYLE_VERSION = 5;
 const COMPASS_DIRECTIONS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'] as const;
 const COMPASS_TICKS = Array.from({ length: 24 }, (_, index) => index * 15);
 const mapAreaCache = new globalThis.Map<string, AreaRecord>();
@@ -198,16 +200,6 @@ function formatSessionDateTime(timestamp: number) {
   const dayDifference = Math.round((dayStart - sessionDayStart) / 86_400_000);
   const label = dayDifference === 0 ? 'Today' : dayDifference === 1 ? 'Yesterday' : date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }).replace(/,(?=\s*\d{4}\b)/, '');
   return `${label} at ${date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
-}
-
-function gpxDocument(points: RideTrackingPoint[]) {
-  const escapeXml = (value: string) => value.replace(/[<>&'\"]/g, character => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' })[character]!);
-  const trackPoints = points
-    .filter(point => Number.isFinite(point.lat) && Number.isFinite(point.lng) && Number.isFinite(point.timestamp))
-    .sort((a, b) => a.timestamp - b.timestamp)
-    .map(point => `      <trkpt lat="${point.lat}" lon="${point.lng}"><time>${new Date(point.timestamp).toISOString()}</time>${typeof point.speed === 'number' ? `<extensions><speed>${point.speed}</speed></extensions>` : ''}</trkpt>`)
-    .join('\n');
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Roam" xmlns="http://www.topografix.com/GPX/1/1">\n  <metadata><name>${escapeXml('Roam ride')}</name></metadata>\n  <trk><name>${escapeXml('Roam ride')}</name><trkseg>\n${trackPoints}\n  </trkseg></trk>\n</gpx>\n`;
 }
 
 function downloadGpx(contents: string, fileName: string) {
@@ -1679,29 +1671,19 @@ function SettingsViewBase({ showBuildings3D, setShowBuildings3D, showTerrain3D, 
 function PlaceholderView({ title, copy }: { title: string; copy: string }) { return <section className="min-h-[calc(100svh-76px)] overflow-auto bg-surface px-6 pb-32 pt-10 text-text sm:px-8"><div className="mx-auto max-w-2xl"><h1 className="font-sans text-title font-semibold tracking-display">{title}</h1><p className="mt-4 max-w-xl text-body-lg text-text-muted">{copy}</p><Item variant="outline" className="mt-10"><ItemContent><ItemTitle>Module ready</ItemTitle><ItemDescription>The next Sessions build slice will add route history and saved rides.</ItemDescription></ItemContent><ItemActions><span className="font-mono text-label text-accent">NEXT</span></ItemActions></Item></div></section>; }
 
 function SessionRouteFallback({ coordinates }: { coordinates: [number, number][] }) {
-  const usableCoordinates = coordinates.filter(([lng, lat]) => Number.isFinite(lng) && Number.isFinite(lat) && Math.abs(lng) <= 180 && Math.abs(lat) <= 90);
-  if (usableCoordinates.length < 2) return <div className="session-route-fallback flex items-center justify-center text-label text-text-subtle">Route preview unavailable</div>;
-  const longitudeCenter = (Math.min(...usableCoordinates.map(([lng]) => lng)) + Math.max(...usableCoordinates.map(([lng]) => lng))) / 2;
-  const latitudeCenter = (Math.min(...usableCoordinates.map(([, lat]) => lat)) + Math.max(...usableCoordinates.map(([, lat]) => lat))) / 2;
-  const longitudeScale = Math.cos(latitudeCenter * Math.PI / 180);
-  const horizontalSpread = Math.max(...usableCoordinates.map(([lng]) => Math.abs((lng - longitudeCenter) * longitudeScale)), 0.00001);
-  const verticalSpread = Math.max(...usableCoordinates.map(([, lat]) => Math.abs(lat - latitudeCenter)), 0.00001);
-  const scale = Math.min(42 / horizontalSpread, 22 / verticalSpread);
-  const project = ([lng, lat]: [number, number]) => [50 + (lng - longitudeCenter) * longitudeScale * scale, 28 - (lat - latitudeCenter) * scale] as const;
-  const smoothedCoordinates = usableCoordinates.map((coordinate, index) => {
-    if (index === 0 || index === usableCoordinates.length - 1) return coordinate;
-    const previous = usableCoordinates[index - 1];
-    const next = usableCoordinates[index + 1];
-    return [(previous[0] + coordinate[0] * 2 + next[0]) / 4, (previous[1] + coordinate[1] * 2 + next[1]) / 4] as [number, number];
-  }).filter((coordinate, index, all) => {
-    if (index === 0 || index === all.length - 1) return true;
-    const previous = all[index - 1];
-    return Math.hypot((coordinate[0] - previous[0]) * longitudeScale, coordinate[1] - previous[1]) > 0.000035;
-  });
-  const routePath = smoothedCoordinates.map((coordinate, index) => `${index === 0 ? 'M' : 'L'} ${project(coordinate).join(' ')}`).join(' ');
-  const start = project(smoothedCoordinates[0]);
-  const end = project(smoothedCoordinates[smoothedCoordinates.length - 1]);
-  return <div className="session-route-fallback" aria-hidden="true"><svg viewBox="0 0 100 56" preserveAspectRatio="xMidYMid meet"><path className="session-route-fallback-grid" d="M0 14H100M0 28H100M0 42H100M25 0V56M50 0V56M75 0V56" /><path className="session-route-fallback-line" d={routePath} /><circle className="session-route-fallback-start" cx={start[0]} cy={start[1]} r="2" /><g className="session-route-fallback-finish" transform={`translate(${end[0]} ${end[1]})`}><circle r="3.6" /><path className="session-route-fallback-flag" d="M-1.25 1.8V-2.1H1.7V1.1H-1.25" /><path className="session-route-fallback-checkers" d="M-1.25-2.1H.25V-.5H-1.25M.25-.5H1.7V1.1H.25" /></g></svg></div>;
+  if (coordinates.length < 2) return <div className="session-route-fallback flex items-center justify-center text-label text-text-subtle">Route preview unavailable</div>;
+  const smoothed = smoothSessionCoordinates(coordinates);
+  const { project, gridPath } = sessionPreviewGeometry(smoothed);
+  const routePath = smoothed.map((coordinate, index) => `${index === 0 ? 'M' : 'L'} ${project(coordinate).join(' ')}`).join(' ');
+  const start = project(smoothed[0]);
+  const end = project(smoothed[smoothed.length - 1]);
+  return <div className="session-route-fallback" aria-hidden="true"><svg viewBox={`0 0 ${PREVIEW_WIDTH} ${PREVIEW_HEIGHT}`}><path className="session-route-fallback-grid" d={gridPath} /><path className="session-route-fallback-line" d={routePath} /><circle className="session-route-fallback-start" cx={start[0]} cy={start[1]} r="10" /><g className="session-route-fallback-finish" transform={`translate(${end[0]} ${end[1]})`}><circle r="17" /><path className="session-route-fallback-flag" d="M-6 8V-8H7V6H-6" /><path className="session-route-fallback-checkers" d="M-6-8H0V-1H-6M0-1H7V6H0" /></g></svg></div>;
+}
+
+function SessionPreviewGrid({ coordinates }: { coordinates: [number, number][] }) {
+  if (coordinates.length < 2) return null;
+  const { gridPath } = sessionPreviewGeometry(smoothSessionCoordinates(coordinates));
+  return <svg className="session-route-grid" viewBox={`0 0 ${PREVIEW_WIDTH} ${PREVIEW_HEIGHT}`} aria-hidden="true"><path d={gridPath} /></svg>;
 }
 
 function SettingsView({ showBuildings3D, setShowBuildings3D, showTerrain3D, setShowTerrain3D, gpsEnabled, gpsPermission, onGpsChange, onOpenDesignSystem }: Parameters<typeof SettingsViewBase>[0]) {
@@ -1744,15 +1726,17 @@ function SettingsView({ showBuildings3D, setShowBuildings3D, showTerrain3D, setS
 
 function SessionRoutePreview({ session }: { session: RideSession }) {
   const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
+  const [imageFailed, setImageFailed] = useState(false);
   useEffect(() => {
     if (!session.thumbnail) { setThumbnailUrl(null); return; }
     const url = URL.createObjectURL(session.thumbnail);
+    setImageFailed(false);
     setThumbnailUrl(url);
     return () => URL.revokeObjectURL(url);
   }, [session.thumbnail]);
   const points = session.points;
-  const coordinates = useMemo(() => points.map(point => [point.lng, point.lat] as [number, number]).filter(([lng, lat]) => Number.isFinite(lng) && Number.isFinite(lat) && Math.abs(lng) <= 180 && Math.abs(lat) <= 90), [points]);
-  return <div className="session-route-preview mt-4 aspect-[2/1] overflow-hidden rounded-control border border-border-muted" aria-label="Session route preview">{thumbnailUrl ? <img className="session-route-thumbnail" src={thumbnailUrl} alt="" /> : <SessionRouteFallback coordinates={coordinates} />}</div>;
+  const coordinates = useMemo(() => sessionCoordinates(points), [points]);
+  return <div className="session-route-preview mt-4 aspect-[2/1] overflow-hidden rounded-control border border-border-muted" aria-label="Session route preview"><SessionRouteFallback coordinates={coordinates} />{thumbnailUrl && !imageFailed && <><img className="session-route-thumbnail" src={thumbnailUrl} alt="" onError={() => setImageFailed(true)} /><SessionPreviewGrid coordinates={coordinates} /></>}</div>;
 }
 
 function SessionsView({ sessions, onExport, onRename, onDelete, onImportGpx, onRefresh }: { sessions: RideSession[]; onExport: (session: RideSession) => void; onRename: (session: RideSession, title: string) => void; onDelete: (session: RideSession) => void; onImportGpx: (file: File) => Promise<string>; onRefresh: () => Promise<void> }) {
@@ -2021,7 +2005,6 @@ function App() {
       }
       sessionLastPositionRef.current = currentPosition;
       sessionTrackPointsRef.current.push({ ...fix });
-      if (sessionTrackPointsRef.current.length > 21600) sessionTrackPointsRef.current.shift();
     }
     const navigation = nextNavigationState(navigationRef.current, {
       ...currentPosition,
@@ -2180,23 +2163,39 @@ function App() {
     return () => window.removeEventListener('roam:account-sync-complete', applyAccountSync);
   }, []);
   useEffect(() => {
-    const onVisible = () => { if (document.visibilityState === 'visible') setThumbnailWake(value => value + 1); };
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      thumbnailAttemptsRef.current.clear();
+      setThumbnailWake(value => value + 1);
+    };
     document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, []);
   useEffect(() => {
-    if (view !== 'sessions' || document.visibilityState !== 'visible' || thumbnailWorkerRef.current) return;
+    if (view !== 'sessions') return;
+    thumbnailAttemptsRef.current.clear();
+    setThumbnailWake(value => value + 1);
+  }, [view]);
+  useEffect(() => {
+    if (!sessionsLoaded || !initialSyncSettled || document.visibilityState !== 'visible' || thumbnailWorkerRef.current) return;
     thumbnailWorkerRef.current = true;
     const generateQueuedThumbnails = async () => {
       try {
-        while (viewRef.current === 'sessions' && document.visibilityState === 'visible') {
+        while (document.visibilityState === 'visible') {
           const next = sessionsRef.current.find(session => session.points.length > 1 && (!session.thumbnail || session.thumbnailStyleVersion !== SESSION_THUMBNAIL_STYLE_VERSION) && !thumbnailAttemptsRef.current.has(session.id));
           if (!next) break;
           thumbnailAttemptsRef.current.add(next.id);
           const thumbnail = await generateSessionThumbnail(next.points);
           if (thumbnail) {
-            const updated = { ...next, thumbnail, thumbnailStyleVersion: SESSION_THUMBNAIL_STYLE_VERSION };
+            const latest = sessionsRef.current.find(session => session.id === next.id);
+            if (!latest) continue;
+            if (latest.points !== next.points && (latest.points.length !== next.points.length || latest.points.some((point, index) => point.lng !== next.points[index].lng || point.lat !== next.points[index].lat))) {
+              thumbnailAttemptsRef.current.delete(next.id);
+              continue;
+            }
+            const updated = { ...latest, thumbnail, thumbnailStyleVersion: SESSION_THUMBNAIL_STYLE_VERSION };
             await saveSession(updated);
+            sessionsRef.current = sessionsRef.current.map(session => session.id === updated.id ? updated : session);
             setSessions(current => current.map(session => session.id === updated.id ? updated : session));
           }
           await new Promise(resolve => window.setTimeout(resolve, 350));
@@ -2204,7 +2203,7 @@ function App() {
       } finally { thumbnailWorkerRef.current = false; }
     };
     window.setTimeout(() => { void generateQueuedThumbnails(); }, 500);
-  }, [sessions, thumbnailWake, view]);
+  }, [sessions, sessionsLoaded, initialSyncSettled, thumbnailWake]);
   useEffect(() => {
     // Capacitor exposes Android permissions through its plugin; the browser
     // Permissions API remains useful for keeping the web UI in sync.

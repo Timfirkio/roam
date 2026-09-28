@@ -7,6 +7,9 @@ import { formatDistance } from './distance-format';
 const POINT_BATCH_SIZE = 250;
 const DISCOVERY_BATCH_SIZE = 250;
 const CLOUD_DISCOVERY_PAGE_SIZE = 1_000;
+const CLOUD_RIDE_PAGE_SIZE = 1_000;
+// PostgREST can cap a response at 1,000 rows; page route points independently.
+const CLOUD_POINT_PAGE_SIZE = 1_000;
 
 export type SyncProgress = {
   label: string;
@@ -85,17 +88,41 @@ export async function syncAccountProgress(userId: string, onProgress?: (progress
       if (page.length < CLOUD_DISCOVERY_PAGE_SIZE) return rows;
     }
   };
+  const loadCloudSessions = async () => {
+    const rows: any[] = [];
+    for (let offset = 0; ; offset += CLOUD_RIDE_PAGE_SIZE) {
+      const { data, error } = await client.from('ride_sessions').select('*').eq('user_id', userId).is('deleted_at', null)
+        .order('started_at', { ascending: false }).order('id').range(offset, offset + CLOUD_RIDE_PAGE_SIZE - 1);
+      if (error) throw syncError('Could not load cloud rides', error);
+      const page = data ?? [];
+      rows.push(...page);
+      if (page.length < CLOUD_RIDE_PAGE_SIZE) break;
+    }
+    const pointsBySession = new Map<string, any[]>();
+    for (let offset = 0; ; offset += CLOUD_POINT_PAGE_SIZE) {
+      const { data, error } = await client.from('ride_session_points').select('*').eq('user_id', userId)
+        .order('session_id').order('sequence').range(offset, offset + CLOUD_POINT_PAGE_SIZE - 1);
+      if (error) throw syncError('Could not load cloud ride GPS points', error);
+      const page = data ?? [];
+      for (const point of page) {
+        const points = pointsBySession.get(point.session_id) ?? [];
+        points.push(point);
+        pointsBySession.set(point.session_id, points);
+      }
+      if (page.length < CLOUD_POINT_PAGE_SIZE) break;
+    }
+    return rows.map(row => ({ ...row, ride_session_points: pointsBySession.get(row.id) ?? [] }));
+  };
   onProgress?.({ label: 'Preparing local progress…' });
   const [discoveries, sessions, localDeletions] = await Promise.all([loadDiscoveredSegments(), loadSessions(), loadDeletedSessions()]);
   onProgress?.({ label: 'Checking your account progress…' });
   const [initialCloudDiscoveries, initialCloudSessions, initialCloudDeletions] = await Promise.all([
     loadCloudDiscoveries(),
-    client.from('ride_sessions').select('*, ride_session_points(*)').eq('user_id', userId).is('deleted_at', null).order('started_at', { ascending: false }),
+    loadCloudSessions(),
     loadCloudDeletions(),
   ]);
-  if (initialCloudSessions.error) throw syncError('Could not load cloud rides', initialCloudSessions.error);
   let cloudDiscoveries = initialCloudDiscoveries;
-  let cloudSessions = initialCloudSessions.data ?? [];
+  let cloudSessions = initialCloudSessions;
   const activeCloudSessionIds = new Set(cloudSessions.map(row => row.id));
   const cloudDeletedIds = new Set(initialCloudDeletions.map(row => row.id));
   const localDeletedIds = new Set(localDeletions.map(row => row.id));
@@ -167,11 +194,10 @@ export async function syncAccountProgress(userId: string, onProgress?: (progress
     onProgress?.({ label: 'Loading your account progress…' });
     const [reloadedCloudDiscoveries, reloadedCloudSessions] = await Promise.all([
       loadCloudDiscoveries(),
-      client.from('ride_sessions').select('*, ride_session_points(*)').eq('user_id', userId).is('deleted_at', null).order('started_at', { ascending: false }),
+      loadCloudSessions(),
     ]);
-    if (reloadedCloudSessions.error) throw syncError('Could not reload cloud rides', reloadedCloudSessions.error);
     cloudDiscoveries = reloadedCloudDiscoveries;
-    cloudSessions = reloadedCloudSessions.data ?? [];
+    cloudSessions = reloadedCloudSessions;
   }
   const mergedDiscoveries = new Map<string, DiscoveredSegment>(discoveries.map(item => [item.id, item]));
   cloudDiscoveries.forEach((row: any) => mergedDiscoveries.set(row.segment_id, {
@@ -203,6 +229,14 @@ export async function syncAccountProgress(userId: string, onProgress?: (progress
     if (cloudDeletedIds.has(item.id) || localDeletedIds.has(item.id)) return;
     const initial = initialSessionsById.get(item.id);
     if (!initial || !sameSessionDetails(initial, item) || !samePoints(initial.points, item.points)) mergedSessions.set(item.id, item);
+    else {
+      const merged = mergedSessions.get(item.id);
+      // A background render may finish during sync. Keep that newer local cache.
+      if (merged && samePoints(merged.points, item.points) && item.thumbnail) {
+        merged.thumbnail = item.thumbnail;
+        merged.thumbnailStyleVersion = item.thumbnailStyleVersion;
+      }
+    }
   });
   const syncedDiscoveries = [...mergedDiscoveries.values()];
   const syncedSessions = [...mergedSessions.values()].sort((a, b) => b.startedAt - a.startedAt);

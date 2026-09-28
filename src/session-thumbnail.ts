@@ -3,28 +3,9 @@ import type { SessionPoint } from './session-store';
 import { applyRoamBaseStyle, ROAM_MAP_STYLE } from './roam-map-style';
 import { installNetworkSource, NETWORK_SOURCE } from './network-source';
 import { NETWORK_MIN_ZOOM } from './network-tiles';
-
-const WIDTH = 1440;
-const HEIGHT = 720;
-
-function usableCoordinates(points: SessionPoint[]) {
-  return points.filter(point => Number.isFinite(point.lng) && Number.isFinite(point.lat) && Math.abs(point.lng) <= 180 && Math.abs(point.lat) <= 90)
-    .map(point => [point.lng, point.lat] as [number, number]);
-}
-
-function smoothCoordinates(coordinates: [number, number][]) {
-  const longitudeScale = Math.cos(coordinates.reduce((total, [, lat]) => total + lat, 0) / coordinates.length * Math.PI / 180);
-  return coordinates.map((coordinate, index) => {
-    if (index === 0 || index === coordinates.length - 1) return coordinate;
-    const previous = coordinates[index - 1];
-    const next = coordinates[index + 1];
-    return [(previous[0] + coordinate[0] * 2 + next[0]) / 4, (previous[1] + coordinate[1] * 2 + next[1]) / 4] as [number, number];
-  }).filter((coordinate, index, all) => {
-    if (index === 0 || index === all.length - 1) return true;
-    const previous = all[index - 1];
-    return Math.hypot((coordinate[0] - previous[0]) * longitudeScale, coordinate[1] - previous[1]) > 0.000035;
-  });
-}
+import { areaTileUrlTemplate } from './area-client';
+import { boundaryPaintAtZoom, mapBoundaryLevel } from './map-boundary-level';
+import { PREVIEW_HEIGHT, PREVIEW_PADDING, PREVIEW_WIDTH, sessionCoordinates, smoothSessionCoordinates } from './session-preview-geometry';
 
 function finishMarkerImage() {
   const canvas = document.createElement('canvas');
@@ -43,10 +24,10 @@ function finishMarkerImage() {
 
 /** Generates exactly one lightweight, non-interactive map image at a time. */
 export async function generateSessionThumbnail(points: SessionPoint[]): Promise<Blob | null> {
-  const coordinates = smoothCoordinates(usableCoordinates(points));
+  const coordinates = smoothSessionCoordinates(sessionCoordinates(points));
   if (coordinates.length < 2 || typeof document === 'undefined') return null;
   const container = document.createElement('div');
-  container.style.cssText = `position:fixed;left:-10000px;top:0;width:${WIDTH}px;height:${HEIGHT}px;pointer-events:none;opacity:0;`;
+  container.style.cssText = `position:fixed;left:-10000px;top:0;width:${PREVIEW_WIDTH}px;height:${PREVIEW_HEIGHT}px;pointer-events:none;opacity:0;`;
   document.body.appendChild(container);
   const mapRef: { current: maplibregl.Map | null } = { current: null };
   let removeNetworkProtocol = () => {};
@@ -70,7 +51,7 @@ export async function generateSessionThumbnail(points: SessionPoint[]): Promise<
         canvasContextAttributes: { antialias: false, preserveDrawingBuffer: true, powerPreference: 'low-power' },
       });
       const map = mapRef.current;
-      map.once('error', event => { if (!settled) finish(event.error instanceof Error ? event.error : new Error('Session thumbnail map failed')); });
+      // Individual network tiles can fail while the map and route still render.
       map.once('load', () => {
         if (!map) return;
         removeNetworkProtocol = installNetworkSource(map);
@@ -80,15 +61,28 @@ export async function generateSessionThumbnail(points: SessionPoint[]): Promise<
           map.addLayer({ ...basePathLayer, id: 'roam-bikeable-paths-detail', source: NETWORK_SOURCE, minzoom: NETWORK_MIN_ZOOM } as any, 'roam-bikeable-paths');
           map.setLayerZoomRange('roam-bikeable-paths', 6, NETWORK_MIN_ZOOM);
         }
+        if (import.meta.env.VITE_AREA_CATALOG !== 'false') {
+          map.addSource('session-boundaries', { type: 'vector', tiles: [areaTileUrlTemplate()], minzoom: 0, maxzoom: 22 });
+          const level = mapBoundaryLevel(map.getZoom());
+          const paint = boundaryPaintAtZoom(level, map.getZoom());
+          map.addLayer({ id: 'session-boundaries-line', type: 'line', source: 'session-boundaries', 'source-layer': 'boundaries', filter: level === 9 ? ['==', ['to-number', ['get', 'display_level'], ['to-number', ['get', 'admin_level'], 0]], 9] : ['==', ['to-number', ['get', 'admin_level'], 0], level], paint: { 'line-color': '#d59c67', 'line-opacity': paint.opacity, 'line-width': paint.width } } as any);
+          map.on('zoomend', () => {
+            const nextLevel = mapBoundaryLevel(map.getZoom());
+            const nextPaint = boundaryPaintAtZoom(nextLevel, map.getZoom());
+            map.setFilter('session-boundaries-line', nextLevel === 9 ? ['==', ['to-number', ['get', 'display_level'], ['to-number', ['get', 'admin_level'], 0]], 9] : ['==', ['to-number', ['get', 'admin_level'], 0], nextLevel]);
+            map.setPaintProperty('session-boundaries-line', 'line-opacity', nextPaint.opacity);
+            map.setPaintProperty('session-boundaries-line', 'line-width', nextPaint.width);
+          });
+        }
         map.addSource('session-route', { type: 'geojson', data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates } } });
         map.addLayer({ id: 'session-route-outline', type: 'line', source: 'session-route', paint: { 'line-color': '#071615', 'line-width': 9, 'line-opacity': .8 } });
         map.addLayer({ id: 'session-route-line', type: 'line', source: 'session-route', paint: { 'line-color': '#2bb8b0', 'line-width': 6, 'line-opacity': .98 } });
         map.addSource('session-route-markers', { type: 'geojson', data: { type: 'FeatureCollection', features: [{ type: 'Feature', properties: { kind: 'start' }, geometry: { type: 'Point', coordinates: coordinates[0] } }, { type: 'Feature', properties: { kind: 'finish' }, geometry: { type: 'Point', coordinates: coordinates[coordinates.length - 1] } }] } });
-        map.addLayer({ id: 'session-route-start', type: 'circle', source: 'session-route-markers', filter: ['==', ['get', 'kind'], 'start'], paint: { 'circle-radius': 7, 'circle-color': '#2bb8b0', 'circle-stroke-color': '#effffd', 'circle-stroke-width': 3 } });
+        map.addLayer({ id: 'session-route-start', type: 'circle', source: 'session-route-markers', filter: ['==', ['get', 'kind'], 'start'], paint: { 'circle-radius': 8.5, 'circle-color': '#effffd', 'circle-stroke-color': '#2bb8b0', 'circle-stroke-width': 3 } });
         map.addImage('session-finish-marker', finishMarkerImage());
-        map.addLayer({ id: 'session-route-finish', type: 'symbol', source: 'session-route-markers', filter: ['==', ['get', 'kind'], 'finish'], layout: { 'icon-image': 'session-finish-marker', 'icon-size': .72, 'icon-allow-overlap': true } });
+        map.addLayer({ id: 'session-route-finish', type: 'symbol', source: 'session-route-markers', filter: ['==', ['get', 'kind'], 'finish'], layout: { 'icon-image': 'session-finish-marker', 'icon-size': 1, 'icon-allow-overlap': true } });
         const bounds = coordinates.reduce((result, coordinate) => result.extend(coordinate), new maplibregl.LngLatBounds(coordinates[0], coordinates[0]));
-        map.fitBounds(bounds, { padding: 48, duration: 0, maxZoom: 15 });
+        map.fitBounds(bounds, { padding: PREVIEW_PADDING, duration: 0, maxZoom: 15 });
         map.once('idle', () => window.requestAnimationFrame(() => {
           map?.getCanvas().toBlob(blob => { window.clearTimeout(timeout); finish(blob ?? new Error('Could not encode session thumbnail')); }, 'image/webp', .88);
         }));

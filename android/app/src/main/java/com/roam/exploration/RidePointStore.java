@@ -12,8 +12,7 @@ import org.json.JSONObject;
 /** Append-only ride fixes, shared by the foreground service and Capacitor plugin. */
 final class RidePointStore extends SQLiteOpenHelper {
   private static final String DATABASE = "ride_points.db";
-  private static final int MAX_ROUTE_POINTS = 21600;
-  private static final int MAX_PENDING_POINTS = 10000;
+  private static final int DRAIN_BATCH_POINTS = 1000;
   private static final Object LOCK = new Object();
   private static RidePointStore instance;
   private final Context context;
@@ -57,7 +56,7 @@ final class RidePointStore extends SQLiteOpenHelper {
       java.util.HashSet<Long> pendingTimestamps = new java.util.HashSet<>();
       for (int i = 0; i < pending.length(); i++) pendingTimestamps.add(pending.getJSONObject(i).optLong("timestamp"));
       if (route.length() == 0) route = pending;
-      for (int i = Math.max(0, route.length() - MAX_ROUTE_POINTS); i < route.length(); i++) {
+      for (int i = 0; i < route.length(); i++) {
         JSONObject point = route.getJSONObject(i);
         insert(db, point, pendingTimestamps.contains(point.optLong("timestamp")) ? 0 : 1);
       }
@@ -88,11 +87,7 @@ final class RidePointStore extends SQLiteOpenHelper {
   void append(JSONObject point) {
     synchronized (LOCK) {
       SQLiteDatabase db = database();
-      long newestId = insert(db, point, 0);
-      // Compaction is infrequent; normal fixes never read or rewrite the route.
-      if (newestId % 256 == 0) {
-        db.execSQL("DELETE FROM fixes WHERE id <= (SELECT MAX(id) - ? FROM fixes)", new Object[] { MAX_ROUTE_POINTS });
-      }
+      insert(db, point, 0);
     }
   }
 
@@ -102,10 +97,14 @@ final class RidePointStore extends SQLiteOpenHelper {
       JSONArray result = new JSONArray();
       db.beginTransaction();
       try {
-        try (Cursor cursor = db.rawQuery("SELECT payload FROM (SELECT id, payload FROM fixes WHERE delivered = 0 ORDER BY id DESC LIMIT ?) ORDER BY id", new String[] { String.valueOf(MAX_PENDING_POINTS) })) {
-          while (cursor.moveToNext()) result.put(new JSONObject(cursor.getString(0)));
+        long lastDeliveredId = -1;
+        try (Cursor cursor = db.rawQuery("SELECT id, payload FROM fixes WHERE delivered = 0 ORDER BY id LIMIT ?", new String[] { String.valueOf(DRAIN_BATCH_POINTS) })) {
+          while (cursor.moveToNext()) {
+            lastDeliveredId = cursor.getLong(0);
+            result.put(new JSONObject(cursor.getString(1)));
+          }
         }
-        db.execSQL("UPDATE fixes SET delivered = 1 WHERE delivered = 0");
+        if (lastDeliveredId >= 0) db.execSQL("UPDATE fixes SET delivered = 1 WHERE delivered = 0 AND id <= ?", new Object[] { lastDeliveredId });
         db.setTransactionSuccessful();
       } finally {
         db.endTransaction();
@@ -118,7 +117,7 @@ final class RidePointStore extends SQLiteOpenHelper {
     synchronized (LOCK) {
       SQLiteDatabase db = database();
       JSONArray result = new JSONArray();
-      try (Cursor cursor = db.rawQuery("SELECT payload FROM (SELECT id, payload FROM fixes ORDER BY id DESC LIMIT ?) ORDER BY id", new String[] { String.valueOf(MAX_ROUTE_POINTS) })) {
+      try (Cursor cursor = db.rawQuery("SELECT payload FROM fixes ORDER BY id", null)) {
         while (cursor.moveToNext()) result.put(new JSONObject(cursor.getString(0)));
       }
       return result;
