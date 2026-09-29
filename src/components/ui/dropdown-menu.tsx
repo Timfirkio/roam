@@ -11,7 +11,7 @@ function DropdownMenuTrigger(props: Menu.Trigger.Props) {
 }
 
 function DropdownMenuContent({ className, sideOffset = 8, side, align, ...props }: Menu.Popup.Props & Pick<Menu.Positioner.Props, "side" | "align" | "sideOffset">) {
-  return <Menu.Portal><Menu.Positioner sideOffset={sideOffset} side={side} align={align}><Menu.Popup data-slot="dropdown-menu-content" className={cn("z-50 min-w-44 rounded-control border border-border bg-surface-raised p-1 text-text shadow-xl outline-none", className)} {...props} /></Menu.Positioner></Menu.Portal>
+  return <Menu.Portal><Menu.Positioner data-slot="dropdown-menu-positioner" className="z-50" sideOffset={sideOffset} side={side} align={align}><Menu.Popup data-slot="dropdown-menu-content" className={cn("min-w-44 rounded-control border border-border bg-surface-raised p-1 text-text shadow-xl outline-none", className)} {...props} /></Menu.Positioner></Menu.Portal>
 }
 
 function DropdownMenuItem({ className, ...props }: Menu.Item.Props) {
