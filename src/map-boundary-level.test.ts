@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { areaAtBoundaryLevel, boundaryPaintAtZoom, boundaryMatchesLevel, boundaryPreviewOpacity, mapBoundaryLevel, maxZoomForBoundaryLevel } from './map-boundary-level';
+import { areaAtBoundaryLevel, boundaryPaintAtZoom, boundaryMatchesLevel, boundaryPreviewOpacity, childBoundaryLevel, mapBoundaryLevel, maxZoomForBoundaryLevel } from './map-boundary-level';
 import type { AreaRecord } from './area-types';
 
 describe('map boundary levels', () => {
@@ -51,5 +51,11 @@ describe('map boundary levels', () => {
   });
   it('fits a selected region within its visible zoom band', () => {
     for (const level of [2, 4, 7]) expect(mapBoundaryLevel(maxZoomForBoundaryLevel(level))).toBe(level);
+  });
+  it('uses the next visible boundary tier for selected-region detail', () => {
+    expect(childBoundaryLevel(2)).toBe(4);
+    expect(childBoundaryLevel(4)).toBe(7);
+    expect(childBoundaryLevel(7)).toBe(9);
+    expect(childBoundaryLevel(9)).toBeNull();
   });
 });

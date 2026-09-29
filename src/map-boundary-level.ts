@@ -22,6 +22,14 @@ export function maxZoomForBoundaryLevel(level: number) {
   return 13.5;
 }
 
+/** Show one deeper outline tier only inside an explicitly selected area. */
+export function childBoundaryLevel(level: number): 4 | 7 | 9 | null {
+  if (level <= 2) return 4;
+  if (level <= 4) return 7;
+  if (level <= 7) return 9;
+  return null;
+}
+
 /** Level 9 can include a municipality when it has no Level 9 children. */
 export function boundaryMatchesLevel(properties: Record<string, unknown>, level: number) {
   const adminLevel = Number(properties.admin_level);
