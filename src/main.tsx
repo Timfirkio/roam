@@ -1717,18 +1717,27 @@ function SessionPreviewGrid({ coordinates }: { coordinates: [number, number][] }
   return <svg className="session-route-grid" viewBox={`0 0 ${PREVIEW_WIDTH} ${PREVIEW_HEIGHT}`} aria-hidden="true"><path d={gridPath} /></svg>;
 }
 
-function updateMorphingPageHeading(section: HTMLElement) {
+const pageHeadingMetrics = new WeakMap<HTMLElement, { heading: HTMLElement; compactScale: number }>();
+
+function measureMorphingPageHeading(section: HTMLElement) {
   section.style.setProperty('--page-scrollbar-inset', `${section.offsetWidth - section.clientWidth}px`);
   const heading = section.querySelector<HTMLElement>('.page-heading--morphing');
   const title = heading?.querySelector('h1');
   if (!heading || !title) return;
+  const titleSize = Number.parseFloat(window.getComputedStyle(title).fontSize);
+  const compactSize = Number.parseFloat(window.getComputedStyle(document.documentElement).fontSize) * 1.375;
+  pageHeadingMetrics.set(section, { heading, compactScale: compactSize / titleSize });
+  updateMorphingPageHeading(section);
+}
+
+function updateMorphingPageHeading(section: HTMLElement) {
+  const metrics = pageHeadingMetrics.get(section);
+  if (!metrics) return;
   const progress = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     ? Number(section.scrollTop >= 48)
     : Math.min(1, Math.max(0, section.scrollTop / 48));
-  const titleSize = Number.parseFloat(window.getComputedStyle(title).fontSize);
-  const compactSize = Number.parseFloat(window.getComputedStyle(document.documentElement).fontSize) * 1.375;
-  heading.style.setProperty('--page-nav-progress', String(progress));
-  heading.style.setProperty('--page-title-scale', String(1 + (compactSize / titleSize - 1) * progress));
+  metrics.heading.style.setProperty('--page-nav-progress', String(progress));
+  metrics.heading.style.setProperty('--page-title-scale', String(1 + (metrics.compactScale - 1) * progress));
 }
 
 function SettingsView({ showBuildings3D, setShowBuildings3D, showTerrain3D, setShowTerrain3D, gpsEnabled, gpsPermission, onGpsChange, onOpenDesignSystem }: Parameters<typeof SettingsViewBase>[0]) {
@@ -1736,9 +1745,9 @@ function SettingsView({ showBuildings3D, setShowBuildings3D, showTerrain3D, setS
   useLayoutEffect(() => {
     const section = sectionRef.current;
     if (!section) return;
-    const resizeObserver = new ResizeObserver(() => updateMorphingPageHeading(section));
+    const resizeObserver = new ResizeObserver(() => measureMorphingPageHeading(section));
     resizeObserver.observe(section);
-    updateMorphingPageHeading(section);
+    measureMorphingPageHeading(section);
     return () => resizeObserver.disconnect();
   }, []);
   const gpsDescription = gpsPermission === 'denied'
@@ -1850,8 +1859,9 @@ function SessionsView({ sessions, onExport, onRename, onDelete, onImportGpx, onR
   useLayoutEffect(() => {
     const section = sectionRef.current;
     if (!section) return;
-    const resizeObserver = new ResizeObserver(() => updateMorphingPageHeading(section));
+    const resizeObserver = new ResizeObserver(() => measureMorphingPageHeading(section));
     resizeObserver.observe(section);
+    measureMorphingPageHeading(section);
     return () => resizeObserver.disconnect();
   }, [selectedSessionId]);
   const openDetails = (id: string) => { listScrollTopRef.current = sectionRef.current?.scrollTop ?? 0; setSelectedSessionId(id); };
