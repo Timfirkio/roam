@@ -8,7 +8,7 @@ import type { AreaRecord, AreaTotals } from './area-types';
 import * as maplibregl from 'maplibre-gl';
 import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 import type { Map } from 'maplibre-gl';
-import { area, bbox, booleanPointInPolygon, centerOfMass, circle, pointOnFeature } from '@turf/turf';
+import { area, booleanPointInPolygon, centerOfMass, circle, pointOnFeature } from '@turf/turf';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import './styles.css';
 import { installNetworkSource, NETWORK_SOURCE } from './network-source';
@@ -38,7 +38,7 @@ import { createPlayerModel } from './player-model';
 import { orderMapOverlays } from './map-overlay-order';
 import { DISCOVERED_UNPAVED_ROAD_COLOR, UNDISCOVERED_UNPAVED_ROAD_COLOR, UNPAVED_ROAD_DASHARRAY, UNPAVED_ROAD_WIDTH } from './map-road-colors';
 import { discoveredNetworkFeatures } from './discovery-render';
-import { areaAtBoundaryLevel, boundaryPaintAtZoom, boundaryMatchesLevel, mapBoundaryLevel, maxZoomForBoundaryLevel } from './map-boundary-level';
+import { areaAtBoundaryLevel, boundaryPaintAtZoom, boundaryMatchesLevel, mapBoundaryLevel } from './map-boundary-level';
 import { isDiscoverableProperties, legacyRoadTypeForProperties, roadTypeForProperties, stableRoadCandidateId } from './road-rules';
 import { STOCKHOLM_ROAD_NETWORK_BY_DISTRICT } from './road-network-catalog';
 import { Button as ShadcnButton, buttonVariants } from '@/components/ui/button';
@@ -170,7 +170,7 @@ function ProgressTransitionPreview() {
   return <div>
     <p className="mb-3 font-mono text-label font-semibold tracking-[0.14em] text-text-subtle">DISTRICT PROGRESS CARD</p>
     <Surface className="space-y-4 p-4">
-      <p className="text-body text-text-muted">Map card for the active district. The parent region is contextual, the bar stays visible during recalculation, and both distance and completion readings roll with their values. Before the first result, a card-shaped skeleton holds its place.</p>
+      <p className="text-body text-text-muted">Map card for the active district. In Region progress mode, tapping a region chooses the card readout without moving the map. The parent region is contextual, the bar stays visible during recalculation, and both distance and completion readings roll with their values. Before the first result, a card-shaped skeleton holds its place.</p>
       <div className="district-progress-content map-district-progress-preview rounded-control border border-border-muted bg-surface p-4">
         <div className="district-progress-parent roam-overline-sm"><ScrambleText text="Stockholms kommun" /></div>
         <div className="district-progress-top"><div className="district-progress-title"><ScrambleText text={regions[regionIndex].name} /></div></div>
@@ -691,10 +691,12 @@ function MapCanvas({ mapRef, mapActive, viewportBottomInset, crosshairTopInset, 
   const discoveriesRef = useRef(discoveries);
   const onLocationChangeRef = useRef(onLocationChange);
   const crosshairTopInsetRef = useRef(crosshairTopInset);
+  const progressModeRef = useRef(progressMode);
   const followPlayerRef = useRef(followPlayer);
   const playerLocationRef = useRef(playerLocation);
   onLocationChangeRef.current = onLocationChange;
   crosshairTopInsetRef.current = crosshairTopInset;
+  progressModeRef.current = progressMode;
   followPlayerRef.current = followPlayer;
   playerLocationRef.current = playerLocation;
   const initialCenterRef = useRef<[number, number]>(loadCachedMapCenter() ?? [18.0649, 59.3326]);
@@ -744,6 +746,7 @@ function MapCanvas({ mapRef, mapActive, viewportBottomInset, crosshairTopInset, 
     mapRef.current = map;
     let removeNetworkProtocol = () => {};
     const reportCalculationPoint = () => {
+      if (progressModeRef.current) return;
       const point = calculationPointAtCrosshair(map, crosshairTopInsetRef.current, followPlayerRef.current, playerLocationRef.current);
       onLocationChangeRef.current(point.lng, point.lat, findMapLocality(map, point));
     };
@@ -808,7 +811,7 @@ function MapCanvas({ mapRef, mapActive, viewportBottomInset, crosshairTopInset, 
   }, [mapReady, mapRef, is3D]);
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !mapReady) return;
+    if (!map || !mapReady || progressMode) return;
     // Until a live fix or user gesture takes over, keep the cached startup
     // location under the same usable-area center as the crosshair.
     if (followPlayer && !playerLocation && !sessionActive && !hasCenteredOnFirstLiveLocationRef.current) {
@@ -816,7 +819,7 @@ function MapCanvas({ mapRef, mapActive, viewportBottomInset, crosshairTopInset, 
     }
     const point = calculationPointAtCrosshair(map, crosshairTopInset, followPlayer, playerLocation);
     onLocationChangeRef.current(point.lng, point.lat, findMapLocality(map, point));
-  }, [crosshairTopInset, followPlayer, mapReady, mapRef, playerLocation, sessionActive]);
+  }, [crosshairTopInset, followPlayer, mapReady, mapRef, playerLocation, progressMode, sessionActive]);
   useEffect(() => {
     if (!mapReady) return;
     mapRef.current?.resize();
@@ -1067,7 +1070,6 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
   const progressCardRef = useRef<HTMLDivElement | null>(null);
   const progressMarkersRef = useRef(new globalThis.Map<string, { marker: maplibregl.Marker; button: HTMLButtonElement }>());
   const progressAreaControllerRef = useRef<AbortController | null>(null);
-  const pendingProgressFitRef = useRef(false);
   const previousSessionActiveRef = useRef(false);
   const onMapReady = useCallback(() => setProgressMapReady(true), []);
   const onVisualReady = useCallback(() => setMapVisualReady(true), []);
@@ -1087,7 +1089,6 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
     previousSessionActiveRef.current = sessionActive;
     if (sessionActive) {
       progressAreaControllerRef.current?.abort();
-      pendingProgressFitRef.current = false;
       setProgressMode(false);
       setFollowPlayer(true);
       setActiveRotationFollow(true);
@@ -1108,6 +1109,7 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
     return adjustedBearing;
   });
   useEffect(() => {
+    if (progressMode) return;
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       void lookupAreas(location.lng, location.lat, controller.signal).then(async ({ areas }) => {
@@ -1141,25 +1143,12 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
       });
     }, 350);
     return () => { controller.abort(); window.clearTimeout(timer); };
-  }, [boundaryLevel, location.lat, location.lng]);
+  }, [boundaryLevel, location.lat, location.lng, progressMode]);
   const updateCurrentArea = useCallback((record: AreaRecord) => {
     mapAreaCache.set(record.area.id, record);
     setCurrentArea(current => current?.area.id === record.area.id ? record : current);
     setSelectedProgressArea(current => current?.area.id === record.area.id ? record : current);
   }, []);
-  const fitAreaInProgressMode = useCallback((record: AreaRecord) => {
-    if (!record.area.geometry || !mapRef.current) return;
-    const [west, south, east, north] = bbox(record.area.geometry as any);
-    const measuredTopInset = mapHeaderRef.current && mapViewRef.current
-      ? Math.max(0, mapHeaderRef.current.getBoundingClientRect().bottom - mapViewRef.current.getBoundingClientRect().top)
-      : topOverlayInset;
-    mapRef.current.fitBounds([[west, south], [east, north]], {
-      padding: { top: Math.ceil(measuredTopInset + 20), right: 24, bottom: 24, left: 24 },
-      pitch: 0,
-      maxZoom: maxZoomForBoundaryLevel(record.area.adminLevel),
-      duration: 650,
-    });
-  }, [topOverlayInset]);
   const focusAreaById = useCallback((id: string) => {
     progressAreaControllerRef.current?.abort();
     const controller = new AbortController();
@@ -1170,7 +1159,7 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
         if (controller.signal.aborted) return;
         mapAreaCache.set(record.area.id, record);
         setSelectedProgressArea(record);
-        fitAreaInProgressMode(record);
+        setSelectedParentAreaName(null);
         if (record.area.geometry) {
           const point = pointOnFeature({ type: 'Feature', properties: {}, geometry: record.area.geometry } as any).geometry.coordinates;
           const { areas } = await lookupAreas(point[0], point[1], controller.signal);
@@ -1183,20 +1172,7 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
         if (!(error instanceof DOMException && error.name === 'AbortError')) console.warn('Could not open region progress:', error);
       }
     })();
-  }, [fitAreaInProgressMode]);
-  const focusAreaAt = useCallback((lng: number, lat: number) => {
-    progressAreaControllerRef.current?.abort();
-    const controller = new AbortController();
-    progressAreaControllerRef.current = controller;
-    void lookupAreas(lng, lat, controller.signal).then(({ areas }) => {
-      const candidate = areas
-        .filter(record => record.area.adminLevel >= 7 && record.area.adminLevel <= 9)
-        .sort((left, right) => right.area.adminLevel - left.area.adminLevel)[0];
-      if (candidate && !controller.signal.aborted) focusAreaById(candidate.area.id);
-    }).catch(error => {
-      if (!(error instanceof DOMException && error.name === 'AbortError')) console.warn('Could not find a region here:', error);
-    });
-  }, [focusAreaById]);
+  }, []);
   useLayoutEffect(() => {
     const header = mapHeaderRef.current;
     const view = mapViewRef.current;
@@ -1228,12 +1204,6 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
     window.addEventListener('resize', updateInset);
     return () => { observer.disconnect(); window.removeEventListener('resize', updateInset); if (settleTimer) clearTimeout(settleTimer); };
   }, []);
-  useEffect(() => {
-    if (progressMode && pendingProgressFitRef.current && currentArea?.area.geometry && progressMapReady) {
-      pendingProgressFitRef.current = false;
-      fitAreaInProgressMode(currentArea);
-    }
-  }, [currentArea, fitAreaInProgressMode, progressMapReady, progressMode]);
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !progressMapReady || !progressMode) return;
@@ -1419,7 +1389,6 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
   const centerOnPlayer = () => {
     if (progressMode) {
       setProgressMode(false);
-      pendingProgressFitRef.current = false;
       progressAreaControllerRef.current?.abort();
     }
     if (!playerLocation) {
@@ -1455,7 +1424,6 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
     setIs3D(false);
     setSelectedProgressArea(null);
     setSelectedParentAreaName(null);
-    pendingProgressFitRef.current = false;
     setProgressMode(true);
   }, [discoveredRoadsOutOfView, sessionActive, setIs3D]);
   const toggleProgressMode = (next: boolean) => {
@@ -1466,9 +1434,7 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
       setIs3D(false);
       setSelectedProgressArea(currentArea);
       setSelectedParentAreaName(currentParentAreaName);
-      pendingProgressFitRef.current = true;
     } else {
-      pendingProgressFitRef.current = false;
       progressAreaControllerRef.current?.abort();
     }
   };
