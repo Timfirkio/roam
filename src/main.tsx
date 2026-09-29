@@ -30,6 +30,7 @@ import { reconcileSessionRoute, synchronizeDiscoveredSegmentRoadTypes } from './
 import { generateSessionThumbnail } from './session-thumbnail';
 import { PREVIEW_HEIGHT, PREVIEW_WIDTH, sessionCoordinates, sessionPreviewGeometry, smoothSessionCoordinates } from './session-preview-geometry';
 import { formatSessionTitle, isGeneratedSessionTitle, regionNamesForSession, SESSION_NAMING_VERSION, titleForRegions } from './session-naming';
+import { sessionSearchMatches } from './session-search';
 import { applyRoamBaseStyle } from './roam-map-style';
 import { useMapSetting } from './map-settings';
 import { useAppVisible } from './use-app-visible';
@@ -1794,21 +1795,27 @@ function SessionRoutePreview({ session }: { session: RideSession }) {
 
 function SessionSearchOverlay({ open, onOpenChange, sessions, onSelect }: { open: boolean; onOpenChange: (open: boolean) => void; sessions: RideSession[]; onSelect: (id: string) => void }) {
   const [query, setQuery] = useState('');
+  const backRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  useLayoutEffect(() => { if (open) { setQuery(''); inputRef.current?.focus({ preventScroll: true }); } }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    setQuery('');
+    // Let the full-screen dialog finish its entrance before showing the keyboard.
+    const delay = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 280;
+    const timer = window.setTimeout(() => inputRef.current?.focus({ preventScroll: true }), delay);
+    return () => window.clearTimeout(timer);
+  }, [open]);
   const matches = useMemo(() => {
-    const keyword = query.trim().toLocaleLowerCase('sv-SE');
-    if (!keyword) return sessions;
-    return sessions.filter(session => `${formatSessionTitle(session.title)} ${session.districtNames.join(' ')}`.toLocaleLowerCase('sv-SE').includes(keyword));
+    return sessions.filter(session => sessionSearchMatches(query, formatSessionTitle(session.title), session.districtNames));
   }, [query, sessions]);
   const changeOpen = (nextOpen: boolean) => onOpenChange(nextOpen);
   return <Dialog open={open} onOpenChange={changeOpen}>
-    <DialogContent className="session-search-dialog">
+    <DialogContent className="session-search-dialog" initialFocus={backRef}>
       <DialogTitle className="sr-only">Search sessions</DialogTitle>
       <DialogDescription className="sr-only">Search saved rides by title or region.</DialogDescription>
       <form className="session-search-header" role="search" onSubmit={event => event.preventDefault()}>
-        <ShadcnButton variant="ghost" size="icon-medium" type="button" aria-label="Back to Sessions" onClick={() => changeOpen(false)}><ArrowLeft weight="bold" className="size-[18px]" aria-hidden="true" /></ShadcnButton>
-        <input ref={inputRef} autoFocus type="search" enterKeyHint="search" aria-label="Search sessions" placeholder="Search by keyword" value={query} onChange={event => setQuery(event.target.value)} />
+        <ShadcnButton ref={backRef} variant="ghost" size="icon-medium" type="button" aria-label="Back to Sessions" onClick={() => changeOpen(false)}><ArrowLeft weight="bold" className="size-[18px]" aria-hidden="true" /></ShadcnButton>
+        <input ref={inputRef} type="search" enterKeyHint="search" aria-label="Search sessions" placeholder="Search by keyword" value={query} onChange={event => setQuery(event.target.value)} />
         {query && <ShadcnButton variant="ghost" size="icon-medium" type="button" aria-label="Clear search" onClick={() => { setQuery(''); inputRef.current?.focus(); }}><X weight="bold" className="size-[18px]" aria-hidden="true" /></ShadcnButton>}
       </form>
       <div className="session-search-results">
