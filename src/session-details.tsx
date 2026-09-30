@@ -8,6 +8,7 @@ import { formatDistance } from './distance-format';
 import { sessionCoordinates, smoothSessionCoordinates } from './session-preview-geometry';
 import { applyRoamBaseStyle, ROAM_MAP_STYLE } from './roam-map-style';
 import { installNetworkSource } from './network-source';
+import { onStyledMapIdle } from './map-visual-ready';
 import { addSessionBoundaries, finishMarkerImage, SESSION_ROUTE_COLOR } from './session-map-overlays';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './components/ui/dialog';
 import { Button } from './components/ui/button';
@@ -30,7 +31,7 @@ function LiveSessionMap({ session, preview }: { session: RideSession; preview: R
     if (coordinates.length < 2) return;
     const map = new maplibregl.Map({ container: container.current, style: ROAM_MAP_STYLE, center: coordinates[0], zoom: 13, attributionControl: false });
     let removeNetwork = () => {};
-    let revealTimer: number | undefined;
+    let stopWaiting = () => {};
     map.once('load', () => {
       removeNetwork = installNetworkSource(map);
       applyRoamBaseStyle(map);
@@ -47,15 +48,12 @@ function LiveSessionMap({ session, preview }: { session: RideSession; preview: R
       map.addLayer({ id: 'session-finish', type: 'symbol', source: 'session-endpoints', filter: ['==', ['get', 'kind'], 'finish'], layout: { 'icon-image': 'session-finish-marker', 'icon-size': 1, 'icon-allow-overlap': true } });
       const bounds = coordinates.reduce((result, coordinate) => result.extend(coordinate), new maplibregl.LngLatBounds(coordinates[0], coordinates[0]));
       map.fitBounds(bounds, { padding: 48, duration: 0, maxZoom: 15 });
-      const reveal = () => setReady(true);
-      map.once('render', reveal);
-      map.triggerRepaint();
-      revealTimer = window.setTimeout(reveal, 1500);
+      stopWaiting = onStyledMapIdle(map, () => setReady(true));
     });
     map.on('error', () => setError(true));
-    return () => { if (revealTimer) window.clearTimeout(revealTimer); map.remove(); removeNetwork(); };
+    return () => { stopWaiting(); map.remove(); removeNetwork(); };
   }, [session.id, session.points]);
-  return <><div className="session-map-loading-preview" aria-hidden="true">{preview}</div><div className={`session-live-map${ready ? ' session-live-map--ready' : ''}`} ref={container} role="application" aria-label="Interactive session route map" />{error && <span className="session-map-error">Some map tiles could not load.</span>}</>;
+  return <><div className={`session-map-loading-preview${ready ? ' session-map-loading-preview--revealing' : ''}`} aria-hidden="true">{preview}</div><div className="session-live-map" ref={container} role="application" aria-label="Interactive session route map" />{error && <span className="session-map-error">Some map tiles could not load.</span>}</>;
 }
 
 function DiscoveryChart({ session, segments }: { session: RideSession; segments: DiscoveredSegment[] }) {

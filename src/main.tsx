@@ -22,6 +22,7 @@ import { SWEDEN_MUNICIPALITIES, SWEDEN_MUNICIPALITIES_SORTED } from './sweden-mu
 import { distanceMeters, nextNavigationState, type NavigationState } from './player-navigation';
 import { FollowBearing } from './follow-bearing';
 import { clearZoomStep, easeMapCamera, stepMapZoom } from './map-camera';
+import { onStyledMapIdle } from './map-visual-ready';
 import { Geolocation, type CallbackID, type Position } from '@capacitor/geolocation';
 import { Capacitor } from '@capacitor/core';
 import { RideTracking, type RideTrackingPoint } from './ride-background-tracking';
@@ -175,7 +176,7 @@ function ProgressTransitionPreview() {
   return <div>
     <p className="mb-3 font-mono text-label font-semibold tracking-[0.14em] text-text-subtle">DISTRICT PROGRESS CARD</p>
     <Surface className="space-y-4 p-4">
-      <p className="text-body text-text-muted">Map card for the active district. Turning on Region progress fits the current region in view; tapping another region chooses the card readout and fits that region in view. Further panning does not change the selection. The GPS control returns to the player at the default zoom. The map shows one outline tier at a time, plus any child boundaries inside the selected region. The overline names the closest containing region, including the country or Earth. The bar stays visible during recalculation, and both distance and completion readings roll with their values. Before the first result, a card-shaped skeleton holds its place.</p>
+      <p className="text-body text-text-muted">Map card for the active district. Turning on Region progress fits the current region in view; tapping another region chooses the card readout and fits that region in view. Further panning does not change the selection. The GPS control returns to the player at the default zoom. The map shows one outline tier at a time, plus any child boundaries inside the selected region. The overline names the closest containing region, including the country or Earth. The bar and last complete values stay visible while discoveries load, sync, or recalculate; both distance and completion readings roll with their values. Before the first result, a card-shaped skeleton holds its place.</p>
       <div className="district-progress-content map-district-progress-preview rounded-control border border-border-muted bg-surface p-4">
         <div className="district-progress-parent roam-overline-sm"><ScrambleText text="Stockholms kommun" /></div>
         <div className="district-progress-top"><div className="district-progress-title"><ScrambleText text={regions[regionIndex].name} /></div></div>
@@ -713,6 +714,7 @@ function MapCanvas({ mapRef, mapActive, viewportBottomInset, crosshairTopInset, 
   playerLocationRef.current = playerLocation;
   const initialCenterRef = useRef<[number, number]>(loadCachedMapCenter() ?? [18.0649, 59.3326]);
   const [mapReady, setMapReady] = useState(false);
+  const visualReadyRef = useRef(false);
   const discoveredNetworkRevealedRef = useRef(false);
   const discoveredSourceDataRef = useRef<DiscoveredSegment[] | null>(null);
   const [networkRevision, setNetworkRevision] = useState(0);
@@ -811,11 +813,15 @@ function MapCanvas({ mapRef, mapActive, viewportBottomInset, crosshairTopInset, 
     const map = mapRef.current;
     // Give the switch and icon a painted frame before changing map layers.
     // Cancel superseded work so rapid toggles apply only the latest settings.
+    let stopWaiting = () => {};
     let frame = requestAnimationFrame(() => {
-      frame = requestAnimationFrame(() => styleRoamMap(map, showDiscovered, showRegionProgress, progressMode, is3D, showBuildings3D, showTerrain3D));
+      frame = requestAnimationFrame(() => {
+        styleRoamMap(map, showDiscovered, showRegionProgress, progressMode, is3D, showBuildings3D, showTerrain3D);
+        if (!visualReadyRef.current) stopWaiting = onStyledMapIdle(map, () => { visualReadyRef.current = true; onVisualReady(); });
+      });
     });
-    return () => cancelAnimationFrame(frame);
-  }, [mapReady, mapRef, showDiscovered, showRegionProgress, progressMode, is3D, showBuildings3D, showTerrain3D]);
+    return () => { cancelAnimationFrame(frame); stopWaiting(); };
+  }, [mapReady, mapRef, showDiscovered, showRegionProgress, progressMode, is3D, showBuildings3D, showTerrain3D, onVisualReady]);
   useEffect(() => {
     if (mapReady && mapRef.current) {
       easeMapCamera(mapRef.current, { pitch: is3D ? DEFAULT_3D_PITCH : 0, duration: 450 });
@@ -889,17 +895,6 @@ function MapCanvas({ mapRef, mapActive, viewportBottomInset, crosshairTopInset, 
     }).catch(error => { if (active) console.warn('Could not display discovered roads:', error); });
     return () => { active = false; map.off('sourcedata', onSourceData); map.off('render', onRender); map.off('render', redrawFade); };
   }, [discoveries, mapReady, mapRef]);
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!mapReady || !map) return;
-    let done = false;
-    const reveal = () => { if (!done) { done = true; onVisualReady(); } };
-    map.once('render', reveal);
-    map.triggerRepaint();
-    // Slow tiles should not hold the UI after the map style has loaded.
-    const fallback = window.setTimeout(reveal, 1500);
-    return () => { done = true; map.off('render', reveal); clearTimeout(fallback); };
-  }, [mapReady, mapRef, onVisualReady]);
   useEffect(() => {
     if (!mapReady || !mapRef.current || !playerLocation) return;
     if (discoveryTimeoutRef.current !== null) clearTimeout(discoveryTimeoutRef.current);
@@ -1586,7 +1581,7 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
   return <section ref={mapViewRef} className={active ? "map-view" : "map-view map-view--inactive"} aria-hidden={!active}><MapCanvas mapRef={mapRef} mapActive={active} viewportBottomInset={0} crosshairTopInset={topOverlayInset} showDiscovered={showDiscovered} showRegionProgress={showRegionProgress} progressMode={progressMode} is3D={is3D} showBuildings3D={showBuildings3D} showTerrain3D={showTerrain3D} sessionActive={sessionActive} playerLocation={playerLocation} followPlayer={!progressMode && followPlayer} activeRotationFollow={activeRotationFollow} recenterRequest={recenterRequest} discoveries={discoveries} onDiscoveries={onDiscoveries} onLocationChange={handleLocationChange} onBearingChange={handleBearingChange} onZoomChange={zoom => { setBoundaryLevel(mapBoundaryLevel(zoom)); setDiscoveredRoadsOutOfView(zoom < DISCOVERED_MIN_ZOOM); }} onPitchChange={() => {}} onFollowPlayerChange={handleFollowChange} onMapReady={onMapReady} onVisualReady={onVisualReady} />{!progressMode && !isFollowingPlayer && <div className="map-center-crosshair" style={{ top: topOverlayInset }} aria-hidden="true"><span /></div>}
     <header ref={mapHeaderRef} className="map-header">
       <div className="map-top-right">
-        <div ref={progressCardRef} className="location-summary map-ui-surface"><AreaCoverageCard record={displayedArea} discoveries={discoveries} dataReady={discoveriesLoaded || startupDismissed} syncReady={initialSyncSettled || startupDismissed} onUpdate={updateCurrentArea} onExplored={ignoreMapAreaExplored} parentAreaName={displayedParentAreaName ?? undefined} reserveParentArea showActions={false} className="min-h-0 border-0 bg-transparent p-0" /></div>
+        <div ref={progressCardRef} className="location-summary map-ui-surface"><AreaCoverageCard record={displayedArea} discoveries={discoveries} dataReady={discoveriesLoaded} syncReady={initialSyncSettled} onUpdate={updateCurrentArea} onExplored={ignoreMapAreaExplored} parentAreaName={displayedParentAreaName ?? undefined} reserveParentArea showActions={false} className="min-h-0 border-0 bg-transparent p-0" /></div>
         <div className={`map-top-instrument${is3D ? ' map-top-instrument--3d' : ''}`}>
           <HeadingCompassBar bearing={bearing} visible={is3D} />
           <div className="map-top-actions" aria-hidden={is3D}><div className={`map-compass${compassVisible ? ' map-compass--visible' : ''}`} aria-hidden={is3D || !compassVisible}><ShadcnButton variant="secondary" size="icon" className="map-ui-surface" aria-label="Reset compass north" tabIndex={!is3D && compassVisible ? 0 : -1} onClick={resetCompass}><span className="compass-rotor" style={{ transform: `rotate(${-bearing}deg)` }}><i className="compass-needle"><b className="compass-north">▲</b><b className="compass-south">▼</b></i></span></ShadcnButton></div></div>
@@ -1771,7 +1766,7 @@ function DesignSystemReusableComponents() {
         </div>
         <div className="space-y-3">
           <p className="text-body font-medium">Page navigation</p>
-          <p className="text-body text-text-muted">Top level titles scale into a sticky bar as the page scrolls, carrying their actions into place. Keep the space above the title fixed; Sessions refreshes from the session actions menu and reports progress in a toast. Sub-page bars stay visible with a Back action and reserve space below the system safe area. The Sessions list restores its scroll position after a detail page; each session detail opens at the top while its cached data remains available. When leaving a sub-page, its title and actions fade out before the bar disappears. Controls use compact ghost buttons and Phosphor icons.</p>
+          <p className="text-body text-text-muted">Top level titles scale into a sticky bar as the page scrolls, carrying their actions into place. Its opaque surface covers the full heading from the first frame, then shrinks and gains a border on scroll; title and actions stay above the surface. Keep the space above the title fixed; Sessions refreshes from the session actions menu and reports progress in a toast. Sub-page bars stay visible with a Back action and reserve space below the system safe area. The Sessions list restores its scroll position after a detail page; each session detail opens at the top while its cached data remains available. When leaving a sub-page, its title and actions fade out before the bar disappears. Controls use compact ghost buttons and Phosphor icons.</p>
           <div className="design-system-navigation-preview overflow-hidden rounded-panel border border-border"><PageNavigation title={previewNavDetail ? "Session details" : "Sessions"} onBack={previewNavDetail ? () => setPreviewNavDetail(false) : undefined} actions={<ShadcnButton variant="ghost" size="icon-medium" aria-label="Preview session actions"><DotsThreeOutline aria-hidden="true" /></ShadcnButton>} /></div>
           <ShadcnButton variant="secondary" onClick={() => setPreviewNavDetail(value => !value)}>{previewNavDetail ? 'Return to Sessions' : 'Open session details'}</ShadcnButton>
         </div>
@@ -1836,10 +1831,8 @@ function updateMorphingPageHeading(section: HTMLElement) {
     ? Number(section.scrollTop >= 48)
     : Math.min(1, Math.max(0, section.scrollTop / 48));
   const appShell = section.closest<HTMLElement>('.app-shell');
-  const backgroundProgress = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    ? Number(section.scrollTop >= 12)
-    : Math.min(1, Math.max(0, section.scrollTop / 12));
-  appShell?.style.setProperty('--page-nav-bg-progress', String(backgroundProgress));
+  appShell?.style.setProperty('--page-nav-progress', String(progress));
+  appShell?.style.setProperty('--page-nav-height', `${104 - 40 * progress}px`);
   metrics.heading.style.setProperty('--page-nav-progress', String(progress));
   metrics.heading.style.setProperty('--page-title-scale', String(1 + (metrics.compactScale - 1) * progress));
 }

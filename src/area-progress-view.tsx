@@ -75,16 +75,17 @@ export function AreaCoverageCard({ record, discoveries, onUpdate, onExplored, pa
   const ready = job?.status === 'ready' && job.totals;
   const { totals: explored, calculationError, isCurrent } = useExploredAreaTotals(discoveries, area?.geometry ?? null, areaKey, Boolean(ready && dataReady && syncReady));
   useEffect(() => { if (area && explored && isCurrent) onExplored(area.id, explored); }, [area?.id, explored, isCurrent, onExplored]);
-  const lastDisplayedTotalsRef = useRef<{ network: AreaTotals; explored: AreaTotals } | null>(null);
+  const lastDisplayedTotalsRef = useRef<{ areaKey: string; totals: { network: AreaTotals; explored: AreaTotals } } | null>(null);
   const currentTotals = ready && explored && isCurrent && dataReady && syncReady ? { network: ready, explored } : null;
-  const savedExplored = areaKey && (!syncReady || !area?.geometry) ? latestExploredAreaTotals(areaKey) : null;
+  const savedExplored = areaKey && (!dataReady || !syncReady || !area?.geometry) ? latestExploredAreaTotals(areaKey) : null;
   const savedTotals = ready && savedExplored ? { network: ready, explored: savedExplored } : null;
   const pending = job?.status === 'queued' || job?.status === 'running';
-  const loading = !area || !dataReady || !syncReady || pending || requesting || (Boolean(ready) && !currentTotals && !calculationError);
+  const retainedTotals = lastDisplayedTotalsRef.current?.areaKey === areaKey ? lastDisplayedTotalsRef.current.totals : null;
+  const loading = !area || !dataReady || !syncReady || pending || requesting || (Boolean(ready) && !currentTotals && !calculationError) || (Boolean(retainedTotals) && !ready);
   // Keep the entire last complete readout together while an uncached region
   // is measured. Otherwise the bar briefly contracts to zero before expanding.
-  const displayedTotals = currentTotals ?? (loading ? savedTotals ?? lastDisplayedTotalsRef.current : null);
-  useEffect(() => { if (displayedTotals) lastDisplayedTotalsRef.current = displayedTotals; }, [displayedTotals]);
+  const displayedTotals = currentTotals ?? savedTotals ?? retainedTotals;
+  useEffect(() => { if (displayedTotals) lastDisplayedTotalsRef.current = { areaKey, totals: displayedTotals }; }, [areaKey, displayedTotals]);
   const percentage = displayedTotals && displayedTotals.network.lengthMeters > 0 ? displayedTotals.explored.lengthMeters / displayedTotals.network.lengthMeters * 100 : null;
   const inconsistent = percentage !== null && percentage > 100.1;
   const exploredLabel = displayedTotals ? distance(displayedTotals.explored.lengthMeters) : '—';
