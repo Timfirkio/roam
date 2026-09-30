@@ -35,12 +35,14 @@ export function discoverSegments(sample: GpsSample, candidates: RoadCandidate[],
   const corridor = buffer(point([sample.lng, sample.lat]), DISCOVERY_RADIUS_METERS, { units: 'meters', steps: 16 });
   if (!corridor) return [];
   const found: DiscoveredSegment[] = [];
+  const seen = new Set(knownIds);
   for (const candidate of candidates) {
     if (candidate.geometry.coordinates.length < 2) continue;
     const chunks = lineChunk(lineString(candidate.geometry.coordinates) as any, DISCOVERY_CHUNK_METERS / 1000, { units: 'kilometers' });
     chunks.features.forEach((chunk, index) => {
       const id = `${candidate.id}:${index}`;
-      if (knownIds.has(id) || !booleanIntersects(chunk, corridor)) return;
+      if (seen.has(id) || !booleanIntersects(chunk, corridor)) return;
+      seen.add(id);
       found.push({
         id,
         regionId: region?.id,
@@ -53,6 +55,16 @@ export function discoverSegments(sample: GpsSample, candidates: RoadCandidate[],
     });
   }
   return found;
+}
+
+/** Remove repeats inside one map query as well as roads already in progress. */
+export function uniqueNewSegments(segments: DiscoveredSegment[], knownIds: ReadonlySet<string>) {
+  const seen = new Set(knownIds);
+  return segments.filter(segment => {
+    if (seen.has(segment.id)) return false;
+    seen.add(segment.id);
+    return true;
+  });
 }
 
 /**

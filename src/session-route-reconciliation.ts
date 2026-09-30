@@ -45,7 +45,7 @@ async function candidatesForTile(x: number, y: number): Promise<RoadCandidate[]>
   return candidates;
 }
 
-export async function reconcileSessionRoute(points: GpsSample[], knownIds: ReadonlySet<string>): Promise<DiscoveredSegment[]> {
+export async function reconcileSessionRoute(points: GpsSample[], knownIds: ReadonlySet<string>, requireCompleteTiles = false): Promise<DiscoveredSegment[]> {
   const tiles = new Map<string, [number, number]>();
   for (const point of points) {
     if (!Number.isFinite(point.lng) || !Number.isFinite(point.lat)) continue;
@@ -58,7 +58,7 @@ export async function reconcileSessionRoute(points: GpsSample[], knownIds: Reado
   // network and battery while still completing before the session is saved.
   for (let index = 0; index < requestedTiles.length; index += 6) {
     const batch = requestedTiles.slice(index, index + 6);
-    candidates.push(...(await Promise.all(batch.map(([x, y]) => candidatesForTile(x, y).catch(() => [])))).flat());
+    candidates.push(...(await Promise.all(batch.map(([x, y]) => requireCompleteTiles ? candidatesForTile(x, y) : candidatesForTile(x, y).catch(() => [])))).flat());
   }
   const unique = new Map<string, RoadCandidate>();
   for (const candidate of candidates) unique.set(candidateKey(candidate), candidate);

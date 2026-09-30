@@ -1,4 +1,4 @@
-import type { DiscoveredSegment, RoadType } from './discovery';
+import { uniqueNewSegments, type DiscoveredSegment, type RoadType } from './discovery';
 import type { RideSession } from './session-store';
 import type { AreaRecord } from './area-types';
 import { displayAreaName } from './area-display-name';
@@ -9,14 +9,19 @@ export const ROAD_TYPES: { type: RoadType; label: string }[] = [
   { type: 'unpaved-path', label: 'Unpaved path' },
 ];
 
+export function routeMatchedNewSegments(discoveries: DiscoveredSegment[], routeIds: ReadonlySet<string>, startedAt: number, endedAt = Infinity) {
+  return uniqueNewSegments(discoveries.filter(segment => routeIds.has(segment.id) && segment.discoveredAt >= startedAt && segment.discoveredAt <= endedAt), new Set());
+}
+
 export function sessionAnalytics(session: RideSession, routeSegments: DiscoveredSegment[], discoveries: DiscoveredSegment[]) {
   const routeIds = new Set(routeSegments.map(segment => segment.id));
-  const newSegments = discoveries.filter(segment => routeIds.has(segment.id) && segment.discoveredAt >= session.startedAt && segment.discoveredAt <= session.endedAt);
+  const newSegments = routeMatchedNewSegments(discoveries, routeIds, session.startedAt, session.endedAt);
   const roadTypes: Record<RoadType, number> = { 'paved-road': 0, cycleway: 0, 'unpaved-path': 0 };
-  for (const segment of routeSegments) roadTypes[segment.roadType] += segment.lengthMeters;
+  for (const segment of uniqueNewSegments(routeSegments, new Set())) roadTypes[segment.roadType] += segment.lengthMeters;
   return {
     roadTypes,
     newSegments: [...newSegments].sort((a, b) => a.discoveredAt - b.discoveredAt),
+    newDistanceMeters: newSegments.reduce((total, segment) => total + segment.lengthMeters, 0),
   };
 }
 

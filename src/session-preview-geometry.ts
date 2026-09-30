@@ -38,12 +38,7 @@ export function sessionPreviewGeometry(coordinates: [number, number][]) {
     const [x, y] = mercator(coordinate);
     return [PREVIEW_WIDTH / 2 + (x - centerX) * scale, PREVIEW_HEIGHT / 2 + (y - centerY) * scale] as const;
   };
-  // A Web Mercator lattice: every cell is square on screen and fixed to the map.
-  const step = 2 ** Math.ceil(Math.log2(200 / scale));
-  const vertical: number[] = [], horizontal: number[] = [];
-  for (let x = Math.ceil((centerX - PREVIEW_WIDTH / 2 / scale) / step) * step; x <= centerX + PREVIEW_WIDTH / 2 / scale; x += step) vertical.push(PREVIEW_WIDTH / 2 + (x - centerX) * scale);
-  for (let y = Math.ceil((centerY - PREVIEW_HEIGHT / 2 / scale) / step) * step; y <= centerY + PREVIEW_HEIGHT / 2 / scale; y += step) horizontal.push(PREVIEW_HEIGHT / 2 + (y - centerY) * scale);
-  return { project, gridPath: [...vertical.map(x => `M${x} 0V${PREVIEW_HEIGHT}`), ...horizontal.map(y => `M0 ${y}H${PREVIEW_WIDTH}`)].join(' ') };
+  return { project };
 }
 
 const previewDrawingCache = new WeakMap<SessionPoint[], ReturnType<typeof buildSessionPreviewDrawing>>();
@@ -52,9 +47,8 @@ function buildSessionPreviewDrawing(points: SessionPoint[]) {
   const coordinates = sessionCoordinates(points);
   if (coordinates.length < 2) return null;
   const smoothed = smoothSessionCoordinates(coordinates);
-  const { project, gridPath } = sessionPreviewGeometry(smoothed);
+  const { project } = sessionPreviewGeometry(smoothed);
   return {
-    gridPath,
     routePath: smoothed.map((coordinate, index) => `${index === 0 ? 'M' : 'L'} ${project(coordinate).join(' ')}`).join(' '),
     start: project(smoothed[0]),
     end: project(smoothed[smoothed.length - 1]),

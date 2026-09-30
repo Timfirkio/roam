@@ -26,10 +26,10 @@ export type SessionDetailEntry = {
 const routeCache = new WeakMap<SessionPoint[], Promise<DiscoveredSegment[]>>();
 const detailCache = new WeakMap<SessionPoint[], Map<string, WeakMap<DiscoveredSegment[], SessionDetailEntry>>>();
 
-function routeFor(points: SessionPoint[]) {
+export function sessionRouteFor(points: SessionPoint[]) {
   let pending = routeCache.get(points);
   if (!pending) {
-    pending = reconcileSessionRoute(points, new Set()).catch(error => {
+    pending = reconcileSessionRoute(points, new Set(), true).catch(error => {
       routeCache.delete(points);
       throw error;
     });
@@ -80,7 +80,7 @@ export function sessionDetailEntry(session: RideSession, discoveries: Discovered
       const work = (async () => {
         let analytics: Analytics;
         try {
-          analytics = snapshot.analytics ?? sessionAnalytics(session, await routeFor(session.points), discoveries);
+          analytics = snapshot.analytics ?? sessionAnalytics(session, await sessionRouteFor(session.points), discoveries);
           if (snapshot.routeStatus !== 'ready') publish({ analytics, routeStatus: 'ready' });
         } catch {
           publish({ routeStatus: 'error', regionStatus: 'error' });

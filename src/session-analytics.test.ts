@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { discoveryTimeline, regionDiscoveryShares, sessionAnalytics, summarizeSessionRegions } from './session-analytics';
+import { discoveryTimeline, regionDiscoveryShares, routeMatchedNewSegments, sessionAnalytics, summarizeSessionRegions } from './session-analytics';
 import type { DiscoveredSegment } from './discovery';
 import type { RideSession } from './session-store';
 import type { AreaRecord } from './area-types';
@@ -14,6 +14,16 @@ describe('session insights', () => {
     const result = sessionAnalytics(session, route, discoveries);
     expect(result.roadTypes).toEqual({ 'paved-road': 10, cycleway: 20, 'unpaved-path': 30 });
     expect(result.newSegments.map(item => item.id)).toEqual(['a']);
+  });
+
+  it('uses the route-matched discovery total despite an inflated saved readout', () => {
+    const road = segment('a', 'paved-road', 4_000, 12);
+    const mapOnlyAlias = segment('map-tile-alias', 'paved-road', 4_000, 3_100);
+    const inflated = { ...session, newDistanceMeters: 36 };
+    const analytics = sessionAnalytics(inflated, [road, road], [road, road, mapOnlyAlias]);
+    expect(analytics.newSegments).toEqual([road]);
+    expect(analytics.newDistanceMeters).toBe(12);
+    expect(routeMatchedNewSegments([road, mapOnlyAlias], new Set(['a']), session.startedAt)).toEqual([road]);
   });
 
   it('counts each discovered road in its API-backed local and parent areas', () => {
