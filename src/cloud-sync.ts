@@ -87,12 +87,12 @@ function latestCursor(current: string, rows: { created_at?: string; updated_at?:
 /** Upload local progress, then replace the local cache with the account-wide union. */
 export async function syncAccountProgress(userId: string, onProgress?: (progress: SyncProgress) => void) {
   const client = requireSupabase();
-  const checkpoint = loadCloudSyncCheckpoint(userId);
+  let checkpoint = loadCloudSyncCheckpoint(userId);
   const loadCloudDiscoveries = async () => {
     const rows: any[] = [];
     for (let offset = 0; ; offset += CLOUD_DISCOVERY_PAGE_SIZE) {
       let query = client.from('discoveries').select('*').eq('user_id', userId);
-      if (checkpoint) query = query.gte('created_at', checkpoint.discoveryCursor);
+      if (checkpoint && checkpoint.discoveryCursor) query = query.gt('created_at', checkpoint.discoveryCursor);
       const { data, error } = await query.order('created_at').order('segment_id').range(offset, offset + CLOUD_DISCOVERY_PAGE_SIZE - 1);
       if (error) throw syncError('Could not load explored roads from the cloud', error);
       const page = data ?? [];
@@ -101,10 +101,10 @@ export async function syncAccountProgress(userId: string, onProgress?: (progress
     }
   };
   const loadCloudDeletions = async () => {
-    const rows: { id: string; deleted_at: string }[] = [];
+    const rows: { id: string; deleted_at: string; updated_at: string }[] = [];
     for (let offset = 0; ; offset += CLOUD_DISCOVERY_PAGE_SIZE) {
       let query = client.from('ride_sessions').select('id, deleted_at, updated_at').eq('user_id', userId).not('deleted_at', 'is', null);
-      if (checkpoint) query = query.gte('updated_at', checkpoint.rideCursor);
+      if (checkpoint && checkpoint.rideCursor) query = query.gt('updated_at', checkpoint.rideCursor);
       const { data, error } = await query.order('updated_at').order('id').range(offset, offset + CLOUD_DISCOVERY_PAGE_SIZE - 1);
       if (error) throw syncError('Could not load deleted rides from the cloud', error);
       const page = data ?? [];
@@ -116,7 +116,7 @@ export async function syncAccountProgress(userId: string, onProgress?: (progress
     const rows: any[] = [];
     for (let offset = 0; ; offset += CLOUD_RIDE_PAGE_SIZE) {
       let query = client.from('ride_sessions').select('*').eq('user_id', userId).is('deleted_at', null);
-      if (checkpoint) query = query.gte('updated_at', checkpoint.rideCursor);
+      if (checkpoint && checkpoint.rideCursor) query = query.gt('updated_at', checkpoint.rideCursor);
       const { data, error } = await query.order('updated_at').order('id').range(offset, offset + CLOUD_RIDE_PAGE_SIZE - 1);
       if (error) throw syncError('Could not load cloud rides', error);
       const page = data ?? [];
@@ -140,6 +140,10 @@ export async function syncAccountProgress(userId: string, onProgress?: (progress
   };
   onProgress?.({ label: 'Preparing local progress…' });
   const [discoveries, sessions, localDeletions] = await Promise.all([loadDiscoveredSegments(), loadSessions(), loadDeletedSessions()]);
+  // A browser may clear IndexedDB without clearing localStorage. Rebuild the
+  // device from the cloud instead of trusting a cursor for missing local data.
+  if (checkpoint && (discoveries.length < checkpoint.discoveryIds.length
+    || sessions.length + localDeletions.length < Object.keys(checkpoint.rideSignatures).length)) checkpoint = null;
   onProgress?.({ label: 'Checking your account progress…' });
   const [initialCloudDiscoveries, initialCloudSessions, initialCloudDeletions] = await Promise.all([
     loadCloudDiscoveries(),
@@ -215,6 +219,11 @@ export async function syncAccountProgress(userId: string, onProgress?: (progress
       const { error: pointsError } = await client.from('ride_session_points').insert(points);
       if (pointsError) throw syncError(`Could not upload GPS points for “${session.title}”`, pointsError);
     }
+    // Mark the ride changed again after its last point batch. Another device
+    // that read during replacement will then retry and get the complete route.
+    const { error: completedPointsError } = await client.from('ride_sessions')
+      .update({ updated_at: new Date().toISOString() }).eq('user_id', userId).eq('id', session.id);
+    if (completedPointsError) throw syncError(`Could not finish syncing “${session.title}”`, completedPointsError);
   }
   if (changedCloudData) {
     onProgress?.({ label: 'Loading your account progress…' });
@@ -274,12 +283,21 @@ export async function syncAccountProgress(userId: string, onProgress?: (progress
   const addedRides = syncedSessions.filter(item => !localSessionIds.has(item.id)).length;
   onProgress?.({ label: 'Updating this device…' });
   await Promise.all([replaceDiscoveredSegments(syncedDiscoveries), replaceSessions(syncedSessions)]);
+  // Only checkpoint data confirmed in the cloud. GPS discoveries or rides made
+  // while requests were in flight remain unsynced for the next pass.
+  const confirmedDiscoveryIds = new Set([
+    ...cloudDiscoveryIds, ...discoveriesToUpload.map(item => item.id), ...cloudDiscoveries.map((row: any) => row.segment_id),
+  ]);
+  const confirmedRideSignatures = { ...(checkpoint?.rideSignatures ?? {}) };
+  cloudSessions.forEach((row: any) => { confirmedRideSignatures[row.id] = sessionSignature(toSession(row)); });
+  sessionsToUpload.forEach(item => { confirmedRideSignatures[item.id] = sessionSignature(item); });
+  for (const id of new Set([...cloudDeletedIds, ...localDeletedIds])) delete confirmedRideSignatures[id];
   saveCloudSyncCheckpoint(userId, {
     version: 1,
     discoveryCursor: latestCursor(checkpoint?.discoveryCursor ?? '', cloudDiscoveries, 'created_at'),
     rideCursor: latestCursor(latestCursor(checkpoint?.rideCursor ?? '', cloudSessions, 'updated_at'), initialCloudDeletions, 'updated_at'),
-    discoveryIds: [...new Set([...cloudDiscoveryIds, ...syncedDiscoveries.map(item => item.id)])],
-    rideSignatures: Object.fromEntries(syncedSessions.map(item => [item.id, sessionSignature(item)])),
+    discoveryIds: [...confirmedDiscoveryIds],
+    rideSignatures: confirmedRideSignatures,
   });
   return { discoveries: syncedDiscoveries, sessions: await loadSessions(), addedDiscoveryMeters, addedRides };
 }

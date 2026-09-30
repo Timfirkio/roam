@@ -12,6 +12,7 @@ const state = vi.hoisted(() => ({
   deletedPointIds: [] as string[],
   uploadedSessionIds: [] as string[],
   insertedPoints: [] as Record<string, any>[],
+  selectedTables: [] as string[],
 }));
 
 vi.mock('./discovery-store', () => ({
@@ -40,9 +41,11 @@ vi.mock('./supabase', () => ({ requireSupabase: () => ({ from: (table: string) =
   let deletedFilter: 'active' | 'deleted' | null = null;
   let sessionId: string | null = null;
   let range: [number, number] | null = null;
+  let changedAfter: { column: string; value: string } | null = null;
   const query = {
-    select: () => query,
+    select: () => { state.selectedTables.push(table); return query; },
     eq: (column: string, value: string) => { if (column === 'id' || column === 'session_id') sessionId = value; return query; },
+    gt: (column: string, value: string) => { changedAfter = { column, value }; return query; },
     is: (column: string) => { if (column === 'deleted_at') deletedFilter = 'active'; return query; },
     not: (column: string) => { if (column === 'deleted_at') deletedFilter = 'deleted'; return query; },
     order: () => query,
@@ -56,7 +59,8 @@ vi.mock('./supabase', () => ({ requireSupabase: () => ({ from: (table: string) =
         const duringCloudRead = state.duringCloudRead;
         state.duringCloudRead = null;
         duringCloudRead?.();
-        return { data: [...state.cloudDiscoveries], error: null };
+        const rows = state.cloudDiscoveries.filter(row => !changedAfter || row[changedAfter.column] > changedAfter.value);
+        return { data: range ? rows.slice(range[0], range[1] + 1) : rows, error: null };
       }
       if (table === 'discoveries' && operation === 'upsert') {
         state.cloudDiscoveries.push(...payload);
@@ -64,7 +68,10 @@ vi.mock('./supabase', () => ({ requireSupabase: () => ({ from: (table: string) =
       }
       if (table === 'ride_sessions' && operation === 'update') {
         const row = state.cloudRows.find(candidate => candidate.id === sessionId && candidate.deleted_at === null);
-        if (row) row.deleted_at = payload.deleted_at;
+        if (row) {
+          if (payload.deleted_at) row.deleted_at = payload.deleted_at;
+          else row.updated_at = payload.updated_at;
+        }
         return { data: null, error: null };
       }
       if (table === 'ride_sessions' && operation === 'upsert') {
@@ -84,11 +91,13 @@ vi.mock('./supabase', () => ({ requireSupabase: () => ({ from: (table: string) =
       }
       if (table === 'ride_session_points' && operation === 'select') {
         const points = [...state.cloudRows.flatMap(row => row.ride_session_points ?? []), ...state.insertedPoints]
+          .filter(point => !sessionId || point.session_id === sessionId)
           .sort((a, b) => a.session_id.localeCompare(b.session_id) || a.sequence - b.sequence);
         return { data: range ? points.slice(range[0], range[1] + 1) : points.slice(0, 1_000), error: null };
       }
       if (table === 'ride_sessions') {
-        const rows = state.cloudRows.filter(row => deletedFilter === 'deleted' ? row.deleted_at !== null : row.deleted_at === null);
+        const rows = state.cloudRows.filter(row => (deletedFilter === 'deleted' ? row.deleted_at !== null : row.deleted_at === null)
+          && (!changedAfter || row[changedAfter.column] > changedAfter.value));
         return { data: range ? rows.slice(range[0], range[1] + 1) : rows.slice(0, 1_000), error: null };
       }
       return { data: [], error: null };
@@ -109,7 +118,7 @@ function cloudSession(deletedAt: string | null) {
     id: session.id, title: session.title, district_names: [], started_at: new Date(session.startedAt).toISOString(),
     ended_at: new Date(session.endedAt).toISOString(), duration_seconds: session.durationSeconds,
     distance_meters: session.distanceMeters, new_distance_meters: session.newDistanceMeters,
-    ride_session_points: [], deleted_at: deletedAt,
+    ride_session_points: [], deleted_at: deletedAt, updated_at: new Date(session.startedAt).toISOString(),
   };
 }
 
@@ -123,6 +132,7 @@ beforeEach(() => {
   state.deletedPointIds = [];
   state.uploadedSessionIds = [];
   state.insertedPoints = [];
+  state.selectedTables = [];
 });
 
 afterEach(() => vi.unstubAllGlobals());
@@ -132,7 +142,7 @@ function discovery(id: string, lengthMeters = 12): DiscoveredSegment {
 }
 
 function cloudDiscovery(segment: DiscoveredSegment) {
-  return { segment_id: segment.id, road_type: segment.roadType, geometry: segment.geometry, length_meters: segment.lengthMeters, discovered_at: new Date(segment.discoveredAt).toISOString() };
+  return { segment_id: segment.id, road_type: segment.roadType, geometry: segment.geometry, length_meters: segment.lengthMeters, discovered_at: new Date(segment.discoveredAt).toISOString(), created_at: new Date(segment.discoveredAt).toISOString() };
 }
 
 async function syncEvent() {
@@ -244,4 +254,68 @@ it('restores a complete local route when the cloud copy has only 1000 points', a
   expect(state.deletedPointIds).toEqual([session.id]);
   expect(state.insertedPoints).toHaveLength(1_501);
   expect(result.sessions[0].points).toHaveLength(1_501);
+});
+
+it('uses change cursors and downloads GPS points only for changed rides after the first sync', async () => {
+  const values = new Map<string, string>();
+  vi.stubGlobal('localStorage', {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, value); },
+  });
+  state.cloudDiscoveries = [cloudDiscovery(discovery('first'))];
+  state.cloudRows = [cloudSession(null)];
+
+  await syncAccountProgress('user-1');
+  expect(state.selectedTables.filter(table => table === 'ride_session_points')).toHaveLength(1);
+
+  state.selectedTables = [];
+  await syncAccountProgress('user-1');
+  expect(state.selectedTables.filter(table => table === 'ride_session_points')).toHaveLength(0);
+  expect(state.uploadedSessionIds).toEqual([]);
+
+  state.cloudDiscoveries.push(cloudDiscovery({ ...discovery('second'), discoveredAt: 2_000 }));
+  state.cloudRows.push({ ...cloudSession(null), id: 'ride-2', updated_at: new Date(2_000).toISOString() });
+  state.selectedTables = [];
+  const result = await syncAccountProgress('user-1');
+  expect(result.discoveries.map(row => row.id)).toEqual(['first', 'second']);
+  expect(result.sessions.map(row => row.id)).toEqual(['ride-1', 'ride-2']);
+  expect(state.selectedTables.filter(table => table === 'ride_session_points')).toHaveLength(1);
+});
+
+it('does not checkpoint progress created locally while a sync is in flight', async () => {
+  const values = new Map<string, string>();
+  vi.stubGlobal('localStorage', {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, value); },
+  });
+  state.duringCloudRead = () => {
+    state.localDiscoveries.push(discovery('late-discovery'));
+    state.localSessions.push(session);
+  };
+
+  await syncAccountProgress('user-1');
+  expect(state.cloudDiscoveries).toEqual([]);
+  expect(state.uploadedSessionIds).toEqual([]);
+
+  await syncAccountProgress('user-1');
+  expect(state.cloudDiscoveries.map(row => row.segment_id)).toEqual(['late-discovery']);
+  expect(state.uploadedSessionIds).toEqual([session.id]);
+});
+
+it('receives a later explicit session deletion without removing explored roads', async () => {
+  const values = new Map<string, string>();
+  vi.stubGlobal('localStorage', {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, value); },
+  });
+  state.cloudDiscoveries = [cloudDiscovery(discovery('explored'))];
+  state.cloudRows = [cloudSession(null)];
+  await syncAccountProgress('user-1');
+
+  state.cloudRows[0].deleted_at = new Date(3_000).toISOString();
+  state.cloudRows[0].updated_at = new Date(3_000).toISOString();
+  const result = await syncAccountProgress('user-1');
+
+  expect(result.sessions).toEqual([]);
+  expect(result.discoveries.map(row => row.id)).toEqual(['explored']);
 });

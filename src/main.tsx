@@ -2356,7 +2356,7 @@ function App() {
     window.addEventListener('online', onOnline);
     window.addEventListener('roam:local-progress-changed', onChanged);
     document.addEventListener('visibilitychange', onVisible);
-    const interval = window.setInterval(() => schedule(0), 60_000);
+    const interval = window.setInterval(() => schedule(0), 15 * 60_000);
     return () => { disposed = true; if (timer) clearTimeout(timer); clearInterval(interval); subscription.unsubscribe(); window.removeEventListener('online', onOnline); window.removeEventListener('roam:local-progress-changed', onChanged); document.removeEventListener('visibilitychange', onVisible); };
   }, [discoveriesLoaded, sessionsLoaded]);
   useEffect(() => {
