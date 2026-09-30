@@ -3,6 +3,7 @@ import { loadDiscoveredSegments, replaceDiscoveredSegments } from './discovery-s
 import { loadDeletedSessions, loadSessions, recordDeletedSessions, replaceSessions, type RideSession, type SessionPoint } from './session-store';
 import { requireSupabase } from './supabase';
 import { formatDistance } from './distance-format';
+import { loadCloudSyncCheckpoint, saveCloudSyncCheckpoint } from './cloud-sync-checkpoint';
 
 const POINT_BATCH_SIZE = 250;
 const DISCOVERY_BATCH_SIZE = 250;
@@ -65,13 +66,34 @@ function sameSessionDetails(left: RideSession, right: RideSession) {
     && left.newDistanceMeters === right.newDistanceMeters;
 }
 
+function sessionSignature(session: RideSession) {
+  const value = JSON.stringify([session.title, session.districtNames, session.startedAt, session.endedAt,
+    session.durationSeconds, session.distanceMeters, session.newDistanceMeters, session.points]);
+  let first = 2166136261, second = 2246822519;
+  for (let i = 0; i < value.length; i++) {
+    first = Math.imul(first ^ value.charCodeAt(i), 16777619);
+    second = Math.imul(second ^ value.charCodeAt(i), 3266489917);
+  }
+  return `${value.length}:${first >>> 0}:${second >>> 0}`;
+}
+
+function latestCursor(current: string, rows: { created_at?: string; updated_at?: string }[], field: 'created_at' | 'updated_at') {
+  return rows.reduce((latest, row) => {
+    const value = row[field];
+    return value && value > latest ? value : latest;
+  }, current);
+}
+
 /** Upload local progress, then replace the local cache with the account-wide union. */
 export async function syncAccountProgress(userId: string, onProgress?: (progress: SyncProgress) => void) {
   const client = requireSupabase();
+  const checkpoint = loadCloudSyncCheckpoint(userId);
   const loadCloudDiscoveries = async () => {
     const rows: any[] = [];
     for (let offset = 0; ; offset += CLOUD_DISCOVERY_PAGE_SIZE) {
-      const { data, error } = await client.from('discoveries').select('*').eq('user_id', userId).order('discovered_at').order('segment_id').range(offset, offset + CLOUD_DISCOVERY_PAGE_SIZE - 1);
+      let query = client.from('discoveries').select('*').eq('user_id', userId);
+      if (checkpoint) query = query.gte('created_at', checkpoint.discoveryCursor);
+      const { data, error } = await query.order('created_at').order('segment_id').range(offset, offset + CLOUD_DISCOVERY_PAGE_SIZE - 1);
       if (error) throw syncError('Could not load explored roads from the cloud', error);
       const page = data ?? [];
       rows.push(...page);
@@ -81,7 +103,9 @@ export async function syncAccountProgress(userId: string, onProgress?: (progress
   const loadCloudDeletions = async () => {
     const rows: { id: string; deleted_at: string }[] = [];
     for (let offset = 0; ; offset += CLOUD_DISCOVERY_PAGE_SIZE) {
-      const { data, error } = await client.from('ride_sessions').select('id, deleted_at').eq('user_id', userId).not('deleted_at', 'is', null).order('id').range(offset, offset + CLOUD_DISCOVERY_PAGE_SIZE - 1);
+      let query = client.from('ride_sessions').select('id, deleted_at, updated_at').eq('user_id', userId).not('deleted_at', 'is', null);
+      if (checkpoint) query = query.gte('updated_at', checkpoint.rideCursor);
+      const { data, error } = await query.order('updated_at').order('id').range(offset, offset + CLOUD_DISCOVERY_PAGE_SIZE - 1);
       if (error) throw syncError('Could not load deleted rides from the cloud', error);
       const page = data ?? [];
       rows.push(...page);
@@ -91,25 +115,26 @@ export async function syncAccountProgress(userId: string, onProgress?: (progress
   const loadCloudSessions = async () => {
     const rows: any[] = [];
     for (let offset = 0; ; offset += CLOUD_RIDE_PAGE_SIZE) {
-      const { data, error } = await client.from('ride_sessions').select('*').eq('user_id', userId).is('deleted_at', null)
-        .order('started_at', { ascending: false }).order('id').range(offset, offset + CLOUD_RIDE_PAGE_SIZE - 1);
+      let query = client.from('ride_sessions').select('*').eq('user_id', userId).is('deleted_at', null);
+      if (checkpoint) query = query.gte('updated_at', checkpoint.rideCursor);
+      const { data, error } = await query.order('updated_at').order('id').range(offset, offset + CLOUD_RIDE_PAGE_SIZE - 1);
       if (error) throw syncError('Could not load cloud rides', error);
       const page = data ?? [];
       rows.push(...page);
       if (page.length < CLOUD_RIDE_PAGE_SIZE) break;
     }
     const pointsBySession = new Map<string, any[]>();
-    for (let offset = 0; ; offset += CLOUD_POINT_PAGE_SIZE) {
-      const { data, error } = await client.from('ride_session_points').select('*').eq('user_id', userId)
-        .order('session_id').order('sequence').range(offset, offset + CLOUD_POINT_PAGE_SIZE - 1);
-      if (error) throw syncError('Could not load cloud ride GPS points', error);
-      const page = data ?? [];
-      for (const point of page) {
-        const points = pointsBySession.get(point.session_id) ?? [];
-        points.push(point);
-        pointsBySession.set(point.session_id, points);
+    for (const row of rows) {
+      const points: any[] = [];
+      for (let offset = 0; ; offset += CLOUD_POINT_PAGE_SIZE) {
+        const { data, error } = await client.from('ride_session_points').select('*').eq('user_id', userId)
+          .eq('session_id', row.id).order('sequence').range(offset, offset + CLOUD_POINT_PAGE_SIZE - 1);
+        if (error) throw syncError('Could not load cloud ride GPS points', error);
+        const page = data ?? [];
+        points.push(...page);
+        if (page.length < CLOUD_POINT_PAGE_SIZE) break;
       }
-      if (page.length < CLOUD_POINT_PAGE_SIZE) break;
+      pointsBySession.set(row.id, points);
     }
     return rows.map(row => ({ ...row, ride_session_points: pointsBySession.get(row.id) ?? [] }));
   };
@@ -145,11 +170,12 @@ export async function syncAccountProgress(userId: string, onProgress?: (progress
     ...initialCloudDeletions.map(row => ({ id: row.id, deletedAt: new Date(row.deleted_at).valueOf(), synced: true })),
   ]);
 
-  const cloudDiscoveryIds = new Set(cloudDiscoveries.map((row: any) => row.segment_id));
+  const cloudDiscoveryIds = new Set([...(checkpoint?.discoveryIds ?? []), ...cloudDiscoveries.map((row: any) => row.segment_id)]);
   const discoveriesToUpload = discoveries.filter(segment => !cloudDiscoveryIds.has(segment.id));
   const cloudSessionsById = new Map<string, RideSession>(cloudSessions.map((row: any) => [row.id, toSession(row)]));
   const sessionsToUpload = sessions.filter(session => {
     if (cloudDeletedIds.has(session.id) || localDeletedIds.has(session.id)) return false;
+    if (checkpoint) return checkpoint.rideSignatures[session.id] !== sessionSignature(session);
     const cloudSession = cloudSessionsById.get(session.id);
     return !cloudSession || !sameSessionDetails(session, cloudSession) || !samePoints(session.points, cloudSession.points);
   });
@@ -248,6 +274,13 @@ export async function syncAccountProgress(userId: string, onProgress?: (progress
   const addedRides = syncedSessions.filter(item => !localSessionIds.has(item.id)).length;
   onProgress?.({ label: 'Updating this device…' });
   await Promise.all([replaceDiscoveredSegments(syncedDiscoveries), replaceSessions(syncedSessions)]);
+  saveCloudSyncCheckpoint(userId, {
+    version: 1,
+    discoveryCursor: latestCursor(checkpoint?.discoveryCursor ?? '', cloudDiscoveries, 'created_at'),
+    rideCursor: latestCursor(latestCursor(checkpoint?.rideCursor ?? '', cloudSessions, 'updated_at'), initialCloudDeletions, 'updated_at'),
+    discoveryIds: [...new Set([...cloudDiscoveryIds, ...syncedDiscoveries.map(item => item.id)])],
+    rideSignatures: Object.fromEntries(syncedSessions.map(item => [item.id, sessionSignature(item)])),
+  });
   return { discoveries: syncedDiscoveries, sessions: await loadSessions(), addedDiscoveryMeters, addedRides };
 }
 

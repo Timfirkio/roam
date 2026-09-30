@@ -2,6 +2,27 @@ import type { Map } from 'maplibre-gl';
 import { UNDISCOVERED_UNPAVED_ROAD_COLOR, UNPAVED_ROAD_DASHARRAY, UNPAVED_ROAD_WIDTH } from './map-road-colors';
 
 export const ROAM_MAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
+export const RESTRICTED_HATCH_IMAGE = 'roam-restricted-hatch';
+export const RESTRICTED_MARK_COLOR = '#c5403e';
+
+/** A transparent, repeating pattern keeps restricted land visible without hiding roads. */
+export function ensureRestrictedHatchImage(map: Map) {
+  if (map.hasImage(RESTRICTED_HATCH_IMAGE)) return;
+  const canvas = document.createElement('canvas');
+  canvas.width = 32;
+  canvas.height = 32;
+  const context = canvas.getContext('2d');
+  if (!context) return;
+  context.strokeStyle = `${RESTRICTED_MARK_COLOR}8c`;
+  context.lineWidth = 2;
+  for (let offset = -32; offset <= 64; offset += 32) {
+    context.beginPath();
+    context.moveTo(offset, 32);
+    context.lineTo(offset + 32, 0);
+    context.stroke();
+  }
+  map.addImage(RESTRICTED_HATCH_IMAGE, context.getImageData(0, 0, 32, 32), { pixelRatio: 2 });
+}
 
 const ROAD_MIN_ZOOM = 6;
 const ROAD_MAX_ZOOM = 24;
@@ -35,7 +56,7 @@ export function applyRoamBaseStyle(map: Map) {
     if (layer.type === 'symbol' || id.includes('building') || id.includes('boundary') || id === 'park_outline' || id === 'landcover_wetland' || id === 'road_area_pattern' || isRail || (isRestricted && layer.type === 'line')) map.setLayoutProperty(layer.id, 'visibility', 'none');
     if (layer.type === 'fill' && isWater) { map.setPaintProperty(layer.id, 'fill-color', '#102331'); map.setPaintProperty(layer.id, 'fill-opacity', .92); }
     if (layer.type === 'fill' && isPark) { map.setPaintProperty(layer.id, 'fill-color', '#0e1b17'); map.setPaintProperty(layer.id, 'fill-opacity', .86); if (id === 'park') map.setPaintProperty(layer.id, 'fill-outline-color', '#13251f'); }
-    if (layer.type === 'fill' && isRestricted) { map.setPaintProperty(layer.id, 'fill-color', '#241216'); map.setPaintProperty(layer.id, 'fill-opacity', .9); map.setPaintProperty(layer.id, 'fill-outline-color', '#241216'); }
+    if (layer.type === 'fill' && isRestricted) { map.setPaintProperty(layer.id, 'fill-color', '#48252b'); map.setPaintProperty(layer.id, 'fill-opacity', .14); map.setPaintProperty(layer.id, 'fill-outline-color', '#48252b'); }
     if (layer.type === 'line' && isWater) { map.setPaintProperty(layer.id, 'line-color', '#24465a'); map.setPaintProperty(layer.id, 'line-opacity', .8); }
     if (layer.type === 'line' && isRestricted) { map.setPaintProperty(layer.id, 'line-color', '#6b3038'); map.setPaintProperty(layer.id, 'line-opacity', .85); }
     if (isRoad && layer.type === 'line') {

@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { AnimatedProgressValue, AreaCoverageCard, ScrambleText } from './area-progress-view';
 import { cachedExploredTotals, calculateExploredAreaTotals, exploredTotalsKey } from './area-progress-calculation';
 import { areaTileUrlTemplate, loadArea, lookupAreas } from './area-client';
+import { containingAreaName } from './area-parent';
 import { displayAreaName, shortRegionName } from './area-display-name';
 import type { AreaRecord, AreaTotals } from './area-types';
 import * as maplibregl from 'maplibre-gl';
@@ -31,7 +32,7 @@ import { generateSessionThumbnail } from './session-thumbnail';
 import { PREVIEW_HEIGHT, PREVIEW_WIDTH, sessionCoordinates, sessionPreviewGeometry, smoothSessionCoordinates } from './session-preview-geometry';
 import { formatSessionTitle, isGeneratedSessionTitle, regionNamesForSession, SESSION_NAMING_VERSION, titleForRegions } from './session-naming';
 import { sessionSearchMatches } from './session-search';
-import { applyRoamBaseStyle } from './roam-map-style';
+import { applyRoamBaseStyle, ensureRestrictedHatchImage, RESTRICTED_HATCH_IMAGE, RESTRICTED_MARK_COLOR } from './roam-map-style';
 import { useMapSetting } from './map-settings';
 import { useAppVisible } from './use-app-visible';
 import { createPlayerModel } from './player-model';
@@ -172,7 +173,7 @@ function ProgressTransitionPreview() {
   return <div>
     <p className="mb-3 font-mono text-label font-semibold tracking-[0.14em] text-text-subtle">DISTRICT PROGRESS CARD</p>
     <Surface className="space-y-4 p-4">
-      <p className="text-body text-text-muted">Map card for the active district. Turning on Region progress fits the current region in view; tapping another region chooses the card readout and fits that region in view. Further panning does not change the selection. The GPS control returns to the player at the default zoom. The map shows one outline tier at a time, plus any child boundaries inside the selected region. The parent region is contextual, the bar stays visible during recalculation, and both distance and completion readings roll with their values. Before the first result, a card-shaped skeleton holds its place.</p>
+      <p className="text-body text-text-muted">Map card for the active district. Turning on Region progress fits the current region in view; tapping another region chooses the card readout and fits that region in view. Further panning does not change the selection. The GPS control returns to the player at the default zoom. The map shows one outline tier at a time, plus any child boundaries inside the selected region. The overline names the closest containing region, including the country or Earth. The bar stays visible during recalculation, and both distance and completion readings roll with their values. Before the first result, a card-shaped skeleton holds its place.</p>
       <div className="district-progress-content map-district-progress-preview rounded-control border border-border-muted bg-surface p-4">
         <div className="district-progress-parent roam-overline-sm"><ScrambleText text="Stockholms kommun" /></div>
         <div className="district-progress-top"><div className="district-progress-title"><ScrambleText text={regions[regionIndex].name} /></div></div>
@@ -335,9 +336,9 @@ function styleRoamMap(map: Map, showDiscovered: boolean, showRegionProgress: boo
       if (id === 'park') map.setPaintProperty(layer.id, 'fill-outline-color', '#13251f');
     }
     if (layer.type === 'fill' && isRestricted) {
-      map.setPaintProperty(layer.id, 'fill-color', '#241216');
-      map.setPaintProperty(layer.id, 'fill-opacity', 0.9);
-      map.setPaintProperty(layer.id, 'fill-outline-color', '#241216');
+      map.setPaintProperty(layer.id, 'fill-color', '#48252b');
+      map.setPaintProperty(layer.id, 'fill-opacity', 0.14);
+      map.setPaintProperty(layer.id, 'fill-outline-color', '#48252b');
     }
     if (layer.type === 'line' && isWater) {
       map.setPaintProperty(layer.id, 'line-color', '#24465a');
@@ -526,25 +527,25 @@ function styleRoamMap(map: Map, showDiscovered: boolean, showRegionProgress: boo
     if (map.getTerrain()) map.setTerrain(null);
   }
   if (map.getSource('openmaptiles')) {
-    if (!map.getLayer('roam-restricted-landuse')) {
-      map.addLayer({
-        id: 'roam-restricted-landuse',
-        type: 'fill',
-        source: 'openmaptiles',
-        'source-layer': 'landuse',
-        filter: ['match', ['get', 'class'], ['military'], true, false] as any,
-        paint: { 'fill-color': '#241216', 'fill-opacity': 0.94 },
-      } as any);
-    }
-    if (!map.getLayer('roam-restricted-aeroway')) {
-      map.addLayer({
-        id: 'roam-restricted-aeroway',
-        type: 'fill',
-        source: 'openmaptiles',
-        'source-layer': 'aeroway',
-        filter: ['match', ['get', 'class'], ['aerodrome', 'airport'], true, false] as any,
-        paint: { 'fill-color': '#241216', 'fill-opacity': 0.94 },
-      } as any);
+    ensureRestrictedHatchImage(map);
+    const restrictedAreas = [
+      { id: 'roam-restricted-landuse', sourceLayer: 'landuse', classes: ['military'] },
+      { id: 'roam-restricted-aeroway', sourceLayer: 'aeroway', classes: ['aerodrome', 'airport'] },
+    ];
+    for (const { id, sourceLayer, classes } of restrictedAreas) {
+      const filter = ['match', ['get', 'class'], classes, true, false] as any;
+      if (!map.getLayer(id)) map.addLayer({
+        id, type: 'fill', source: 'openmaptiles', 'source-layer': sourceLayer, filter,
+        paint: { 'fill-pattern': RESTRICTED_HATCH_IMAGE, 'fill-opacity': 0.55 },
+      } as any, firstRoadLayer);
+      map.setPaintProperty(id, 'fill-pattern', RESTRICTED_HATCH_IMAGE);
+      map.setPaintProperty(id, 'fill-opacity', 0.55);
+      const outlineId = `${id}-outline`;
+      if (!map.getLayer(outlineId)) map.addLayer({
+        id: outlineId, type: 'line', source: 'openmaptiles', 'source-layer': sourceLayer, filter,
+        layout: { 'line-join': 'round' },
+        paint: { 'line-color': RESTRICTED_MARK_COLOR, 'line-opacity': 0.3, 'line-width': 1 },
+      } as any, firstRoadLayer);
     }
   }
   for (const id of [DISCOVERED_SOURCE, DISCOVERED_UNPAVED_LAYER]) {
@@ -1135,11 +1136,8 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
           setCurrentParentAreaName(null);
           return;
         }
-        const parentArea = areas
-          .filter(record => record.area.countryCode === candidate.area.countryCode && record.area.adminLevel >= 4 && record.area.adminLevel < candidate.area.adminLevel)
-          .sort((left, right) => right.area.adminLevel - left.area.adminLevel)[0];
         if (controller.signal.aborted) return;
-        setCurrentParentAreaName(parentArea?.area.name ?? null);
+        setCurrentParentAreaName(containingAreaName(candidate.area, areas));
         const cached = mapAreaCache.get(candidate.area.id);
         if (cached?.area.boundaryVersion === candidate.area.boundaryVersion) {
           const record = { ...cached, job: candidate.job };
@@ -1185,24 +1183,27 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
     const controller = new AbortController();
     progressAreaControllerRef.current = controller;
     void (async () => {
+      let selectedArea: AreaRecord['area'] | null = null;
       try {
         const cached = mapAreaCache.get(id);
         const record = cached?.area.geometry ? cached : await loadArea(id, controller.signal, true);
         if (controller.signal.aborted) return;
+        selectedArea = record.area;
         mapAreaCache.set(record.area.id, record);
         setSelectedProgressArea(record);
-        setSelectedParentAreaName(null);
         fitAreaInProgressMode(record);
         if (record.area.geometry) {
           const point = pointOnFeature({ type: 'Feature', properties: {}, geometry: record.area.geometry } as any).geometry.coordinates;
           const { areas } = await lookupAreas(point[0], point[1], controller.signal);
-          if (!controller.signal.aborted) {
-            const parent = areas.filter(area => area.area.countryCode === record.area.countryCode && area.area.adminLevel >= 4 && area.area.adminLevel < record.area.adminLevel).sort((left, right) => right.area.adminLevel - left.area.adminLevel)[0];
-            setSelectedParentAreaName(parent?.area.name ?? null);
-          }
+          if (!controller.signal.aborted) setSelectedParentAreaName(containingAreaName(record.area, areas));
+        } else {
+          setSelectedParentAreaName(containingAreaName(record.area, []));
         }
       } catch (error) {
-        if (!(error instanceof DOMException && error.name === 'AbortError')) console.warn('Could not open region progress:', error);
+        if (!(error instanceof DOMException && error.name === 'AbortError')) {
+          if (selectedArea && !controller.signal.aborted) setSelectedParentAreaName(containingAreaName(selectedArea, []));
+          console.warn('Could not open region progress:', error);
+        }
       }
     })();
   }, [fitAreaInProgressMode]);
