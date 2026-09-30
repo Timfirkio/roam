@@ -23,7 +23,8 @@ function finishMarkerImage() {
 }
 
 /** Generates exactly one lightweight, non-interactive map image at a time. */
-export async function generateSessionThumbnail(points: SessionPoint[]): Promise<Blob | null> {
+export async function generateSessionThumbnail(points: SessionPoint[], signal?: AbortSignal): Promise<Blob | null> {
+  if (signal?.aborted) return null;
   const coordinates = smoothSessionCoordinates(sessionCoordinates(points));
   if (coordinates.length < 2 || typeof document === 'undefined') return null;
   const container = document.createElement('div');
@@ -31,15 +32,19 @@ export async function generateSessionThumbnail(points: SessionPoint[]): Promise<
   document.body.appendChild(container);
   const mapRef: { current: maplibregl.Map | null } = { current: null };
   let removeNetworkProtocol = () => {};
+  let onAbort = () => {};
   try {
     const image = await new Promise<Blob>((resolve, reject) => {
       let settled = false;
+      const timeout = window.setTimeout(() => finish(new Error('Session thumbnail timed out')), 15_000);
       const finish = (result: Blob | Error) => {
         if (settled) return;
         settled = true;
+        window.clearTimeout(timeout);
         result instanceof Error ? reject(result) : resolve(result);
       };
-      const timeout = window.setTimeout(() => finish(new Error('Session thumbnail timed out')), 15_000);
+      onAbort = () => finish(new Error('Session thumbnail cancelled'));
+      signal?.addEventListener('abort', onAbort, { once: true });
       mapRef.current = new maplibregl.Map({
         container,
         style: ROAM_MAP_STYLE,
@@ -84,7 +89,7 @@ export async function generateSessionThumbnail(points: SessionPoint[]): Promise<
         const bounds = coordinates.reduce((result, coordinate) => result.extend(coordinate), new maplibregl.LngLatBounds(coordinates[0], coordinates[0]));
         map.fitBounds(bounds, { padding: PREVIEW_PADDING, duration: 0, maxZoom: 15 });
         map.once('idle', () => window.requestAnimationFrame(() => {
-          map?.getCanvas().toBlob(blob => { window.clearTimeout(timeout); finish(blob ?? new Error('Could not encode session thumbnail')); }, 'image/webp', .88);
+          map?.getCanvas().toBlob(blob => finish(blob ?? new Error('Could not encode session thumbnail')), 'image/webp', .88);
         }));
       });
     });
@@ -92,6 +97,7 @@ export async function generateSessionThumbnail(points: SessionPoint[]): Promise<
   } catch {
     return null;
   } finally {
+    signal?.removeEventListener('abort', onAbort);
     mapRef.current?.remove();
     removeNetworkProtocol();
     container.remove();

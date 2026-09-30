@@ -29,7 +29,8 @@ import { gpxDocument } from './gpx-document';
 import { deleteSession, loadSessions, saveSession, type RideSession } from './session-store';
 import { reconcileSessionRoute, synchronizeDiscoveredSegmentRoadTypes } from './session-route-reconciliation';
 import { generateSessionThumbnail } from './session-thumbnail';
-import { PREVIEW_HEIGHT, PREVIEW_WIDTH, sessionCoordinates, sessionPreviewGeometry, smoothSessionCoordinates } from './session-preview-geometry';
+import { SessionInsights } from './session-details';
+import { PREVIEW_HEIGHT, PREVIEW_WIDTH, sessionPreviewDrawing } from './session-preview-geometry';
 import { formatSessionTitle, isGeneratedSessionTitle, regionNamesForSession, SESSION_NAMING_VERSION, titleForRegions } from './session-naming';
 import { sessionSearchMatches } from './session-search';
 import { applyRoamBaseStyle, ensureRestrictedHatchImage, RESTRICTED_HATCH_IMAGE, RESTRICTED_MARK_COLOR } from './roam-map-style';
@@ -1728,6 +1729,7 @@ function LegacyDesignSystemViewPage({ onBack }: { onBack: () => void }) {
 
 function DesignSystemReusableComponents() {
   const [previewPanelOpen, setPreviewPanelOpen] = useState(false);
+  const [previewRouteMapOpen, setPreviewRouteMapOpen] = useState(false);
   const [previewProgress, setPreviewProgress] = useState(false);
   const [previewBoundaries, setPreviewBoundaries] = useState(true);
   const [previewNavDetail, setPreviewNavDetail] = useState(false);
@@ -1763,6 +1765,12 @@ function DesignSystemReusableComponents() {
           <ShadcnButton variant="secondary" onClick={() => setPreviewNavDetail(value => !value)}>{previewNavDetail ? 'Return to Sessions' : 'Open session details'}</ShadcnButton>
         </div>
         <div className="space-y-3">
+          <p className="text-body font-medium">Session route map</p>
+          <p className="text-body text-text-muted">The full-width preview leads to a full-screen interactive map. Keep Back and Close controls visible over the map, and let Escape dismiss it.</p>
+          <ShadcnButton variant="secondary" onClick={() => setPreviewRouteMapOpen(true)}><MapTrifold aria-hidden="true" /> Preview route map</ShadcnButton>
+          <Dialog open={previewRouteMapOpen} onOpenChange={setPreviewRouteMapOpen}><DialogContent className="session-map-dialog"><DialogTitle className="sr-only">Route map preview</DialogTitle><DialogDescription className="sr-only">Example of the full-screen session map overlay.</DialogDescription><div className="session-design-map" role="img" aria-label="Stylized route on Roam map colors"><svg viewBox="0 0 320 480" aria-hidden="true"><path d="M-20 120 340 200M40 0 240 480M-20 350 340 80" stroke="var(--color-border)" strokeWidth="13" fill="none" /><path d="M88 30C160 130 70 220 180 290S260 380 220 450" stroke="var(--color-location-500)" strokeWidth="7" fill="none" strokeLinecap="round" /></svg></div><ShadcnButton variant="secondary" size="icon-medium" className="session-map-back" aria-label="Back to design system" onClick={() => setPreviewRouteMapOpen(false)}><ArrowLeft aria-hidden="true" /></ShadcnButton><ShadcnButton variant="secondary" size="icon-medium" className="session-map-close" aria-label="Close route map preview" onClick={() => setPreviewRouteMapOpen(false)}><X aria-hidden="true" /></ShadcnButton></DialogContent></Dialog>
+        </div>
+        <div className="space-y-3">
           <p className="text-body font-medium">Contextual panel</p>
           <p className="text-body text-text-muted">Use for contextual choices over a clear scrim. On phones, the sheet fits its contents, adds space for the bottom safe area, and scrolls when space is short. Drag the handle or heading to dismiss it; only the top edge has a border. Rows use button-weight titles and inset dividers while hover fills the row. On wider screens, a centered dialog has a close button.</p>
           <ShadcnButton variant="secondary" onClick={() => setPreviewPanelOpen(true)}>Preview panel</ShadcnButton>
@@ -1789,20 +1797,14 @@ function SettingsViewBase({ showBuildings3D, setShowBuildings3D, showTerrain3D, 
 
 function PlaceholderView({ title, copy }: { title: string; copy: string }) { return <section className="min-h-[calc(100svh-76px)] overflow-auto bg-surface px-6 pb-32 pt-10 text-text sm:px-8"><div className="mx-auto max-w-2xl"><h1 className="font-sans text-title font-semibold tracking-display">{title}</h1><p className="mt-4 max-w-xl text-body-lg text-text-muted">{copy}</p><Item variant="outline" className="mt-10"><ItemContent><ItemTitle>Module ready</ItemTitle><ItemDescription>The next Sessions build slice will add route history and saved rides.</ItemDescription></ItemContent><ItemActions><span className="font-mono text-label text-accent">NEXT</span></ItemActions></Item></div></section>; }
 
-function SessionRouteFallback({ coordinates }: { coordinates: [number, number][] }) {
-  if (coordinates.length < 2) return <div className="session-route-fallback flex items-center justify-center text-label text-text-subtle">Route preview unavailable</div>;
-  const smoothed = smoothSessionCoordinates(coordinates);
-  const { project, gridPath } = sessionPreviewGeometry(smoothed);
-  const routePath = smoothed.map((coordinate, index) => `${index === 0 ? 'M' : 'L'} ${project(coordinate).join(' ')}`).join(' ');
-  const start = project(smoothed[0]);
-  const end = project(smoothed[smoothed.length - 1]);
-  return <div className="session-route-fallback" aria-hidden="true"><svg viewBox={`0 0 ${PREVIEW_WIDTH} ${PREVIEW_HEIGHT}`}><path className="session-route-fallback-grid" d={gridPath} /><path className="session-route-fallback-line" d={routePath} /><circle className="session-route-fallback-start" cx={start[0]} cy={start[1]} r="10" /><g className="session-route-fallback-finish" transform={`translate(${end[0]} ${end[1]})`}><circle r="17" /><path className="session-route-fallback-flag" d="M-6 8V-8H7V6H-6" /><path className="session-route-fallback-checkers" d="M-6-8H0V-1H-6M0-1H7V6H0" /></g></svg></div>;
+function SessionRouteFallback({ drawing }: { drawing: ReturnType<typeof sessionPreviewDrawing> }) {
+  if (!drawing) return <div className="session-route-fallback flex items-center justify-center text-label text-text-subtle">Route preview unavailable</div>;
+  return <div className="session-route-fallback" aria-hidden="true"><svg viewBox={`0 0 ${PREVIEW_WIDTH} ${PREVIEW_HEIGHT}`}><path className="session-route-fallback-grid" d={drawing.gridPath} /><path className="session-route-fallback-line" d={drawing.routePath} /><circle className="session-route-fallback-start" cx={drawing.start[0]} cy={drawing.start[1]} r="10" /><g className="session-route-fallback-finish" transform={`translate(${drawing.end[0]} ${drawing.end[1]})`}><circle r="17" /><path className="session-route-fallback-flag" d="M-6 8V-8H7V6H-6" /><path className="session-route-fallback-checkers" d="M-6-8H0V-1H-6M0-1H7V6H0" /></g></svg></div>;
 }
 
-function SessionPreviewGrid({ coordinates }: { coordinates: [number, number][] }) {
-  if (coordinates.length < 2) return null;
-  const { gridPath } = sessionPreviewGeometry(smoothSessionCoordinates(coordinates));
-  return <svg className="session-route-grid" viewBox={`0 0 ${PREVIEW_WIDTH} ${PREVIEW_HEIGHT}`} aria-hidden="true"><path d={gridPath} /></svg>;
+function SessionPreviewGrid({ drawing }: { drawing: ReturnType<typeof sessionPreviewDrawing> }) {
+  if (!drawing) return null;
+  return <svg className="session-route-grid" viewBox={`0 0 ${PREVIEW_WIDTH} ${PREVIEW_HEIGHT}`} aria-hidden="true"><path d={drawing.gridPath} /></svg>;
 }
 
 const pageHeadingMetrics = new WeakMap<HTMLElement, { heading: HTMLElement; compactScale: number }>();
@@ -1885,9 +1887,8 @@ function SessionRoutePreview({ session }: { session: RideSession }) {
     setThumbnailUrl(url);
     return () => URL.revokeObjectURL(url);
   }, [session.thumbnail]);
-  const points = session.points;
-  const coordinates = useMemo(() => sessionCoordinates(points), [points]);
-  return <div className="session-route-preview mt-4 aspect-[2/1] overflow-hidden rounded-control border border-border-muted" aria-label="Session route preview"><SessionRouteFallback coordinates={coordinates} />{thumbnailUrl && !imageFailed && <><img className="session-route-thumbnail" src={thumbnailUrl} alt="" onError={() => setImageFailed(true)} /><SessionPreviewGrid coordinates={coordinates} /></>}</div>;
+  const drawing = sessionPreviewDrawing(session.points);
+  return <div className="session-route-preview mt-4 aspect-[2/1] overflow-hidden rounded-control border border-border-muted" aria-label="Session route preview"><SessionRouteFallback drawing={drawing} />{thumbnailUrl && !imageFailed && <><img className="session-route-thumbnail" src={thumbnailUrl} alt="" onError={() => setImageFailed(true)} /><SessionPreviewGrid drawing={drawing} /></>}</div>;
 }
 
 function SessionSearchOverlay({ open, onOpenChange, sessions, onSelect }: { open: boolean; onOpenChange: (open: boolean) => void; sessions: RideSession[]; onSelect: (id: string) => void }) {
@@ -1926,7 +1927,7 @@ function SessionSearchOverlay({ open, onOpenChange, sessions, onSelect }: { open
   </Dialog>;
 }
 
-function SessionsView({ sessions, onExport, onRename, onDelete, onImportGpx, onRefresh, onRecordNewSession }: { sessions: RideSession[]; onExport: (session: RideSession) => void; onRename: (session: RideSession, title: string) => void; onDelete: (session: RideSession) => void; onImportGpx: (file: File) => Promise<string>; onRefresh: () => Promise<void>; onRecordNewSession: () => void }) {
+function SessionsView({ sessions, discoveries, onExport, onRename, onDelete, onImportGpx, onRefresh, onRecordNewSession, onDetailOpenChange }: { sessions: RideSession[]; discoveries: DiscoveredSegment[]; onExport: (session: RideSession) => void; onRename: (session: RideSession, title: string) => void; onDelete: (session: RideSession) => void; onImportGpx: (file: File) => Promise<string>; onRefresh: () => Promise<void>; onRecordNewSession: () => void; onDetailOpenChange: (open: boolean) => void }) {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const selectedSession = sessions.find(session => session.id === selectedSessionId);
@@ -1952,8 +1953,9 @@ function SessionsView({ sessions, onExport, onRename, onDelete, onImportGpx, onR
     measureMorphingPageHeading(section);
     return () => resizeObserver.disconnect();
   }, [selectedSessionId]);
-  const openDetails = (id: string) => { listScrollTopRef.current = sectionRef.current?.scrollTop ?? 0; setSelectedSessionId(id); };
+  const openDetails = (id: string) => { listScrollTopRef.current = sectionRef.current?.scrollTop ?? 0; onDetailOpenChange(true); setSelectedSessionId(id); };
   const closeDetails = () => {
+    onDetailOpenChange(false);
     setSelectedSessionId(null);
   };
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -2000,9 +2002,9 @@ function SessionsView({ sessions, onExport, onRename, onDelete, onImportGpx, onR
   const detailActions = selectedSession && <DropdownMenu><DropdownMenuTrigger aria-label="Session actions" className={buttonVariants({ variant: "ghost", size: "icon-medium" })}><DotsThreeOutline weight="fill" aria-hidden="true" /></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onClick={() => startEditing(selectedSession)}><PencilSimple aria-hidden="true" />Edit title</DropdownMenuItem><DropdownMenuItem onClick={() => onExport(selectedSession)}><DownloadSimple aria-hidden="true" />Download GPX</DropdownMenuItem><DropdownMenuSeparator /><DropdownMenuItem className="text-danger-500 data-[highlighted]:bg-danger-button data-[highlighted]:text-paper-50" onClick={() => setDeletingSession(selectedSession)}><Trash aria-hidden="true" />Delete session</DropdownMenuItem></DropdownMenuContent></DropdownMenu>;
   const pageNavigation = <PageNavigation title={selectedSession ? "Session details" : "Sessions"} visible={Boolean(selectedSession)} onBack={selectedSession ? closeDetails : undefined} actions={detailActions} />;
   if (selectedSession) return <>{pageNavigation}<section ref={sectionRef} className="subpage-page session-detail-page min-h-[calc(100svh-76px)] overflow-auto bg-surface px-6 pb-32 pt-24 text-text sm:px-8">
-    <div className="subpage-content mx-auto max-w-2xl"><time dateTime={new Date(selectedSession.startedAt).toISOString()} className="roam-overline-sm text-text-subtle">{formatSessionDateTime(selectedSession.startedAt)}</time><h1 className="mt-3 font-sans text-subheading font-semibold tracking-subheading">{formatSessionTitle(selectedSession.title)}</h1><div className="mt-6 grid grid-cols-3 gap-3 rounded-panel border border-border bg-surface-raised p-4 font-mono text-data"><div><span className="block text-text-subtle">TIME</span><strong>{formatSessionTime(selectedSession.durationSeconds)}</strong></div><div><span className="block text-text-subtle">DISTANCE</span><strong>{formatDistance(selectedSession.distanceMeters)}</strong></div><div><span className="block text-text-subtle">NEW</span><strong>{formatDistance(selectedSession.newDistanceMeters)}</strong></div></div>{selectedSession.points.length > 1 && <SessionRoutePreview session={selectedSession} />}</div>
+    <div className="subpage-content"><SessionInsights key={selectedSession.id} session={selectedSession} discoveries={discoveries} title={formatSessionTitle(selectedSession.title)} preview={<SessionRoutePreview session={selectedSession} />} /></div>
     <Dialog open={Boolean(editingSession)} onOpenChange={open => { if (!open) setEditingSession(null); }}><DialogContent><DialogTitle>Edit session title</DialogTitle><DialogDescription>Give this ride a name you will recognize later.</DialogDescription><form className="mt-5" onSubmit={event => { event.preventDefault(); saveTitle(); }}><label className="block text-label text-text-subtle" htmlFor="session-title">Title</label><input id="session-title" className="mt-2 min-h-control w-full rounded-control border border-border bg-surface px-3 text-body text-text outline-none focus-visible:ring-3 focus-visible:ring-focus" value={editedTitle} onChange={event => setEditedTitle(event.target.value)} autoFocus /><div className="mt-5 flex justify-end gap-3"><ShadcnButton type="button" variant="ghost" onClick={() => setEditingSession(null)}>Cancel</ShadcnButton><ShadcnButton type="submit">Save title</ShadcnButton></div></form></DialogContent></Dialog>
-    <AlertDialog open={Boolean(deletingSession)} onOpenChange={open => { if (!open) setDeletingSession(null); }}><AlertDialogContent><AlertDialogTitle>Delete this session?</AlertDialogTitle><AlertDialogDescription>This deletes the saved session and its GPX data from this device and, when signed in, your account and other devices. Your explored roads and map progress stay the same.</AlertDialogDescription><div className="mt-5 flex justify-end gap-3"><ShadcnButton variant="ghost" onClick={() => setDeletingSession(null)}>Cancel</ShadcnButton><ShadcnButton variant="destructive" onClick={() => { onDelete(selectedSession); setSelectedSessionId(null); setDeletingSession(null); }}>Delete session</ShadcnButton></div></AlertDialogContent></AlertDialog>
+    <AlertDialog open={Boolean(deletingSession)} onOpenChange={open => { if (!open) setDeletingSession(null); }}><AlertDialogContent><AlertDialogTitle>Delete this session?</AlertDialogTitle><AlertDialogDescription>This deletes the saved session and its GPX data from this device and, when signed in, your account and other devices. Your explored roads and map progress stay the same.</AlertDialogDescription><div className="mt-5 flex justify-end gap-3"><ShadcnButton variant="ghost" onClick={() => setDeletingSession(null)}>Cancel</ShadcnButton><ShadcnButton variant="destructive" onClick={() => { onDelete(selectedSession); onDetailOpenChange(false); setSelectedSessionId(null); setDeletingSession(null); }}>Delete session</ShadcnButton></div></AlertDialogContent></AlertDialog>
   </section></>;
   return <>{pageNavigation}<section onScroll={event => updateMorphingPageHeading(event.currentTarget)} ref={sectionRef} onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onTouchCancel={resetPull} className="sessions-scroll min-h-[calc(100svh-76px)] overflow-auto bg-surface px-6 pb-32 text-text sm:px-8"><div className="page-top-spacer" aria-hidden="true" /><div className="sessions-pull-indicator" style={{ height: refreshing ? 56 : pullDistance }} role={refreshing || pullDistance > 0 ? "status" : undefined} aria-label={refreshing ? "Refreshing sessions from cloud" : pullDistance >= 64 ? "Release to refresh sessions" : pullDistance > 0 ? "Pull to refresh sessions" : undefined}>{refreshing ? <Spinner aria-hidden="true" /> : <ArrowsClockwise aria-hidden="true" />}</div><div className={`top-level-content mx-auto max-w-2xl${listScrollTopRef.current >= 48 ? ' top-level-content--restored' : ''}`}><div className="page-heading page-heading--morphing page-heading--sessions flex items-start justify-between gap-4"><h1 className="font-sans text-title font-semibold tracking-display">Sessions</h1><div className="page-heading__actions">{topLevelActions()}</div></div><input ref={uploadInputRef} className="sr-only" type="file" accept=".gpx,application/gpx+xml,application/xml,text/xml" onChange={event => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ''; if (file) void runPageAction(() => onImportGpx(file), 'Uploading GPX', 'Ride uploaded', `Reading ${file.name}`); }} />{refreshError && <p className="mt-4 text-body text-danger-500" role="alert">{refreshError}</p>}{sessions.length === 0 ? <Item variant="outline" className="mt-6"><ItemContent><ItemTitle>No saved rides yet</ItemTitle><ItemDescription>Rides shorter than 30 seconds are discarded.</ItemDescription></ItemContent></Item> : <div className="mt-6 space-y-4">{sessions.map(session => <Item key={session.id} variant="outline" className="session-card relative block p-4"><button type="button" className="session-card__open" aria-label={`View details for ${formatSessionTitle(session.title)}`} onClick={() => openDetails(session.id)} /><div className="flex items-start justify-between gap-4"><ItemContent><time dateTime={new Date(session.startedAt).toISOString()} className="roam-overline-sm text-text-subtle">{formatSessionDateTime(session.startedAt)}</time><ItemTitle className="mt-1">{formatSessionTitle(session.title)}</ItemTitle></ItemContent><DropdownMenu><DropdownMenuTrigger aria-label={`Actions for ${formatSessionTitle(session.title)}`} className={`${buttonVariants({ variant: "ghost", size: "icon-small" })} session-card__menu`}><DotsThreeOutline weight="fill" aria-hidden="true" /></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onClick={() => startEditing(session)}><PencilSimple aria-hidden="true" />Edit title</DropdownMenuItem><DropdownMenuItem onClick={() => onExport(session)}><DownloadSimple aria-hidden="true" />Download GPX</DropdownMenuItem><DropdownMenuSeparator /><DropdownMenuItem className="text-danger-500 data-[highlighted]:bg-danger-button data-[highlighted]:text-paper-50" onClick={() => setDeletingSession(session)}><Trash aria-hidden="true" />Delete session</DropdownMenuItem></DropdownMenuContent></DropdownMenu></div><div className="mt-2 font-mono text-data text-text-muted">{formatSessionTime(session.durationSeconds)} • {formatDistance(session.distanceMeters)} ({formatDistance(session.newDistanceMeters)} new)</div>{session.points.length > 1 && <SessionRoutePreview session={session} />}</Item>)}</div>}</div><SessionSearchOverlay open={searchOpen} onOpenChange={setSearchOpen} sessions={sessions} onSelect={openDetails} /><Dialog open={Boolean(editingSession)} onOpenChange={open => { if (!open) setEditingSession(null); }}><DialogContent><DialogTitle>Edit session title</DialogTitle><DialogDescription>Give this ride a name you will recognize later.</DialogDescription><form className="mt-5" onSubmit={event => { event.preventDefault(); saveTitle(); }}><label className="block text-label text-text-subtle" htmlFor="session-title">Title</label><input id="session-title" className="mt-2 min-h-control w-full rounded-control border border-border bg-surface px-3 text-body text-text outline-none focus-visible:border-accent focus-visible:ring-3 focus-visible:ring-focus" value={editedTitle} onChange={event => setEditedTitle(event.target.value)} autoFocus /><div className="mt-5 flex justify-end gap-3"><ShadcnButton type="button" variant="ghost" onClick={() => setEditingSession(null)}>Cancel</ShadcnButton><ShadcnButton type="submit">Save title</ShadcnButton></div></form></DialogContent></Dialog><AlertDialog open={Boolean(deletingSession)} onOpenChange={open => { if (!open) setDeletingSession(null); }}><AlertDialogContent><AlertDialogTitle>Delete this session?</AlertDialogTitle><AlertDialogDescription>This deletes the saved session and its GPX data from this device and, when signed in, your account and other devices. Your explored roads and map progress stay the same.</AlertDialogDescription><div className="mt-5 flex justify-end gap-3"><ShadcnButton variant="ghost" onClick={() => setDeletingSession(null)}>Cancel</ShadcnButton><ShadcnButton variant="destructive" onClick={() => { if (deletingSession) onDelete(deletingSession); setDeletingSession(null); }}>Delete session</ShadcnButton></div></AlertDialogContent></AlertDialog></section></>;
 }
@@ -2168,10 +2170,24 @@ function App() {
   const sessionNamingRunningRef = useRef(false);
   const accountSyncAppliedRef = useRef(false);
   const thumbnailWorkerRef = useRef(false);
+  const thumbnailControllerRef = useRef<AbortController | null>(null);
+  const detailOpenRef = useRef(false);
   const thumbnailAttemptsRef = useRef(new Set<string>());
   const viewRef = useRef(view);
   useEffect(() => { viewRef.current = view; }, [view]);
   const [thumbnailWake, setThumbnailWake] = useState(0);
+  const onDetailOpenChange = (open: boolean) => {
+    if (detailOpenRef.current === open) return;
+    detailOpenRef.current = open;
+    if (open) thumbnailControllerRef.current?.abort();
+    else setThumbnailWake(value => value + 1);
+  };
+  useEffect(() => {
+    if (view !== 'sessions') {
+      detailOpenRef.current = false;
+      thumbnailControllerRef.current?.abort();
+    }
+  }, [view]);
   const gpsWatchRef = useRef<CallbackID | null>(null);
   const lastReconciledPointTimestampRef = useRef(0);
   useEffect(() => {
@@ -2396,12 +2412,17 @@ function App() {
     if (!sessionsLoaded || !initialSyncSettled || document.visibilityState !== 'visible' || thumbnailWorkerRef.current) return;
     thumbnailWorkerRef.current = true;
     const generateQueuedThumbnails = async () => {
+      let interrupted = false;
       try {
-        while (document.visibilityState === 'visible') {
+        while (document.visibilityState === 'visible' && viewRef.current === 'sessions' && !detailOpenRef.current) {
           const next = sessionsRef.current.find(session => session.points.length > 1 && (!session.thumbnail || session.thumbnailStyleVersion !== SESSION_THUMBNAIL_STYLE_VERSION) && !thumbnailAttemptsRef.current.has(session.id));
           if (!next) break;
           thumbnailAttemptsRef.current.add(next.id);
-          const thumbnail = await generateSessionThumbnail(next.points);
+          const controller = new AbortController();
+          thumbnailControllerRef.current = controller;
+          const thumbnail = await generateSessionThumbnail(next.points, controller.signal);
+          if (thumbnailControllerRef.current === controller) thumbnailControllerRef.current = null;
+          if (controller.signal.aborted) { thumbnailAttemptsRef.current.delete(next.id); interrupted = true; break; }
           if (thumbnail) {
             const latest = sessionsRef.current.find(session => session.id === next.id);
             if (!latest) continue;
@@ -2416,7 +2437,10 @@ function App() {
           }
           await new Promise(resolve => window.setTimeout(resolve, 350));
         }
-      } finally { thumbnailWorkerRef.current = false; }
+      } finally {
+        thumbnailWorkerRef.current = false;
+        if (interrupted && viewRef.current === 'sessions' && !detailOpenRef.current) setThumbnailWake(value => value + 1);
+      }
     };
     window.setTimeout(() => { void generateQueuedThumbnails(); }, 500);
   }, [sessions, sessionsLoaded, initialSyncSettled, thumbnailWake]);
@@ -2689,7 +2713,7 @@ function App() {
     if (!data.user) throw new Error('Sign in from Settings to refresh from the cloud.');
     await runAccountSync(data.user.id);
   };
-  return <main className="app-shell" style={{ '--activity-drawer-height': `${activityDrawerHeight}px` } as CSSProperties}><div className="app-content">{view === 'map' && appVisible && <MapView active onRequestLocation={() => handleGpsChange(true)} sessionActive={sessionActive} onSessionChange={handleSessionChange} activityDrawerHeight={activityDrawerHeight} showDiscovered={showDiscovered} showRegionProgress={showRegionProgress} setShowRegionProgress={setShowRegionProgress} is3D={is3D} setIs3D={setIs3D} showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} showDebugMenu playerLocation={playerLocation} discoveries={discoveries} discoveriesLoaded={discoveriesLoaded} initialSyncSettled={initialSyncSettled} onDiscoveries={handleDiscoveries} />}{view === 'sessions' && <SessionsView sessions={sessions} onExport={handleGpxExport} onRename={handleSessionRename} onDelete={handleSessionDelete} onImportGpx={handleGpxImport} onRefresh={handleCloudRefresh} onRecordNewSession={() => { if (!sessionActive) handleSessionChange(true); setView('map'); }} />}{view === 'settings' && <SettingsView showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} gpsEnabled={gpsEnabled} gpsPermission={gpsPermission} onGpsChange={handleGpsChange} onOpenDesignSystem={() => setView('design-system')} />}{view === 'design-system' && <DesignSystemView onBack={() => setView('settings')} />}</div>{activityDrawerVisible && <div ref={activityDrawerRef} className={`activity-drawer ${sessionActive ? 'activity-drawer--open' : 'activity-drawer--closing'}`}><div className="activity-drawer-copy"><span className="roam-overline-sm activity-drawer-title">Active session</span><div className="activity-drawer-stats font-mono"><span className="activity-drawer-timer">{formatSessionTime(sessionElapsedSeconds)}</span><span className="activity-drawer-separator" aria-hidden="true">·</span><span className="activity-drawer-distance">{formatDistance(sessionDistanceMeters)}</span><span className="activity-drawer-new-distance">({formatDistance(sessionDiscoveredMeters)} new)</span></div></div>{sessionActive && <ShadcnButton variant="destructive" className="hover:!border-danger-500 active:!border-danger-500" onClick={() => handleSessionChange(false)}>Stop</ShadcnButton>}</div>}<PrimaryNavigation view={view} onChange={setView} /><Toaster /></main>;
+  return <main className="app-shell" style={{ '--activity-drawer-height': `${activityDrawerHeight}px` } as CSSProperties}><div className="app-content">{view === 'map' && appVisible && <MapView active onRequestLocation={() => handleGpsChange(true)} sessionActive={sessionActive} onSessionChange={handleSessionChange} activityDrawerHeight={activityDrawerHeight} showDiscovered={showDiscovered} showRegionProgress={showRegionProgress} setShowRegionProgress={setShowRegionProgress} is3D={is3D} setIs3D={setIs3D} showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} showDebugMenu playerLocation={playerLocation} discoveries={discoveries} discoveriesLoaded={discoveriesLoaded} initialSyncSettled={initialSyncSettled} onDiscoveries={handleDiscoveries} />}{view === 'sessions' && <SessionsView sessions={sessions} discoveries={discoveries} onExport={handleGpxExport} onRename={handleSessionRename} onDelete={handleSessionDelete} onImportGpx={handleGpxImport} onRefresh={handleCloudRefresh} onRecordNewSession={() => { if (!sessionActive) handleSessionChange(true); setView('map'); }} onDetailOpenChange={onDetailOpenChange} />}{view === 'settings' && <SettingsView showBuildings3D={showBuildings3D} setShowBuildings3D={setShowBuildings3D} showTerrain3D={showTerrain3D} setShowTerrain3D={setShowTerrain3D} gpsEnabled={gpsEnabled} gpsPermission={gpsPermission} onGpsChange={handleGpsChange} onOpenDesignSystem={() => setView('design-system')} />}{view === 'design-system' && <DesignSystemView onBack={() => setView('settings')} />}</div>{activityDrawerVisible && <div ref={activityDrawerRef} className={`activity-drawer ${sessionActive ? 'activity-drawer--open' : 'activity-drawer--closing'}`}><div className="activity-drawer-copy"><span className="roam-overline-sm activity-drawer-title">Active session</span><div className="activity-drawer-stats font-mono"><span className="activity-drawer-timer">{formatSessionTime(sessionElapsedSeconds)}</span><span className="activity-drawer-separator" aria-hidden="true">·</span><span className="activity-drawer-distance">{formatDistance(sessionDistanceMeters)}</span><span className="activity-drawer-new-distance">({formatDistance(sessionDiscoveredMeters)} new)</span></div></div>{sessionActive && <ShadcnButton variant="destructive" className="hover:!border-danger-500 active:!border-danger-500" onClick={() => handleSessionChange(false)}>Stop</ShadcnButton>}</div>}<PrimaryNavigation view={view} onChange={setView} /><Toaster /></main>;
 }
 
 const rootElement = document.getElementById('root')!;

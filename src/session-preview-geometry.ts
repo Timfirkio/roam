@@ -45,3 +45,26 @@ export function sessionPreviewGeometry(coordinates: [number, number][]) {
   for (let y = Math.ceil((centerY - PREVIEW_HEIGHT / 2 / scale) / step) * step; y <= centerY + PREVIEW_HEIGHT / 2 / scale; y += step) horizontal.push(PREVIEW_HEIGHT / 2 + (y - centerY) * scale);
   return { project, gridPath: [...vertical.map(x => `M${x} 0V${PREVIEW_HEIGHT}`), ...horizontal.map(y => `M0 ${y}H${PREVIEW_WIDTH}`)].join(' ') };
 }
+
+const previewDrawingCache = new WeakMap<SessionPoint[], ReturnType<typeof buildSessionPreviewDrawing>>();
+
+function buildSessionPreviewDrawing(points: SessionPoint[]) {
+  const coordinates = sessionCoordinates(points);
+  if (coordinates.length < 2) return null;
+  const smoothed = smoothSessionCoordinates(coordinates);
+  const { project, gridPath } = sessionPreviewGeometry(smoothed);
+  return {
+    gridPath,
+    routePath: smoothed.map((coordinate, index) => `${index === 0 ? 'M' : 'L'} ${project(coordinate).join(' ')}`).join(' '),
+    start: project(smoothed[0]),
+    end: project(smoothed[smoothed.length - 1]),
+  };
+}
+
+/** Reuse the exact same SVG drawing from a session card on its detail page. */
+export function sessionPreviewDrawing(points: SessionPoint[]) {
+  if (previewDrawingCache.has(points)) return previewDrawingCache.get(points)!;
+  const drawing = buildSessionPreviewDrawing(points);
+  previewDrawingCache.set(points, drawing);
+  return drawing;
+}

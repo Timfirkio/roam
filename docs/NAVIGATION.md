@@ -12,6 +12,7 @@ Roam has three primary tabs: Map, Sessions, and Settings. The tab bar remains av
 | Contextual choices attached to a control | Portal-based dropdown menu | Add session, session actions |
 | Contextual settings that benefit from seeing the page behind them | `ContextualPanel` | Map layers |
 | Focused task that takes the whole screen | Full-screen dialog | Session search |
+| Inspecting a saved route | Full-screen dialog with live map | Session detail preview |
 | Confirmation or form | Dialog or alert dialog | Edit title, delete session |
 
 Do not make a new primary tab for a detail view or use a modal as a substitute for a page with its own navigational hierarchy.
@@ -28,6 +29,8 @@ Top-level content normally enters with a subtle fade and 12px upward movement. D
 
 Use `PageNavigation` from `src/components/ui/page-navigation.tsx` for a subpage. It stays visible at the top, has a Back action and title, and accepts optional right-side actions. Use `Button` with the established ghost icon sizes and Phosphor icons. The subpage scroll section uses `.subpage-page` so its first content clears the 64px navigation bar and the system top safe area. The full page content enters with a subtle fade and upward movement.
 
+Session details place the route preview flush beneath this bar and across the page width. The stats and charts below it use 16px horizontal margins, including desktop scrollbar space.
+
 On return, the outgoing subpage title and actions remain in the bar while it fades away. Do not replace them with the parent page's title before that fade finishes. If the parent is already scrolled, its sticky bar should be fully opaque beneath the outgoing bar. Preserve the parent's scroll position when opening a detail page and restore it before showing the parent.
 
 ## Overlays and actions
@@ -36,6 +39,7 @@ On return, the outgoing subpage title and actions remain in the bar while it fad
 - Use `ContextualPanel` from `src/components/ui/contextual-panel.tsx` for choices such as Map layers. On phones it is a content-sized bottom sheet with a top border, handle, bottom safe-area padding, and scrollable content on short screens. The handle or heading follows a downward drag; release dismisses or eases it back. Tapping the scrim closes it. On wider screens it is a centered dialog with a close button. Its backdrop is a scrim without blur so map changes remain visible.
 - The Layers panel contains Region progress, Region boundaries, 3D terrain, and 3D buildings. Use Phosphor icons at the Map control icon size, normal button-weight labels, inset row dividers, and full-width row hover states. Show only the boundary tier for the current zoom; municipalities without Level 9 children retain their Level 7 outline at higher zooms. Turning on Region progress fits the current region in view. In Region progress mode, the card stays on its selected region while the map moves; tapping a region or its progress badge changes the card and highlight, then fits the region in its visible zoom band. Show child outlines inside that selected region when available. The card overline names the closest containing region, including the country or Earth. Panning after selection leaves the card unchanged. The GPS location control recenters on the player at the default map zoom.
 - Use the full-screen search dialog for Sessions search. Focus the search field after the dialog enters so the keyboard follows the overlay. The Back button closes it; the X appears only with a query and clears the query. Results are full-width selectable rows. Match titles and regions without requiring exact accents or punctuation, and tolerate small spelling errors. Filters are not part of this pattern yet.
+- On a session detail page, the full-width route preview opens a full-screen live map using the Roam map style. The map can be panned and zoomed. Keep visible Back and Close controls above it, support Escape, and restore focus to the preview when it closes. The Sessions tab remains underneath the overlay.
 - Use the shared dialog and alert dialog primitives for forms and destructive confirmations. The contextual sheet's clear scrim is a deliberate variant; ordinary dialogs retain their own backdrop treatment.
 
 ## Motion, safe areas, and accessibility
