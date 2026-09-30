@@ -1576,7 +1576,7 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
   return <section ref={mapViewRef} className={active ? "map-view" : "map-view map-view--inactive"} aria-hidden={!active}><MapCanvas mapRef={mapRef} mapActive={active} viewportBottomInset={0} crosshairTopInset={topOverlayInset} showDiscovered={showDiscovered} showRegionProgress={showRegionProgress} progressMode={progressMode} is3D={is3D} showBuildings3D={showBuildings3D} showTerrain3D={showTerrain3D} sessionActive={sessionActive} playerLocation={playerLocation} followPlayer={!progressMode && followPlayer} activeRotationFollow={activeRotationFollow} recenterRequest={recenterRequest} discoveries={discoveries} onDiscoveries={onDiscoveries} onLocationChange={handleLocationChange} onBearingChange={handleBearingChange} onZoomChange={zoom => { setBoundaryLevel(mapBoundaryLevel(zoom)); setDiscoveredRoadsOutOfView(zoom < DISCOVERED_MIN_ZOOM); }} onPitchChange={() => {}} onFollowPlayerChange={handleFollowChange} onMapReady={onMapReady} onVisualReady={onVisualReady} />{!progressMode && !isFollowingPlayer && <div className="map-center-crosshair" style={{ top: topOverlayInset }} aria-hidden="true"><span /></div>}
     <header ref={mapHeaderRef} className="map-header">
       <div className="map-top-right">
-        <div ref={progressCardRef} className="location-summary map-ui-surface"><AreaCoverageCard record={displayedArea} discoveries={discoveries} dataReady={discoveriesLoaded} syncReady={initialSyncSettled} onUpdate={updateCurrentArea} onExplored={ignoreMapAreaExplored} parentAreaName={displayedParentAreaName ?? undefined} reserveParentArea showActions={false} className="min-h-0 border-0 bg-transparent p-0" /></div>
+        <div ref={progressCardRef} className="location-summary map-ui-surface"><AreaCoverageCard record={displayedArea} discoveries={discoveries} dataReady={discoveriesLoaded || startupDismissed} syncReady={initialSyncSettled || startupDismissed} onUpdate={updateCurrentArea} onExplored={ignoreMapAreaExplored} parentAreaName={displayedParentAreaName ?? undefined} reserveParentArea showActions={false} className="min-h-0 border-0 bg-transparent p-0" /></div>
         <div className={`map-top-instrument${is3D ? ' map-top-instrument--3d' : ''}`}>
           <HeadingCompassBar bearing={bearing} visible={is3D} />
           <div className="map-top-actions" aria-hidden={is3D}><div className={`map-compass${compassVisible ? ' map-compass--visible' : ''}`} aria-hidden={is3D || !compassVisible}><ShadcnButton variant="secondary" size="icon" className="map-ui-surface" aria-label="Reset compass north" tabIndex={!is3D && compassVisible ? 0 : -1} onClick={resetCompass}><span className="compass-rotor" style={{ transform: `rotate(${-bearing}deg)` }}><i className="compass-needle"><b className="compass-north">▲</b><b className="compass-south">▼</b></i></span></ShadcnButton></div></div>
@@ -1592,7 +1592,7 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
         <label><span className="map-layer-label"><Buildings weight="regular" aria-hidden="true" /><strong>3D buildings</strong></span><Switch checked={showBuildings3D} onCheckedChange={setShowBuildings3D} aria-label="3D buildings" /></label>
       </div>
     </ContextualPanel>{!sessionActive && <ShadcnButton variant="secondary" className="record-fab map-ui-surface" onClick={() => onSessionChange(true)}><Path weight="regular" aria-hidden="true" />Roam</ShadcnButton>}
-    {!startupDismissed && <div className={`map-startup${startupCenterSettled ? ' map-startup--centered' : ''}${mapVisualReady ? ' map-startup--revealing' : ''}`} role="status" aria-label={mapVisualReady ? 'Map ready' : 'Loading map'}><div className="map-startup__mark" style={{ transform: `translateY(${topOverlayInset / 2}px)` }} aria-hidden="true" /></div>}
+    {!startupDismissed && <div className={`map-startup${startupCenterSettled ? ' map-startup--centered' : ''}${mapVisualReady ? ' map-startup--revealing' : ''}`} role="status" aria-label={mapVisualReady ? 'Map ready' : 'Loading map'}><div className="map-startup__progress location-summary map-ui-surface" aria-hidden="true"><AreaCoverageCard record={null} discoveries={[]} onUpdate={() => {}} onExplored={() => {}} reserveParentArea showActions={false} className="min-h-0 border-0 bg-transparent p-0" /></div><div className="map-startup__mark" style={{ transform: `translateY(${topOverlayInset / 2}px)` }} aria-hidden="true" /></div>}
   </section>;
 }
 
@@ -1806,7 +1806,10 @@ function SessionRouteFallback({ drawing }: { drawing: ReturnType<typeof sessionP
 const pageHeadingMetrics = new WeakMap<HTMLElement, { heading: HTMLElement; compactScale: number }>();
 
 function measureMorphingPageHeading(section: HTMLElement) {
-  section.style.setProperty('--page-scrollbar-inset', `${section.offsetWidth - section.clientWidth}px`);
+  const scrollbarInset = section.offsetWidth - section.clientWidth;
+  section.style.setProperty('--page-scrollbar-inset', `${scrollbarInset}px`);
+  const appShell = section.closest<HTMLElement>('.app-shell');
+  appShell?.style.setProperty('--page-scrollbar-inset', `${scrollbarInset}px`);
   const heading = section.querySelector<HTMLElement>('.page-heading--morphing');
   const title = heading?.querySelector('h1');
   if (!heading || !title) return;
@@ -1822,6 +1825,11 @@ function updateMorphingPageHeading(section: HTMLElement) {
   const progress = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     ? Number(section.scrollTop >= 48)
     : Math.min(1, Math.max(0, section.scrollTop / 48));
+  const appShell = section.closest<HTMLElement>('.app-shell');
+  const backgroundProgress = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    ? Number(section.scrollTop >= 12)
+    : Math.min(1, Math.max(0, section.scrollTop / 12));
+  appShell?.style.setProperty('--page-nav-bg-progress', String(backgroundProgress));
   metrics.heading.style.setProperty('--page-nav-progress', String(progress));
   metrics.heading.style.setProperty('--page-title-scale', String(1 + (metrics.compactScale - 1) * progress));
 }
@@ -1840,7 +1848,7 @@ function SettingsView({ showBuildings3D, setShowBuildings3D, showTerrain3D, setS
     ? 'Location access was denied. Enable it in browser settings to retry.'
     : 'Show your live position on the map.';
 
-  return <section ref={sectionRef} onScroll={event => updateMorphingPageHeading(event.currentTarget)} className="min-h-[calc(100svh-76px)] overflow-auto bg-surface px-4 pb-32 text-text sm:px-4">
+  return <section ref={sectionRef} onScroll={event => updateMorphingPageHeading(event.currentTarget)} className="settings-scroll min-h-[calc(100svh-76px)] overflow-auto bg-surface px-4 pb-32 text-text sm:px-4">
     <div className="page-top-spacer" aria-hidden="true" />
     <div className="top-level-content mx-auto max-w-2xl">
       <header className="page-heading page-heading--morphing mb-6">
