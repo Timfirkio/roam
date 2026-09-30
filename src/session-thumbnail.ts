@@ -21,10 +21,12 @@ export async function generateSessionThumbnail(points: SessionPoint[], signal?: 
     const image = await new Promise<Blob>((resolve, reject) => {
       let settled = false;
       const timeout = window.setTimeout(() => finish(new Error('Session thumbnail timed out')), 15_000);
+      let fallbackCapture: number | undefined;
       const finish = (result: Blob | Error) => {
         if (settled) return;
         settled = true;
         window.clearTimeout(timeout);
+        window.clearTimeout(fallbackCapture);
         result instanceof Error ? reject(result) : resolve(result);
       };
       onAbort = () => finish(new Error('Session thumbnail cancelled'));
@@ -60,13 +62,20 @@ export async function generateSessionThumbnail(points: SessionPoint[], signal?: 
         map.addLayer({ id: 'session-route-finish', type: 'symbol', source: 'session-route-markers', filter: ['==', ['get', 'kind'], 'finish'], layout: { 'icon-image': 'session-finish-marker', 'icon-size': 1, 'icon-allow-overlap': true } });
         const bounds = coordinates.reduce((result, coordinate) => result.extend(coordinate), new maplibregl.LngLatBounds(coordinates[0], coordinates[0]));
         map.fitBounds(bounds, { padding: PREVIEW_PADDING, duration: 0, maxZoom: 15 });
-        map.once('idle', () => window.requestAnimationFrame(() => {
-          map?.getCanvas().toBlob(blob => finish(blob ?? new Error('Could not encode session thumbnail')), 'image/webp', .88);
-        }));
+        let captured = false;
+        const capture = () => {
+          if (captured || settled || signal?.aborted) return;
+          captured = true;
+          map.getCanvas().toBlob(blob => finish(blob ?? new Error('Could not encode session thumbnail')), 'image/webp', .82);
+        };
+        map.once('idle', capture);
+        // A slow or broken tile must not hold the whole thumbnail queue hostage.
+        fallbackCapture = window.setTimeout(capture, 8_000);
       });
     });
     return image;
-  } catch {
+  } catch (error) {
+    if (!signal?.aborted) console.warn('Session thumbnail generation failed:', error);
     return null;
   } finally {
     signal?.removeEventListener('abort', onAbort);
