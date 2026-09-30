@@ -1086,6 +1086,7 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
   const mapViewRef = useRef<HTMLElement | null>(null);
   const mapHeaderRef = useRef<HTMLElement | null>(null);
   const progressCardRef = useRef<HTMLDivElement | null>(null);
+  const startupProgressRef = useRef<HTMLDivElement | null>(null);
   const progressMarkersRef = useRef(new globalThis.Map<string, { marker: maplibregl.Marker; button: HTMLButtonElement }>());
   const progressAreaControllerRef = useRef<AbortController | null>(null);
   const progressOpenFitFrameRef = useRef<number | null>(null);
@@ -1219,6 +1220,15 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
       const compassBar = header.querySelector('.heading-compass--visible');
       const viewBounds = view.getBoundingClientRect();
       const viewTop = viewBounds.top;
+      if (card && startupProgressRef.current) {
+        const cardBounds = card.getBoundingClientRect();
+        Object.assign(startupProgressRef.current.style, {
+          top: `${cardBounds.top - viewTop}px`,
+          left: `${cardBounds.left - viewBounds.left}px`,
+          width: `${cardBounds.width}px`,
+          height: `${cardBounds.height}px`,
+        });
+      }
       // The full-width 3D compass also occupies the actionable map area.
       const top = compassBar ? compassBar.getBoundingClientRect().bottom - viewTop
         : card ? card.getBoundingClientRect().bottom - viewTop
@@ -1592,7 +1602,7 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
         <label><span className="map-layer-label"><Buildings weight="regular" aria-hidden="true" /><strong>3D buildings</strong></span><Switch checked={showBuildings3D} onCheckedChange={setShowBuildings3D} aria-label="3D buildings" /></label>
       </div>
     </ContextualPanel>{!sessionActive && <ShadcnButton variant="secondary" className="record-fab map-ui-surface" onClick={() => onSessionChange(true)}><Path weight="regular" aria-hidden="true" />Roam</ShadcnButton>}
-    {!startupDismissed && <div className={`map-startup${startupCenterSettled ? ' map-startup--centered' : ''}${mapVisualReady ? ' map-startup--revealing' : ''}`} role="status" aria-label={mapVisualReady ? 'Map ready' : 'Loading map'}><div className="map-startup__progress location-summary map-ui-surface" aria-hidden="true"><AreaCoverageCard record={null} discoveries={[]} onUpdate={() => {}} onExplored={() => {}} reserveParentArea showActions={false} className="min-h-0 border-0 bg-transparent p-0" /></div><div className="map-startup__mark" style={{ transform: `translateY(${topOverlayInset / 2}px)` }} aria-hidden="true" /></div>}
+    {!startupDismissed && <div className={`map-startup${startupCenterSettled ? ' map-startup--centered' : ''}${mapVisualReady ? ' map-startup--revealing' : ''}`} role="status" aria-label={mapVisualReady ? 'Map ready' : 'Loading map'}><div ref={startupProgressRef} className="map-startup__progress location-summary map-ui-surface" aria-hidden="true"><AreaCoverageCard record={null} discoveries={[]} onUpdate={() => {}} onExplored={() => {}} reserveParentArea showActions={false} className="h-full min-h-0 border-0 bg-transparent p-0" /></div><div className="map-startup__mark" style={{ transform: `translateY(${topOverlayInset / 2}px)` }} aria-hidden="true" /></div>}
   </section>;
 }
 

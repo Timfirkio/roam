@@ -100,12 +100,10 @@ export function AreaCoverageCard({ record, discoveries, onUpdate, onExplored, pa
   }
   if (loading && !displayedTotals) return <Item variant="outline" className={`area-progress-card ${className ?? ''}`}>
     <ItemContent className="district-progress-content" role="status" aria-label="Loading region progress">
-      <div className="area-progress-skeleton" aria-hidden="true">
-        {(parentAreaName || reserveParentArea) && <span className="area-progress-skeleton__line area-progress-skeleton__parent" />}
-        <span className="area-progress-skeleton__line area-progress-skeleton__title" />
-        <span className="area-progress-skeleton__line area-progress-skeleton__bar" />
-        <div className="area-progress-skeleton__readouts"><span className="area-progress-skeleton__line area-progress-skeleton__distance" /><span className="area-progress-skeleton__line area-progress-skeleton__percentage" /></div>
-      </div>
+      {(parentAreaName || reserveParentArea) && <div className="district-progress-parent roam-overline-sm" aria-hidden="true"><span className="area-progress-skeleton__line area-progress-skeleton__parent" /></div>}
+      <div className="district-progress-top" aria-hidden="true"><div className="district-progress-title"><span className="area-progress-skeleton__line area-progress-skeleton__title" /></div></div>
+      <div className="progress-bar" aria-hidden="true"><span className="area-progress-skeleton__line area-progress-skeleton__bar" /></div>
+      <div className="district-progress-readouts" aria-hidden="true"><div className="district-progress-description area-progress-skeleton__distance-container"><span className="area-progress-skeleton__line area-progress-skeleton__distance" /></div><div className="district-progress-percent area-progress-skeleton__percentage-container"><span className="area-progress-skeleton__line area-progress-skeleton__percentage" /></div></div>
     </ItemContent>
   </Item>;
   return <Item variant="outline" className={`area-progress-card ${className ?? ''}`} role={onClick ? 'button' : undefined} tabIndex={onClick ? 0 : undefined} onClick={onClick} onKeyDown={event => { if (onClick && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); onClick(); } }}>

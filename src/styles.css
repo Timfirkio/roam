@@ -243,14 +243,15 @@ aside.rounded-control.border-l-2.border-accent { display: none; }
 .area-progress-actions { justify-content: flex-end; }
 .area-progress-percent { position: relative; display: inline-grid; min-width: 4.2ch; height: 1.25em; overflow: hidden; color: var(--color-accent); font-family: var(--font-mono); font-variant-numeric: tabular-nums; line-height: 1.25; text-align: right; }
 .area-progress-distance { position: relative; display: inline-grid; height: 1.25em; overflow: hidden; color: inherit; font-variant-numeric: tabular-nums; line-height: 1.25; white-space: nowrap; }
-.area-progress-skeleton { display: flex; width: 100%; flex-direction: column; gap: 8px; padding: 2px 0; }
 .area-progress-skeleton__line { display: block; flex: none; border-radius: var(--radius-tight); background: var(--color-surface-interactive); animation: area-progress-skeleton-pulse 1.5s ease-in-out infinite; }
-.area-progress-skeleton__parent { width: 34%; height: 10px; }
-.area-progress-skeleton__title { width: 56%; height: 17px; }
-.area-progress-skeleton__bar { width: 100%; height: 4px; margin: 3px 0; }
-.area-progress-skeleton__readouts { display: flex; justify-content: space-between; gap: 16px; }
-.area-progress-skeleton__distance { width: 40%; height: 14px; }
-.area-progress-skeleton__percentage { width: 13%; height: 16px; }
+.area-progress-skeleton__parent { width: 34%; height: 1.2em; }
+.area-progress-skeleton__title { width: 56%; height: 1.55em; }
+.area-progress-skeleton__bar { display: block; width: 100%; height: 100%; }
+.area-progress-skeleton__distance { width: 40%; height: 1.55em; }
+.area-progress-skeleton__percentage { width: 13%; height: 1.5em; }
+.area-progress-skeleton__distance-container { flex: 1; min-width: 0; }
+.area-progress-skeleton__percentage-container { display: flex; flex: 0 0 auto; min-width: 4.2ch; justify-content: flex-end; }
+.area-progress-skeleton__percentage { width: 100%; }
 @keyframes area-progress-skeleton-pulse { 50% { opacity: .45; } }
 .area-progress-percent__current, .area-progress-percent__previous { grid-area: 1 / 1; justify-self: end; }
 .area-progress-percent--changing .area-progress-percent__current { animation: area-progress-percent-enter 440ms var(--ease-outdoor) both; }
@@ -451,7 +452,7 @@ div:has(> [data-slot="dialog-content"].session-map-dialog) { padding: 0; }
 .session-card__menu { position: relative; z-index: 2; }
 .map-view--inactive { position: absolute; inset: 0; width: 100%; visibility: hidden; pointer-events: none; }
 .map-startup { position: absolute; z-index: 8; inset: 0; display: grid; place-items: center; background: var(--color-ink-950); }
-.map-startup__progress { position: absolute; z-index: 1; top: calc(var(--spacing-map-edge) + var(--roam-safe-top)); right: calc(var(--spacing-map-edge) + var(--roam-safe-right)); left: calc(var(--spacing-map-edge) + var(--roam-safe-left)); width: auto; min-height: 7rem; }
+.map-startup__progress { position: absolute; z-index: 1; top: calc(var(--spacing-map-edge) + var(--roam-safe-top)); right: auto; left: calc(var(--spacing-map-edge) + var(--roam-safe-left)); width: auto; height: 7rem; min-height: 0; box-sizing: border-box; }
 .map-startup__mark { position: relative; display: grid; width: 48px; height: 48px; place-items: center; opacity: 0; transition: opacity 200ms var(--ease-outdoor); }
 .map-startup--centered .map-startup__mark { opacity: 1; }
 .map-startup__mark::before { position: absolute; width: 30px; height: 30px; border: 1px solid #d9f7f3aa; border-radius: 50%; background: #0b242ab8; box-shadow: 0 0 0 4px #2bb8b044, 0 0 14px #2bb8b099; content: ''; animation: roam-location-breathe 2.4s ease-in-out infinite; }
@@ -518,7 +519,7 @@ div:has(> [data-slot="dialog-content"].session-map-dialog) { padding: 0; }
   .session-card:hover { border-color: var(--color-border-strong); background: var(--color-surface-interactive); }
   .session-search-result:hover { background: var(--color-surface-interactive); }
   .debug-toggle:hover { color: #f0ede3; border-color: #8a9690; }
-  .map-ui-surface:hover { border-color: #8a9690; background: #17201fcc; }
+  .map-ui-surface:hover:not(.location-summary) { border-color: #8a9690; background: #17201fcc; }
   .debug-menu button:hover, .debug-menu label:hover { color: #f0ede3; }
   .track-button:hover { background: #fff; }
   .nav-item:hover { color: #f0ede3; }
@@ -526,10 +527,11 @@ div:has(> [data-slot="dialog-content"].session-map-dialog) { padding: 0; }
   .zoom-group button:hover { background: #17201fcc; }
   button[data-slot="button"].w-full.text-left:hover { border-color: transparent; background: var(--color-surface-interactive); }
   button[data-slot="button"].w-full.text-left.design-system-link:hover { border-color: transparent; background: transparent; color: var(--color-text); }
-  [data-slot="switch"]:not([data-disabled]):hover[data-checked] { border-color: var(--color-paper-100); background: var(--color-accent-button-hover); }
-  [data-slot="switch"]:not([data-disabled]):hover[data-unchecked] { border-color: var(--color-accent); background: var(--color-surface-interactive); }
+  [data-slot="switch"]:not([data-disabled]):hover[data-checked] { border-color: color-mix(in srgb, var(--color-accent) 76%, var(--color-paper-50)); background: color-mix(in srgb, var(--color-accent) 16%, transparent); }
+  [data-slot="switch"]:not([data-disabled]):hover[data-unchecked] { border-color: var(--color-paper-100); background: color-mix(in srgb, var(--color-paper-100) 8%, transparent); }
   .district-progress-card:hover > [data-slot="item"] { border-color: #8a9690; background: #17201fcc; }
-  .district-progress-card:hover .progress-bar, .location-summary:hover .progress-bar { background: var(--color-border-muted); }
+  .district-progress-card:hover .progress-bar { background: var(--color-border-muted); }
+  .map-controls .location-control:hover { border-color: #8a9690; background: #17201fcc; }
   .region-accordion-trigger:hover { text-decoration: none; }
 }
 
