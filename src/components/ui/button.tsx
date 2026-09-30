@@ -9,7 +9,7 @@ const buttonVariants = cva(
       variant: {
         primary: "border-accent bg-accent-button text-paper-50 hover:border-accent hover:bg-accent-button-hover active:border-accent active:bg-accent-button-hover",
         secondary:
-          "border-border bg-surface-raised text-text hover:border-border-strong hover:bg-surface-interactive active:border-accent active:bg-accent-muted aria-expanded:bg-surface-interactive",
+          "border-border-subtle bg-surface-raised text-text hover:border-border-strong hover:bg-surface-interactive active:border-accent active:bg-accent-muted aria-expanded:bg-surface-interactive",
         ghost:
           "border-transparent bg-transparent text-text-muted hover:border-border-muted hover:bg-surface-raised hover:text-text",
         destructive:

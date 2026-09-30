@@ -19,7 +19,7 @@ function DropdownMenuItem({ className, ...props }: Menu.Item.Props) {
 }
 
 function DropdownMenuSeparator({ className, ...props }: Menu.Separator.Props) {
-  return <Menu.Separator data-slot="dropdown-menu-separator" className={cn("-mx-1 my-1 h-px bg-border-muted", className)} {...props} />
+  return <Menu.Separator data-slot="dropdown-menu-separator" className={cn("-mx-1 my-1 h-px bg-border-subtle", className)} {...props} />
 }
 
 export { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger }

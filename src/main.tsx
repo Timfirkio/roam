@@ -176,8 +176,8 @@ function ProgressTransitionPreview() {
   return <div>
     <p className="mb-3 font-mono text-label font-semibold tracking-[0.14em] text-text-subtle">DISTRICT PROGRESS CARD</p>
     <Surface className="space-y-4 p-4">
-      <p className="text-body text-text-muted">Map card for the active district. Turning on Region progress fits the current region in view; tapping another region chooses the card readout and fits that region in view. Further panning does not change the selection. The GPS control returns to the player at the default zoom. The map shows one outline tier at a time, plus any child boundaries inside the selected region. The overline names the closest containing region, including the country or Earth. The bar and last complete values stay visible while discoveries load, sync, or recalculate; both distance and completion readings roll with their values. Before the first result, a card-shaped skeleton holds its place.</p>
-      <div className="district-progress-content map-district-progress-preview rounded-control border border-border-muted bg-surface p-4">
+      <p className="text-body text-text-muted">Map card for the active district. Its border matches the subtle bottom navigation border, as do session and settings cards. Turning on Region progress fits the current region in view; tapping another region chooses the card readout and fits that region in view. Further panning does not change the selection. The GPS control returns to the player at the default zoom. The map shows one outline tier at a time, plus any child boundaries inside the selected region. The overline names the closest containing region, including the country or Earth. The bar and last complete values stay visible while discoveries load, sync, or recalculate; both distance and completion readings roll with their values. Before the first result, a card-shaped skeleton holds its place.</p>
+      <div className="district-progress-content map-district-progress-preview rounded-control border border-border-subtle bg-surface p-4">
         <div className="district-progress-parent roam-overline-sm"><ScrambleText text="Stockholms kommun" /></div>
         <div className="district-progress-top"><div className="district-progress-title"><ScrambleText text={regions[regionIndex].name} /></div></div>
         <ProgressBar stats={stats} />
@@ -1766,7 +1766,7 @@ function DesignSystemReusableComponents() {
         </div>
         <div className="space-y-3">
           <p className="text-body font-medium">Page navigation</p>
-          <p className="text-body text-text-muted">Top level titles scale into a sticky bar as the page scrolls, carrying their actions into place. Its opaque surface covers the full heading from the first frame, then shrinks and gains a border on scroll; title and actions stay above the surface. Keep the space above the title fixed; Sessions refreshes from the session actions menu and reports progress in a toast. Sub-page bars stay visible with a Back action and reserve space below the system safe area. The Sessions list restores its scroll position after a detail page; each session detail opens at the top while its cached data remains available. When leaving a sub-page, its title and actions fade out before the bar disappears. Controls use compact ghost buttons and Phosphor icons.</p>
+          <p className="text-body text-text-muted">Top level titles scale into a sticky bar as the page scrolls, carrying their actions into place. Its opaque surface covers the full heading from the first frame, then shrinks, gains a border, and picks up the Map progress card shadow as it becomes compact; title and actions stay above the surface. Keep the space above the title fixed; Sessions refreshes from the session actions menu and reports progress in a toast. Sub-page bars stay visible with a Back action, the same shadow, and space below the system safe area. The Sessions list restores its scroll position after a detail page; each session detail opens at the top while its cached data remains available. When leaving a sub-page, its title and actions fade out before the bar disappears. Controls use compact ghost buttons and Phosphor icons.</p>
           <div className="design-system-navigation-preview overflow-hidden rounded-panel border border-border"><PageNavigation title={previewNavDetail ? "Session details" : "Sessions"} onBack={previewNavDetail ? () => setPreviewNavDetail(false) : undefined} actions={<ShadcnButton variant="ghost" size="icon-medium" aria-label="Preview session actions"><DotsThreeOutline aria-hidden="true" /></ShadcnButton>} /></div>
           <ShadcnButton variant="secondary" onClick={() => setPreviewNavDetail(value => !value)}>{previewNavDetail ? 'Return to Sessions' : 'Open session details'}</ShadcnButton>
         </div>
@@ -1833,6 +1833,7 @@ function updateMorphingPageHeading(section: HTMLElement) {
   const appShell = section.closest<HTMLElement>('.app-shell');
   appShell?.style.setProperty('--page-nav-progress', String(progress));
   appShell?.style.setProperty('--page-nav-height', `${104 - 40 * progress}px`);
+  appShell?.style.setProperty('--page-nav-shadow-alpha', String(.34 * progress));
   metrics.heading.style.setProperty('--page-nav-progress', String(progress));
   metrics.heading.style.setProperty('--page-title-scale', String(1 + (metrics.compactScale - 1) * progress));
 }
