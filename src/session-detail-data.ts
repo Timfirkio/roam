@@ -1,6 +1,6 @@
 import type { DiscoveredSegment } from './discovery';
 import type { RideSession, SessionPoint } from './session-store';
-import { reconcileSessionRoute } from './session-route-reconciliation';
+import { loadSessionRoute } from './session-route-client';
 import { sessionAnalytics, summarizeSessionRegions } from './session-analytics';
 import { lookupSessionRegions } from './session-regions';
 import { loadArea } from './area-client';
@@ -29,7 +29,7 @@ const detailCache = new WeakMap<SessionPoint[], Map<string, WeakMap<DiscoveredSe
 export function sessionRouteFor(points: SessionPoint[]) {
   let pending = routeCache.get(points);
   if (!pending) {
-    pending = reconcileSessionRoute(points, new Set(), true).catch(error => {
+    pending = loadSessionRoute(points).catch(error => {
       routeCache.delete(points);
       throw error;
     });

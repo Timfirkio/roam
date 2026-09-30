@@ -25,6 +25,10 @@ The scroll section owns vertical scrolling. Keep the sticky heading in that sect
 
 Top-level content normally enters with a subtle fade and 12px upward movement. Do not replay that animation when restoring an already-scrolled page from a subpage: it makes the sticky bar temporarily transparent. Sessions preserves its list scroll position and applies `.top-level-content--restored` when returning to a scrolled list. Map retains its own entrance behavior.
 
+Keep the space above a morphing heading fixed while scrolling. Sessions offers cloud refresh from the session actions menu; refresh status uses a toast and must not insert height above the heading. Session thumbnail generation runs only for visible cards while the Sessions list is open so navigation to another tab or a detail page is not delayed by background map rendering.
+
+Opening Sessions must not audit or re-match saved routes. Show persisted ride statistics in the list. A requested detail page performs network tile fetching, decoding, and route matching in the session route worker, then caches the result and saves any corrected distance. This keeps expensive geometry work off the UI thread that drives title scaling. See `docs/SESSIONS_PERFORMANCE.md` for the measured regression and cache behavior.
+
 ## Subpages
 
 Use `PageNavigation` from `src/components/ui/page-navigation.tsx` for a subpage. It stays visible at the top, has a Back action and title, and accepts optional right-side actions. Use `Button` with the established ghost icon sizes and Phosphor icons. The subpage scroll section uses `.subpage-page` so its first content clears the 64px navigation bar and the system top safe area. The full page content enters with a subtle fade and upward movement.

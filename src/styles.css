@@ -448,8 +448,6 @@ div:has(> [data-slot="dialog-content"].session-map-dialog) { padding: 0; }
 .session-card__open { position: absolute; z-index: 1; inset: 0; width: 100%; border-radius: inherit; cursor: pointer; }
 .session-card__open:focus-visible { outline: 3px solid var(--color-focus); outline-offset: 3px; }
 .session-card__menu { position: relative; z-index: 2; }
-.sessions-pull-indicator { display: flex; align-items: center; justify-content: center; overflow: hidden; color: var(--color-accent); transition: height 180ms var(--ease-outdoor); }
-.sessions-pull-indicator svg { width: 22px; height: 22px; }
 .map-view--inactive { position: absolute; inset: 0; width: 100%; visibility: hidden; pointer-events: none; }
 .map-startup { position: absolute; z-index: 8; inset: 0; display: grid; place-items: center; background: var(--color-ink-950); }
 .map-startup__mark { position: relative; display: grid; width: 48px; height: 48px; place-items: center; opacity: 0; transition: opacity 200ms var(--ease-outdoor); }

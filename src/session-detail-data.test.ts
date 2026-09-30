@@ -2,10 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DiscoveredSegment } from './discovery';
 import type { RideSession } from './session-store';
 
-const { reconcileSessionRoute, lookupSessionRegions, loadArea, calculateExploredAreaTotals } = vi.hoisted(() => ({
-  reconcileSessionRoute: vi.fn(), lookupSessionRegions: vi.fn(), loadArea: vi.fn(), calculateExploredAreaTotals: vi.fn(),
+const { loadSessionRoute, lookupSessionRegions, loadArea, calculateExploredAreaTotals } = vi.hoisted(() => ({
+  loadSessionRoute: vi.fn(), lookupSessionRegions: vi.fn(), loadArea: vi.fn(), calculateExploredAreaTotals: vi.fn(),
 }));
-vi.mock('./session-route-reconciliation', () => ({ reconcileSessionRoute }));
+vi.mock('./session-route-client', () => ({ loadSessionRoute }));
 vi.mock('./session-regions', () => ({ lookupSessionRegions }));
 vi.mock('./area-client', () => ({ loadArea }));
 vi.mock('./area-progress-calculation', () => ({
@@ -26,7 +26,7 @@ describe('session detail data cache', () => {
   beforeEach(() => vi.clearAllMocks());
   it('shares work between visits and publishes region figures together once', async () => {
     const { sessionDetailEntry } = await import('./session-detail-data');
-    reconcileSessionRoute.mockResolvedValue([segment]);
+    loadSessionRoute.mockResolvedValue([segment]);
     lookupSessionRegions.mockResolvedValue({
       areasBySegment: new Map([[segment.id, [{ area: { id: 'area', name: 'Area', adminLevel: 7, boundaryVersion: 1 }, job: { status: 'ready', totals: { lengthMeters: 1000 } } }]]]),
       failed: 0, sampled: 1,
@@ -42,7 +42,7 @@ describe('session detail data cache', () => {
 
     expect(sessionDetailEntry(session, discoveries)).toBe(entry);
     expect(sessionDetailEntry({ ...session, thumbnailStyleVersion: 5 }, discoveries)).toBe(entry);
-    expect(reconcileSessionRoute).toHaveBeenCalledTimes(1);
+    expect(loadSessionRoute).toHaveBeenCalledTimes(1);
     expect(lookupSessionRegions).toHaveBeenCalledTimes(1);
     expect(loadArea).toHaveBeenCalledTimes(1);
     expect(calculateExploredAreaTotals).toHaveBeenCalledTimes(1);
@@ -54,7 +54,7 @@ describe('session detail data cache', () => {
 
   it('stops unfinished region lookups when the page closes and resumes on revisit', async () => {
     const { sessionDetailEntry } = await import('./session-detail-data');
-    reconcileSessionRoute.mockResolvedValue([segment]);
+    loadSessionRoute.mockResolvedValue([segment]);
     lookupSessionRegions.mockImplementationOnce((_: DiscoveredSegment[], signal: AbortSignal) => new Promise((_, reject) => {
       signal.addEventListener('abort', () => reject(new DOMException('Cancelled', 'AbortError')), { once: true });
     })).mockResolvedValueOnce({ areasBySegment: new Map(), failed: 0, sampled: 1 });
@@ -70,7 +70,7 @@ describe('session detail data cache', () => {
     const unsubscribeAgain = entry.subscribe(() => {});
     await entry.load();
     expect(lookupSessionRegions).toHaveBeenCalledTimes(2);
-    expect(reconcileSessionRoute).toHaveBeenCalledTimes(1);
+    expect(loadSessionRoute).toHaveBeenCalledTimes(1);
     expect(entry.getSnapshot().regionStatus).toBe('ready');
     unsubscribeAgain();
   });
