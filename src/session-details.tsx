@@ -53,12 +53,12 @@ function DiscoveryChart({ session, segments }: { session: RideSession; segments:
   const values = discoveryTimeline(session, segments);
   const maximum = Math.max(1, ...values);
   const points = values.map((value, index) => `${8 + index * 584 / (values.length - 1)},${160 - value / maximum * 120}`).join(' ');
+  const endY = 160 - (values.at(-1) ?? 0) / maximum * 120;
   return <div className="session-chart-wrap"><svg viewBox="0 0 600 164" role="img" aria-label={`Cumulative new road discovery rose to ${formatDistance(values.at(-1) ?? 0)} over this ride`} preserveAspectRatio="none">
     {[0, 1, 2].map(index => <line key={index} x1="8" x2="592" y1={40 + index * 60} y2={40 + index * 60} stroke="var(--color-border-muted)" strokeDasharray="4 6" />)}
     <polygon points={`8,160 ${points} 592,160`} fill="var(--color-accent)" fillOpacity="0.12" />
     <polyline points={points} fill="none" stroke="var(--color-accent)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
-    <circle cx="592" cy={160 - (values.at(-1) ?? 0) / maximum * 120} r="4" fill="var(--color-accent)" />
-  </svg><span className="session-chart-total">{formatDistance(session.newDistanceMeters)} new</span><div className="session-chart-axis"><span>Start</span><span>{formatDuration(session.durationSeconds)}</span></div></div>;
+  </svg><span className="session-chart-endpoint" style={{ top: endY }} aria-hidden="true" /><span className="session-chart-total">{formatDistance(session.newDistanceMeters)} new</span><div className="session-chart-axis"><span>Start</span><span>{formatDuration(session.durationSeconds)}</span></div></div>;
 }
 
 export function SessionInsights({ session, discoveries, preview, title }: { session: RideSession; discoveries: DiscoveredSegment[]; preview: ReactNode; title: string }) {
@@ -75,7 +75,7 @@ export function SessionInsights({ session, discoveries, preview, title }: { sess
     <div className="session-detail-main">
       <button className="session-hero" type="button" onClick={() => setMapOpen(true)} aria-label="Open interactive route map">
         <span className="session-hero-image" aria-hidden="true">{preview}</span>
-        <span className="session-hero-action"><ArrowsOutSimple size={18} aria-hidden="true" /> Explore map</span>
+        <span className="session-hero-action" aria-hidden="true"><ArrowsOutSimple size={20} /></span>
       </button>
       <div className="session-detail-body">
         <div className="session-detail-intro"><time dateTime={new Date(session.startedAt).toISOString()} className="roam-overline-sm text-text-subtle">{new Intl.DateTimeFormat(undefined, { dateStyle: 'long', timeStyle: 'short' }).format(session.startedAt)}</time><h1>{title}</h1></div>
@@ -88,7 +88,7 @@ export function SessionInsights({ session, discoveries, preview, title }: { sess
         <section className="session-insight-section"><div className="session-section-heading"><h2>Road types</h2></div>
           {totalRoadType > 0 ? <div className="session-road-types">{ROAD_TYPES.map(({ type, label }) => { const meters = analytics!.roadTypes[type]; const percent = meters / totalRoadType * 100; return <div key={type} className="session-bar-row"><div className="session-bar-row__labels"><span>{label}</span><strong className="session-road-type-values"><span className="session-road-type-distance">{formatDistance(meters)}</span><span className="session-road-type-separator" aria-hidden="true">•</span><span>{Math.round(percent)}%</span></strong></div><div className="session-bar-track"><span className={`session-bar-fill session-bar-fill--${type}`} style={{ width: `${percent}%` }} /></div></div>; })}</div> : <p className="session-empty-data" role="status">{routeStatus === 'ready' ? 'No mapped road types are available for this route.' : routeStatus === 'error' ? 'Road details could not be loaded right now.' : 'Loading road details…'}</p>}
         </section>
-        <section className="session-insight-section"><div className="session-section-heading"><h2>New road discovery</h2></div>
+        <section className="session-insight-section session-insight-section--discovery"><div className="session-section-heading"><h2>New road discovery</h2></div>
           {analytics && (analytics.newSegments.length > 0 || session.newDistanceMeters === 0) ? <DiscoveryChart session={session} segments={analytics.newSegments} /> : <p className="session-empty-data" role="status">{routeStatus === 'ready' ? 'Timed road discovery data is unavailable for this ride.' : routeStatus === 'error' ? 'Road details could not be loaded right now.' : 'Loading road details…'}</p>}
         </section>
         <section className="session-insight-section"><div className="session-section-heading"><h2>Regions explored</h2></div>
