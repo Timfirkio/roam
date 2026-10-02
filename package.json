@@ -17,7 +17,7 @@
     "test": "vitest run",
     "index:roads": "node scripts/build-road-network-index.mjs",
     "lint": "eslint .",
-    "cap:sync": "pnpm build && cap sync android",
+    "cap:sync": "tsc -b && vite build && cap sync android",
     "android:open": "cap open android"
   },
   "dependencies": {
