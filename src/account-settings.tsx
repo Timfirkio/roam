@@ -113,7 +113,7 @@ export function AccountSettings() {
 
   return <>
     <section className="rounded-panel border border-border bg-surface-raised px-4 text-text">
-      <p className="roam-overline -mx-4 border-b border-border-muted px-4 py-3 text-accent">Account</p>
+      <p className="roam-overline -mx-4 border-b border-border-subtle px-4 py-3 text-accent">Account</p>
       {user ? <div className="space-y-2 py-4">
         <p className="text-body text-text-muted">Signed in as {user.email}</p>
         <Button className="w-full" variant="secondary" disabled={busy || !localReady} onClick={() => void sync(user)}>{busy && <Spinner aria-hidden="true" />}Sync now</Button>
