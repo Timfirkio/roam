@@ -5,6 +5,7 @@
 - Do not modify `pnpm-workspace.yaml` during routine installs.
 - Build scripts are governed by the committed `allowBuilds` policy.
 - Run `pnpm test` and `pnpm build` after dependency or build changes.
+- Update `docs/BUILD_SETUP.md` in the same change whenever build scripts, tool versions, dependencies, Android/Gradle settings, Capacitor sync, or IDE build/run setup change.
 - Preserve unrelated working-tree changes.
 
 ## UI and design system

@@ -26,8 +26,8 @@ Early MVP scaffold. The first vertical slice is intentionally local-first:
 ## Local development
 
 ```bash
-pnpm install --frozen-lockfile
-pnpm dev
+corepack pnpm install --frozen-lockfile
+corepack pnpm dev
 ```
 
 ## Android development
@@ -36,8 +36,8 @@ The repository now includes a Capacitor Android project in `android/`. The norma
 native development loop is:
 
 ```bash
-pnpm cap:sync
-pnpm android:open
+corepack pnpm cap:sync
+corepack pnpm android:open
 ```
 
 Open the generated project in Android Studio, choose an Android device, and run it.
@@ -46,38 +46,10 @@ browser implementation on the web.
 
 ### New Windows machine
 
-Install Node.js 24 LTS, Android Studio, and JDK 21. In Android Studio's SDK
-Manager, install Android SDK Platform 36 (the project's `compileSdk`) and an
-emulator image or the SDK Platform-Tools for a physical device. The Android
-Gradle build needs JDK 21 even if Android Studio bundles a newer JDK.
-
-Node.js 24 does not bundle Corepack. Install it once in PowerShell:
-
-```powershell
-npm.cmd install --global corepack@0.34.5
-```
-
-From the repository root, install the locked JavaScript dependencies **before**
-opening `android/` in Android Studio. Gradle reads Capacitor modules from
-`node_modules`, which Git does not contain:
-
-```powershell
-corepack.cmd pnpm install --frozen-lockfile
-corepack.cmd pnpm cap:sync
-corepack.cmd pnpm android:open
-```
-
-For the Android Studio **app** Run/Debug configuration, add a **Before launch →
-Run External tool** task named `Refresh Capacitor`. Set its program to
-`C:\Windows\System32\cmd.exe`, arguments to
-`/d /c scripts\android-studio-refresh.cmd`, and working directory to the
-repository root. This runs the web build and syncs
-Capacitor before each **Run** or **Debug**. The setting is local to Android
-Studio on this machine, so repeat it if you recreate the IDE configuration.
-
-For a command-line debug build, run `corepack.cmd pnpm cap:sync`, then
-`cd android` followed by `.\gradlew.bat assembleDebug`. The APK is written to
-`android/app/build/outputs/apk/debug/app-debug.apk`.
+Follow the [build and Android setup guide](docs/BUILD_SETUP.md) for prerequisites,
+first-time setup, Android Studio's automatic Capacitor refresh, command-line
+builds, and troubleshooting. The guide is the source of truth when build steps
+or tool requirements change.
 
 ### Background ride recording
 
@@ -94,6 +66,7 @@ The map provider and tile key will be configured through `.env.local` once the m
 ## Product documents
 
 - [Build plan](docs/BUILD_PLAN.md)
+- [Build and Android setup](docs/BUILD_SETUP.md)
 - [Architecture notes](docs/ARCHITECTURE.md)
 - [Navigation and overlay framework](docs/NAVIGATION.md)
 - [On-demand OSM area progress setup](docs/AREA_PROGRESS.md)
