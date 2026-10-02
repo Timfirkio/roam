@@ -48,8 +48,9 @@ browser implementation on the web.
 
 Follow the [build and Android setup guide](docs/BUILD_SETUP.md) for prerequisites,
 first-time setup, Android Studio's automatic Capacitor refresh, command-line
-builds, and troubleshooting. The guide is the source of truth when build steps
-or tool requirements change.
+builds, and troubleshooting. The tracked `.env` includes only the public
+Supabase client settings, so new clones need no account configuration. The
+guide is the source of truth when build steps or tool requirements change.
 
 ### Background ride recording
 

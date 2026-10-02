@@ -42,6 +42,12 @@ built-in JDK may be newer than the JDK 21 this project needs.
    locked dependencies before opening the Android project. `node_modules` is
    excluded from Git, and Gradle needs the Capacitor packages inside it.
 
+   The tracked `.env` already supplies Roam's public Supabase project URL and
+   publishable key for local web and Android builds. No credential copying is
+   needed for a new machine. Use the ignored `.env.local` only to override
+   values for a different project; never put a secret or service-role key in a
+   `VITE_` variable or the tracked `.env`.
+
    ```powershell
    corepack.cmd pnpm install --frozen-lockfile
    corepack.cmd pnpm test
@@ -60,9 +66,11 @@ built-in JDK may be newer than the JDK 21 this project needs.
 6. Select the **app** run configuration and a device. Configure the automatic
    refresh below, then use **Run** or **Debug**.
 
-Cloud sync needs the public Supabase URL and publishable key from `.env.example`
-in a local `.env.local`; the file is excluded from Git. Do not copy a secret key
-into a `VITE_` variable. The app can build without cloud sync configured.
+Android sync checks the client configuration before building so a missing or
+invalid local override cannot silently remove the Account card from an
+installed app. If sign-in disappears on a new machine, check for a stale
+`.env.local`, rerun `corepack.cmd pnpm cap:sync`, then rebuild or run the app in
+Android Studio. Gradle alone does not refresh the bundled web assets.
 
 ## Refresh Capacitor before Android Studio Run/Debug
 
@@ -121,6 +129,7 @@ other operating systems, use `corepack pnpm cap:sync` and
 | `The system cannot find the path specified` while running `scripts\android-studio-refresh.cmd` | Replace the relative script path in **Arguments** with its absolute path. The helper itself changes to the repo root. |
 | The error still names a previously configured program or path | Restart Android Studio after editing an External Tool configuration on disk; a running Studio process can keep the old setting in memory. |
 | `ERR_PNPM_UNSUPPORTED_ENGINE` with pnpm other than 11.19.0 | Run through Corepack and confirm `corepack.cmd pnpm --version` returns `11.19.0`. |
+| Android sync stops because cloud sign-in is not configured | Check that the tracked `.env` is present and that `.env.local` does not override it with blank or placeholder values. Rerun `corepack.cmd pnpm cap:sync` before building or running in Android Studio. |
 | No Android device is available | Create an emulator in Device Manager or connect a device with USB debugging enabled. |
 
 ## Keeping this guide current
