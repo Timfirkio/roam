@@ -665,6 +665,11 @@ div:has(> [data-slot="dialog-content"].session-map-dialog) { padding: 0; }
 .map-controls .location-control svg { color: var(--color-paper-50); }
 .map-controls .location-control--active svg { color: var(--color-location-500); }
 .map-controls .location-control--active svg { filter: drop-shadow(0 0 5px color-mix(in srgb, var(--color-location-500) 72%, transparent)); }
+.location-control__arrow { width: 18px; height: 23px; }
+.map-controls [data-slot="button"] .location-control__arrow { width: 18px; height: 23px; }
+.location-control__arrow-edge { fill: var(--color-location-500); }
+.location-control__arrow-left { fill: #f0fffd; }
+.location-control__arrow-right { fill: color-mix(in srgb, var(--color-location-200) 75%, var(--color-location-500)); }
 .record-fab { box-shadow: var(--map-control-shadow); }
 .map-mode-toggle { font-size: calc(var(--text-body) - 1px) !important; font-weight: 500; letter-spacing: .02em; }
 .location-summary .district-progress-parent { order: 0; }

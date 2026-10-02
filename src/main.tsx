@@ -66,7 +66,7 @@ import { ContextualPanel } from './components/ui/contextual-panel';
 import { runAccountSync } from './cloud-sync';
 import { formatDistance } from './distance-format';
 import { supabase } from './supabase';
-import { ArrowLeft, ArrowsClockwise, Buildings, CheckCircle, Compass, CrosshairSimple, Cube, DotsThreeOutline, DownloadSimple, Gear, Gps, GpsFix, MapTrifold, Minus, Mountains, NavigationArrow, Path, PencilSimple, Percent, Plus, Polygon, MagnifyingGlass, Stack, Trash, UploadSimple, X } from '@phosphor-icons/react';
+import { ArrowLeft, ArrowsClockwise, Buildings, CheckCircle, Compass, CrosshairSimple, Cube, DotsThreeOutline, DownloadSimple, Gear, Gps, GpsFix, MapTrifold, Minus, Mountains, Path, PencilSimple, Percent, Plus, Polygon, MagnifyingGlass, Stack, Trash, UploadSimple, X } from '@phosphor-icons/react';
 
 // MapLibre 6 ships its worker separately; let Vite serve and emit the asset.
 maplibregl.setWorkerUrl(maplibreWorkerUrl);
@@ -977,7 +977,7 @@ function MapCanvas({ mapRef, mapActive, viewportBottomInset, crosshairTopInset, 
     }
     lastMarkerLocationRef.current = playerLocation;
     followBearingRef.current.gps(playerLocation.travelHeading, playerLocation.speed, playerLocation.isMoving, performance.now());
-    const targetRotation = activeRotationFollow ? followBearingRef.current.bearing ?? 0 : playerLocation.travelHeading ?? 0;
+    const targetRotation = activeRotationFollow ? followBearingRef.current.bearing ?? playerLocation.travelHeading ?? 0 : playerLocation.travelHeading ?? 0;
     if (markerWasCreated) {
       markerRotationRef.current = targetRotation;
       marker.setRotation(targetRotation);
@@ -999,7 +999,7 @@ function MapCanvas({ mapRef, mapActive, viewportBottomInset, crosshairTopInset, 
       };
       markerRotationFrameRef.current = requestAnimationFrame(animateRotation);
     }
-    marker.getElement().classList.toggle('player-marker--recording', sessionActive);
+    marker.getElement().classList.toggle('player-marker--recording', sessionActive || activeRotationFollow);
     marker.getElement().classList.toggle('player-marker--3d', is3D);
     mapRef.current.triggerRepaint();
     if (recordingCameraPendingRef.current && !recordingCameraReady) return;
@@ -1013,7 +1013,7 @@ function MapCanvas({ mapRef, mapActive, viewportBottomInset, crosshairTopInset, 
         // A GPS update can arrive during the 2D/3D animation. Carry its target
         // pitch into the new camera movement so the transition still finishes.
         pitch: is3D ? DEFAULT_3D_PITCH : 0,
-        ...(!activeRotationFollow ? { bearing: 0 } : playerLocation.isMoving && followBearingRef.current.bearing !== null ? { bearing: followBearingRef.current.bearing } : {}),
+        bearing: activeRotationFollow ? targetRotation : 0,
       };
       followCameraTargetRef.current = { center: camera.center, offset: camera.offset, pitch: camera.pitch, ...(targetZoom !== undefined ? { zoom: targetZoom } : {}) };
       const firstFix = !hasCenteredOnFirstLiveLocationRef.current;
@@ -1053,6 +1053,10 @@ function HeadingCompassBar({ bearing, visible }: { bearing: number; visible: boo
     </div>
     <span className="heading-compass__pointer" aria-hidden="true" />
   </div>;
+}
+
+function PlayerArrowIcon() {
+  return <svg className="location-control__arrow" viewBox="0 0 32 40" aria-hidden="true"><path className="location-control__arrow-edge" d="M16 1 31 35 16 29 1 35Z" /><path className="location-control__arrow-left" d="M16 5 16 26 5 31Z" /><path className="location-control__arrow-right" d="M16 5 27 31 16 26Z" /></svg>;
 }
 
 function MapView({ active, onRequestLocation, sessionActive, onSessionChange, activityDrawerHeight, showDiscovered, showRegionProgress, setShowRegionProgress, is3D, setIs3D, showBuildings3D, setShowBuildings3D, showTerrain3D, setShowTerrain3D, showDebugMenu, playerLocation, discoveries, discoveriesLoaded, initialSyncSettled, onDiscoveries }: { active: boolean; onRequestLocation: () => void; sessionActive: boolean; onSessionChange: (active: boolean) => void; activityDrawerHeight: number; showDiscovered: boolean; showRegionProgress: boolean; setShowRegionProgress: (value: boolean) => void; is3D: boolean; setIs3D: (value: boolean) => void; showBuildings3D: boolean; setShowBuildings3D: (value: boolean) => void; showTerrain3D: boolean; setShowTerrain3D: (value: boolean) => void; showDebugMenu: boolean; playerLocation: PlayerLocation | null; discoveries: DiscoveredSegment[]; discoveriesLoaded: boolean; initialSyncSettled: boolean; onDiscoveries: (segments: DiscoveredSegment[]) => void }) {
@@ -1499,22 +1503,25 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
   }, [displayedArea, progressMode]);
   useEffect(() => { mapRef.current?.resize(); }, [activityDrawerHeight]);
   const sessionDockOffset = sessionActive ? 'var(--spacing-map-edge)' : 'calc(var(--spacing-map-edge) + 44px + var(--map-control-gap))';
+  const isFollowingPlayer = !progressMode && followPlayer && Boolean(playerLocation);
   const centerOnPlayer = () => {
     if (progressOpenFitFrameRef.current !== null) cancelAnimationFrame(progressOpenFitFrameRef.current);
     progressOpenFitFrameRef.current = null;
-    setRecenterRequest(request => request + 1);
     if (progressMode) {
       setProgressMode(false);
       progressAreaControllerRef.current?.abort();
     }
     if (!playerLocation) {
+      setRecenterRequest(request => request + 1);
       setFollowPlayer(true);
       setActiveRotationFollow(false);
       onRequestLocation();
       return;
     }
-    if (!followPlayer) {
+    if (!isFollowingPlayer) {
+      setRecenterRequest(request => request + 1);
       setFollowPlayer(true);
+      setActiveRotationFollow(false);
       return;
     }
     if (!activeRotationFollow) {
@@ -1523,14 +1530,12 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
     }
     setActiveRotationFollow(false);
   };
-  const isFollowingPlayer = !progressMode && followPlayer && Boolean(playerLocation);
   const handleFollowChange = (following: boolean) => { setFollowPlayer(following); if (!following) setActiveRotationFollow(false); };
   const resetCompass = () => { setActiveRotationFollow(false); if (mapRef.current) easeMapCamera(mapRef.current, { bearing: 0, duration: 450 }); };
   const normalizedBearing = (bearing % 360 + 360) % 360;
   const compassVisible = Math.min(normalizedBearing, 360 - normalizedBearing) > 1;
   const locationControlClass = `map-ui-surface location-control${isFollowingPlayer ? ' location-control--following' : ''}${activeRotationFollow ? ' location-control--active' : ''}`;
-  const locationControlLabel = activeRotationFollow ? 'Following your location and heading' : isFollowingPlayer ? 'Following your location' : 'Follow your location';
-  const LocationIcon = activeRotationFollow ? NavigationArrow : isFollowingPlayer ? GpsFix : Gps;
+  const locationControlLabel = activeRotationFollow ? 'Stop following your heading' : isFollowingPlayer ? 'Follow your heading' : 'Follow your location';
   const activeLayerCount = [progressMode, showRegionProgress, showBuildings3D, showTerrain3D].filter(Boolean).length;
   useEffect(() => {
     if (!discoveredRoadsOutOfView || sessionActive || progressMode) return;
@@ -1596,7 +1601,7 @@ function MapView({ active, onRequestLocation, sessionActive, onSessionChange, ac
         </div>
       </div>
     </header>
-    <div className="map-controls" style={{ bottom: sessionDockOffset }} aria-label="Map controls"><ShadcnButton variant="secondary" size="icon" className="map-ui-surface layers-control" aria-label={`Open layers panel, ${activeLayerCount} active`} aria-expanded={debugOpen} onClick={() => setDebugOpen(!debugOpen)}><Stack weight={activeLayerCount > 0 ? "duotone" : "regular"} aria-hidden="true" /></ShadcnButton><ShadcnButton variant="secondary" size="icon" className={locationControlClass} aria-label={locationControlLabel} aria-pressed={isFollowingPlayer} onClick={centerOnPlayer}><LocationIcon weight={activeRotationFollow ? 'fill' : 'regular'} aria-hidden="true" /></ShadcnButton><ShadcnButton variant="secondary" size="icon" className="map-ui-surface map-mode-toggle" aria-label={`Switch to ${is3D ? '2D' : '3D'} view`} onClick={() => setIs3D(!is3D)}>{is3D ? '3D' : '2D'}</ShadcnButton><ButtonGroup orientation="vertical" className="zoom-group map-ui-surface" aria-label="Map zoom"><ShadcnButton variant="secondary" size="icon" aria-label="Zoom in" onClick={() => stepZoom(1)}><Plus weight="regular" aria-hidden="true" /></ShadcnButton><ShadcnButton variant="secondary" size="icon" aria-label="Zoom out" onClick={() => stepZoom(-1)}><Minus weight="regular" aria-hidden="true" /></ShadcnButton></ButtonGroup></div>
+    <div className="map-controls" style={{ bottom: sessionDockOffset }} aria-label="Map controls"><ShadcnButton variant="secondary" size="icon" className="map-ui-surface layers-control" aria-label={`Open layers panel, ${activeLayerCount} active`} aria-expanded={debugOpen} onClick={() => setDebugOpen(!debugOpen)}><Stack weight={activeLayerCount > 0 ? "duotone" : "regular"} aria-hidden="true" /></ShadcnButton><ShadcnButton variant="secondary" size="icon" className={locationControlClass} aria-label={locationControlLabel} aria-pressed={isFollowingPlayer} onClick={centerOnPlayer}>{activeRotationFollow ? <PlayerArrowIcon /> : isFollowingPlayer ? <GpsFix weight="regular" aria-hidden="true" /> : <Gps weight="regular" aria-hidden="true" />}</ShadcnButton><ShadcnButton variant="secondary" size="icon" className="map-ui-surface map-mode-toggle" aria-label={`Switch to ${is3D ? '2D' : '3D'} view`} onClick={() => setIs3D(!is3D)}>{is3D ? '3D' : '2D'}</ShadcnButton><ButtonGroup orientation="vertical" className="zoom-group map-ui-surface" aria-label="Map zoom"><ShadcnButton variant="secondary" size="icon" aria-label="Zoom in" onClick={() => stepZoom(1)}><Plus weight="regular" aria-hidden="true" /></ShadcnButton><ShadcnButton variant="secondary" size="icon" aria-label="Zoom out" onClick={() => stepZoom(-1)}><Minus weight="regular" aria-hidden="true" /></ShadcnButton></ButtonGroup></div>
     <ContextualPanel open={showDebugMenu && debugOpen} onOpenChange={setDebugOpen} title="Map layers" description="Choose which layers are visible on the map.">
       <div className="map-layers-panel">
         <label><span className="map-layer-label"><Percent weight="regular" aria-hidden="true" /><strong>Region progress</strong></span><Switch checked={progressMode} onCheckedChange={toggleProgressMode} aria-label="Region progress" /></label>
@@ -1730,6 +1735,7 @@ function LegacyDesignSystemViewActive({ onBack }: { onBack: () => void }) {
       </TabsContent>
       <TabsContent value="components" className="tab-panel mt-8 space-y-8"><div><p className="mb-3 font-mono text-label font-semibold tracking-[0.14em] text-text-subtle">BUTTON MATRIX</p><Surface className="overflow-x-auto p-4"><p className="mb-5 text-body text-text-muted">shadcn Button variants use Roam colour, spacing, type and radius tokens. Secondary text and icon buttons, including grouped controls, use the standard border colour for a clearly visible edge; hover, pressed and disabled states are shown below. Text buttons use the regular Geist weight.</p><div className="min-w-[720px] overflow-hidden rounded-panel border border-border-muted"><div className="grid grid-cols-[110px_repeat(4,minmax(130px,1fr))] text-center"><div className="border-b border-border-muted p-3 text-left font-mono text-label text-text-subtle">Variant</div><div className="border-b border-border-muted p-3 text-body text-text-muted">Text</div><div className="border-b border-border-muted p-3 text-body text-text-muted">Left icon</div><div className="border-b border-border-muted p-3 text-body text-text-muted">Right icon</div><div className="border-b border-border-muted p-3 text-body text-text-muted">Spinner</div>{variants.flatMap(([label, variant]) => { const disabled = label === 'Disabled'; return [<div key={`${label}-label`} className="flex items-center border-b border-border-muted p-3 text-left font-mono text-label text-text-subtle">{label}</div>, <div key={`${label}-text`} className="border-b border-border-muted p-2">{buttonCell(variant, disabled, 'Continue')}</div>, <div key={`${label}-left`} className="border-b border-border-muted p-2">{buttonCell(variant, disabled, <><span data-icon="inline-start" aria-hidden="true">←</span>Continue</>)}</div>, <div key={`${label}-right`} className="border-b border-border-muted p-2">{buttonCell(variant, disabled, <>Continue<span data-icon="inline-end" aria-hidden="true">→</span></>)}</div>, <div key={`${label}-spinner`} className="border-b border-border-muted p-2">{buttonCell(variant, disabled, <><Spinner />Continue</>)}</div>]; })}</div></div></Surface></div>
         <div className="grid gap-8 lg:grid-cols-2"><div><p className="mb-3 font-mono text-label font-semibold tracking-[0.14em] text-text-subtle">ICON BUTTON MATRIX</p><Surface className="space-y-5 overflow-x-auto p-4"><div className="grid min-w-[520px] grid-cols-[110px_repeat(5,1fr)] overflow-hidden rounded-panel border border-border-muted text-center"><div className="border-b border-border-muted p-3 text-left font-mono text-label text-text-subtle">Variant</div><div className="border-b border-border-muted p-3 text-body text-text-muted">Primary</div><div className="border-b border-border-muted p-3 text-body text-text-muted">Secondary</div><div className="border-b border-border-muted p-3 text-body text-text-muted">Ghost</div><div className="border-b border-border-muted p-3 text-body text-text-muted">Destructive</div><div className="border-b border-border-muted p-3 text-body text-text-muted">Disabled</div><div className="flex items-center border-b border-border-muted p-3 text-left font-mono text-label text-text-subtle">Icon button</div>{(['primary', 'secondary', 'ghost', 'destructive'] as const).map((variant, index) => <div key={variant} className="flex justify-center border-b border-border-muted p-2"><ShadcnButton variant={variant} size="icon" aria-label={`${variant} icon button`}>{['●', '+', '▦', '×'][index]}</ShadcnButton></div>)}<div className="flex justify-center border-b border-border-muted p-2"><ShadcnButton variant="primary" size="icon" disabled aria-label="Disabled icon button">●</ShadcnButton></div></div><div><p className="mb-3 font-mono text-label font-semibold tracking-[0.14em] text-text-subtle">BUTTON GROUP</p><ButtonGroup><ShadcnButton variant="secondary">Day</ShadcnButton><ShadcnButton variant="secondary">Week</ShadcnButton><ShadcnButton variant="secondary">Month</ShadcnButton></ButtonGroup></div></Surface></div><div className="space-y-8"><div><p className="mb-3 font-mono text-label font-semibold tracking-[0.14em] text-text-subtle">SWITCH</p><p className="mb-3 text-body text-text-muted">Use the larger default switch for settings. The full row remains an accessible touch target. Enabled switches show a subtle hover state and a pointer cursor; disabled switches keep their inactive state.</p><Surface className="flex min-h-control items-center justify-between gap-4 p-4"><span><span className="block text-body-lg font-medium">Discovered network</span><span className="mt-1 block text-body text-text-subtle">Highlight roads and paths you have uncovered.</span></span><Switch checked={previewToggle} onCheckedChange={setPreviewToggle} aria-label="Toggle discovered network" /></Surface><Surface className="mt-3 flex min-h-control items-center justify-between gap-4 p-4"><span className="text-body text-text-muted">Unavailable setting</span><Switch disabled checked aria-label="Unavailable setting" /></Surface></div><div><p className="mb-3 font-mono text-label font-semibold tracking-[0.14em] text-text-subtle">TABS / LINE</p><Surface className="p-4"><p className="mb-4 text-body text-text-muted">The line variant keeps the active bar exactly as wide as its label and uses a short content transition.</p><ShadcnTabs defaultValue="routes"><TabsList variant="line"><TabsTrigger value="routes">Routes</TabsTrigger><TabsTrigger value="saved">Saved places</TabsTrigger></TabsList><TabsContent value="routes" className="tab-panel pt-4 text-body text-text-muted">Your active routes appear here.</TabsContent><TabsContent value="saved" className="tab-panel pt-4 text-body text-text-muted">Your saved places appear here.</TabsContent></ShadcnTabs></Surface></div></div></div>
+        <div><p className="mb-3 font-mono text-label font-semibold tracking-[0.14em] text-text-subtle">MAP LOCATION CONTROL</p><Surface className="p-4"><p className="mb-4 text-body text-text-muted">Panning shows GPS. Press once to center and follow your location, again for heading follow with the teal arrow marker and a camera bearing aligned to the player, and once more to return to location follow. Heading follow keeps the current 2D or 3D view.</p><div className="grid grid-cols-3 gap-3 text-center"><div><span className="mx-auto flex size-control items-center justify-center rounded-pill border border-border bg-surface-raised text-paper-50" role="img" aria-label="GPS icon, location not followed"><Gps weight="regular" aria-hidden="true" /></span><p className="mt-2 text-label text-text-muted">Not following</p></div><div><span className="mx-auto flex size-control items-center justify-center rounded-pill border border-border bg-surface-raised text-paper-50" role="img" aria-label="GPS Fix icon, following location"><GpsFix weight="regular" aria-hidden="true" /></span><p className="mt-2 text-label text-text-muted">Location follow</p></div><div><span className="mx-auto flex size-control items-center justify-center rounded-pill border border-border bg-surface-raised location-control--active" role="img" aria-label="Player arrow icon, heading follow active"><PlayerArrowIcon /></span><p className="mt-2 text-label text-text-muted">Heading follow</p></div></div></Surface></div>
         <ProgressTransitionPreview />
       </TabsContent>
       <DesignSystemReusableComponents />
